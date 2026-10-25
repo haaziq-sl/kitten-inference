@@ -24,9 +24,10 @@ the library again) and checks again, up to N attempts. A function that is new, m
 attempts is a real change of the GPU code: the check fails, and the reference has to be made again from a checked
 build (packaging/README.md).
 
---object-attempts M (rebuild commands of the form `cmake --build ...` only): before each relink, compile just those
-object files again (the rebuild command with --target OBJECT) and compare their own GPU code with the reference, up to
-M times, until it is the reference's; then link and check the whole library. On Windows nearly every compile of the
+--object-attempts M: before each relink, compile just those object files again with the build's own rules (Ninja: the
+rebuild command with --target OBJECT; Unix Makefiles: make -C DIR SOURCE.o) and compare their own GPU code with the
+reference, up to M times, until it is the reference's; then link and check the whole library. Other build tools: the
+object files are compiled again by the rebuild command, as without the option. On Windows nearly every compile of the
 CUDA-core decode kernels (src/cuda/legacy/tern_dec_cc.cu, 39 kernels for sm_61 and sm_75) varies in a few of them, so
 a compile whose 78 kernels all match is the exception; an object compile and check takes about 45 s there, a relink
 and full check about 5 minutes. The last line gives the number of object compiles and how many matched.
@@ -345,16 +346,43 @@ def is_cmake_build(command: list) -> bool:
     return bool(command) and Path(command[0]).name.lower() in ("cmake", "cmake.exe") and "--build" in command
 
 
-def recompile_objects(build: Path, rebuild: list, objs: list, ref: dict, tries: int, stats: dict) -> bool:
-    """Compiles `objs` again, and only them (`rebuild` with --target), until the GPU code of each is the reference's,
-    up to `tries` compiles; the caller then links the library again and checks all of it. False when a compile
-    fails."""
-    targets = [str(o.relative_to(build)) for o in objs]  # the build tool's (Ninja's) names of the object files
+def object_commands(build: Path, rebuild: list, objs: list):
+    """The commands that compile just `objs` again with the build's own rules, or None for an unknown build tool."""
+    try:
+        cache = (build / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"^CMAKE_GENERATOR:INTERNAL=(.*)$", cache, re.M)
+    generator = m.group(1).strip() if m else ""
+    if generator.startswith("Ninja") and is_cmake_build(rebuild):
+        return [rebuild + ["--target", *[str(o.relative_to(build)) for o in objs]]]  # Ninja's names of the objects
+    if generator == "Unix Makefiles":
+        m = re.search(r"^CMAKE_MAKE_PROGRAM:[A-Z]+=(.*)$", cache, re.M)
+        make = m.group(1).strip() if m else "make"
+        commands = []
+        for o in objs:  # DIR/CMakeFiles/TARGET.dir/src/x.cu.o -> make -C DIR src/x.o
+            parts = o.relative_to(build).parts
+            if "CMakeFiles" not in parts or not parts[-1].endswith(".o"):
+                return None
+            i = parts.index("CMakeFiles")
+            source = "/".join(parts[i + 2:])[:-len(".o")]
+            commands.append([make, "-C", str(build.joinpath(*parts[:i])), source.rsplit(".", 1)[0] + ".o"])
+        return commands
+    return None
+
+
+def recompile_objects(commands: list, objs: list, ref: dict, tries: int, stats: dict) -> bool:
+    """Compiles `objs` again, and only them (`commands`), until the GPU code of each is the reference's, up to
+    `tries` compiles; the caller then links the library again and checks all of it. False when a compile fails."""
     for k in range(1, tries + 1):
         for o in objs:
             o.unlink(missing_ok=True)
-        if subprocess.run(rebuild + ["--target", *targets]).returncode != 0:
-            print("SASS check: compiling the object files again failed")
+        for command in commands:
+            if subprocess.run(command).returncode != 0:
+                print(f"SASS check: compiling the object files again failed: {' '.join(command)}")
+                return False
+        if not all(o.is_file() for o in objs):
+            print("SASS check: compiling the object files again did not make them")
             return False
         differ, only_lib = [], []
         for o in objs:
@@ -442,8 +470,9 @@ def main() -> int:
             return 1
         for o in objs:
             print(f"  compiling again: {o}")
-        if a.object_attempts > 1 and is_cmake_build(rebuild):
-            if not recompile_objects(a.build_dir, rebuild, objs, ref, a.object_attempts, stats):
+        commands = object_commands(a.build_dir, rebuild, objs) if a.object_attempts > 1 else None
+        if commands:
+            if not recompile_objects(commands, objs, ref, a.object_attempts, stats):
                 return 1
         else:
             for o in objs:
