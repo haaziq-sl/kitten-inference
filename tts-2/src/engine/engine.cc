@@ -3293,6 +3293,20 @@ constexpr uint64_t kAutoDefaultMargin = uint64_t(2) << 30;
 constexpr uint64_t kDefaultCheckBelow = uint64_t(22) << 30;
 thread_local AutoProbe* g_auto_probe = nullptr;
 
+// Load every CUDA module at context creation instead of at a kernel's first launch (decoder measurement: the first live
+// render of a process otherwise pays lazy module loading inside launch, 6.3 ms vs 1.1 ms). Execution only.
+// Takes effect only if this process has not initialised CUDA yet, so it has to run before the first CUDA call of the
+// create (any runtime call, cudaGetLastError included, initialises CUDA); an explicit CUDA_MODULE_LOADING wins.
+// KT2N_CUDA_EAGER=0 keeps the driver's lazy default. The low-memory profile loads eagerly too: lazy loading saved
+// 10 MiB per process here (one-arch build; 12,748 -> 12,738 MiB) and moves module loads into the first calls.
+static void request_eager_module_loading() {
+  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("CUDA_MODULE_LOADING", "EAGER", 0);
+#if defined(KT2N_HIP)
+  // ROCm ignores CUDA_MODULE_LOADING; its switch for loading code objects at start is HIP_ENABLE_DEFERRED_LOADING=0.
+  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("HIP_ENABLE_DEFERRED_LOADING", "0", 0);
+#endif
+}
+
 static int32_t engine_create_attempt(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
   if (!cfg || !out || cfg->struct_size < offsetof(kt2n_engine_config, voice_build_dir)) {
     set_err(err, KT2N_ERR_INVALID_ARGUMENT, "config is NULL or too small");
@@ -3386,16 +3400,7 @@ static int32_t engine_create_attempt(const kt2n_engine_config* cfg, kt2n_engine*
   // Memory profile and free-memory floor (validated above with the voice cache fields).
   const bool mem_fields = mem_block;
   const bool low_mem = mem_block && cfg->memory_profile == KT2N_MEMORY_PROFILE_LOW;
-  // Load every CUDA module at context creation instead of at a kernel's first launch (decoder measurement: the first live
-  // render of a process otherwise pays lazy module loading inside launch, 6.3 ms vs 1.1 ms). Execution only.
-  // Takes effect only if this process has not initialised CUDA yet; an explicit CUDA_MODULE_LOADING wins.
-  // KT2N_CUDA_EAGER=0 keeps the driver's lazy default. The low-memory profile loads eagerly too: lazy loading saved
-  // 10 MiB per process here (one-arch build; 12,748 -> 12,738 MiB) and moves module loads into the first calls.
-  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("CUDA_MODULE_LOADING", "EAGER", 0);
-#if defined(KT2N_HIP)
-  // ROCm ignores CUDA_MODULE_LOADING; its switch for loading code objects at start is HIP_ENABLE_DEFERRED_LOADING=0.
-  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("HIP_ENABLE_DEFERRED_LOADING", "0", 0);
-#endif
+  // (CUDA module loading: request_eager_module_loading(), called by engine_create_impl before any CUDA call.)
   size_t free_before = 0, device_total = 0;
   // The free-memory floor applies to every engine that sets min_free_device_bytes; the built-in 10% rule only to
   // engines of bounded capacity (as before).
@@ -4455,6 +4460,7 @@ static int32_t engine_create_attempt(const kt2n_engine_config* cfg, kt2n_engine*
 // repack qkv failed (rc 2)"): the automatic profile's low-profile retry, or a caller retrying with other settings. A
 // failed create's error is reported through kt2n_error, so nothing is lost by clearing it.
 static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
+  request_eager_module_loading();  // before the first CUDA call: cudaGetLastError below initialises CUDA
   (void)cudaGetLastError();
   const int32_t rc = engine_create_attempt(cfg, out, err);
   if (rc != KT2N_OK) (void)cudaGetLastError();

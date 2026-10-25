@@ -1232,6 +1232,36 @@ TEST(Runtime, GpuCreateAfterAFailedCreate) {
   }
 }
 
+#if !defined(KT2N_HIP)
+// The driver's entry point for cuModuleGetLoadingMode, through the runtime (no CUDA headers or driver library here).
+extern "C" int cudaGetDriverEntryPointByVersion(const char* symbol, void** fn, unsigned int cuda_version,
+                                                unsigned long long flags, int* query_result);
+#endif
+
+// A create asks for eager module loading (CUDA_MODULE_LOADING=EAGER: every kernel's module loads when the context is
+// made) before its first CUDA call. Any CUDA call before that, a cudaGetLastError included, initialises CUDA in the
+// driver's lazy mode, and the first request then loads its modules inside its launches: on an RTX 4090 the first audio
+// of a voice prepared inside the request went from 35 to 44 ms. Checks how this process's driver was initialised, so
+// it has to run in a process of its own (ctest runs every test alone) with the CPU stubs' create as the first CUDA
+// user. Needs KT2N_TEST_GPU=1; skipped when the environment sets the loading mode; CUDA builds only.
+TEST(Runtime, GpuCreateLoadsModulesEagerly) {
+#if defined(KT2N_HIP)
+  GTEST_SKIP() << "CUDA only (ROCm has its own switch, HIP_ENABLE_DEFERRED_LOADING)";
+#else
+  if (!std::getenv("KT2N_TEST_GPU")) GTEST_SKIP() << "set KT2N_TEST_GPU=1";
+  if (std::getenv("CUDA_MODULE_LOADING") || std::getenv("KT2N_CUDA_EAGER"))
+    GTEST_SKIP() << "CUDA_MODULE_LOADING or KT2N_CUDA_EAGER is set in the environment";
+  Eng eng(1);
+  void* fn = nullptr;
+  int query = -1;
+  ASSERT_EQ(cudaGetDriverEntryPointByVersion("cuModuleGetLoadingMode", &fn, 12000, 0, &query), 0);
+  ASSERT_EQ(query, 0) << "cuModuleGetLoadingMode not found";
+  int mode = 0;  // CUmoduleLoadingMode: 1 eager, 2 lazy
+  ASSERT_EQ(reinterpret_cast<int (*)(int*)>(fn)(&mode), 0);
+  EXPECT_EQ(mode, 1) << "the driver was initialised in lazy module-loading mode";
+#endif
+}
+
 // An explicit KT2N_MEMORY_PROFILE_DEFAULT on a GPU too small for it (simulated free memory, KT2N_LOW_FIT_FREE_MB) is
 // refused with KT2N_ERR_TOO_SMALL and how much it needs, before any model memory is allocated, instead of failing in
 // whichever allocation runs out first: a 4 GB card (the low profile has to fit itself), a 16 GB card with every voice
