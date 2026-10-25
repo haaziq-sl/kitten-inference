@@ -52,9 +52,9 @@ nvcc's device front end (cicc, CUDA C++ to PTX) is not deterministic for a few k
 and toolkit, 6 of 44 compiles on a busy Linux build machine gave another SASS for the vocoder's sm_90
 `conv1d_tc3_k<64>` (one 16-byte shared-memory load split into a 16-byte and an 8-byte load of the same bytes). On
 Windows nearly every compile of the CUDA-core decode kernels (`src/cuda/legacy/tern_dec_cc.cu`, 39 kernels for
-sm_61 and sm_75) differs in 1 to 7 of them: 4 of 36 compiles in five CI runs had all of them identical. ptxas gives
+sm_61 and sm_75) differs in 1 to 7 of them: 5 of 65 compiles in six CI runs had all of them identical. ptxas gives
 the same SASS for the same PTX every time. So when a function's SASS differs, the check compiles the object files that
-hold it again and compares their own GPU code with the reference (up to 40 times on Windows, about 25 s each, and 10
+hold it again and compares their own GPU code with the reference (up to 40 times on Windows, 25 to 40 s each, and 10
 on Linux), then links the library again and checks all of it, up to 6 times. A build that still differs, or whose set of
 GPU functions differs, fails: the GPU code really changed. After a deliberate change, make the reference again from
 the default build of a commit checked as above, built from a checkout at `/root/src/port` (nvcc puts the source path

@@ -33,8 +33,8 @@ Run "cmake" @("--preset", "wheel-windows")
 Run "cmake" @("--build", "--preset", "wheel-windows", "--parallel", "$Jobs")
 # The GPU code must be the default build's, function for function (packaging/sass_manifest.py): files whose code came
 # out differently are compiled again. On Windows nearly every compile of the CUDA-core decode kernels varies in a few of
-# them (4 of 36 CI compiles had all 78 identical), so the differing object is compiled and checked on its own up to 40
-# times before each relink (about 25 s each; at most 6 x 40 compiles, about 2.5 hours, within the job's 6 hours).
+# them (5 of 65 CI compiles had all 78 identical), so the differing object is compiled and checked on its own up to 40
+# times before each relink (25 to 40 s each; at most 6 x 40 compiles, under 4 hours, within the job's 6 hours).
 # KT2N_SASS_CHECK=0 skips this (development builds only).
 if ($env:KT2N_SASS_CHECK -ne "0") {
   Run "python" @("packaging/sass_manifest.py", "check", "build/wheel-windows/bin/kt2n_engine.dll", "--reference",

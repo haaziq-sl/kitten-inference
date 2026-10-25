@@ -362,7 +362,7 @@ jobs:
   # Releases only: a v* tag pushed to KittenML/kitten-inference (never a fork), with PyPI trusted publishing. The order
   # on PyPI: the engine wheels (kitten-inference-tts2-cu12, -rocm: their own workflows), then kitten-inference-tts2
   # (and kitten-inference-tts08, its own workflow), then the umbrella, once every distribution its extras name is on
-  # PyPI: published first, its extras would point at nothing. Each wait gives up after 5 hours (the Windows CUDA wheel can take 2.5); once the missing
+  # PyPI: published first, its extras would point at nothing. Each wait gives up after 5 hours (the Windows CUDA wheel can take up to about 4); once the missing
   # distributions are up, re-run the failed job. A tag whose version is not a distribution's version uploads nothing
   # for it (a post release of another distribution).
   publish-tts2:

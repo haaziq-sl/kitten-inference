@@ -29,8 +29,8 @@ rebuild command with --target OBJECT; Unix Makefiles: make -C DIR SOURCE.o) and 
 reference, up to M times, until it is the reference's; then link and check the whole library. Other build tools: the
 object files are compiled again by the rebuild command, as without the option. On Windows nearly every compile of the
 CUDA-core decode kernels (src/cuda/legacy/tern_dec_cc.cu, 39 kernels for sm_61 and sm_75) varies in a few of them, so
-a compile whose 78 kernels all match is the exception (4 of 36 CI compiles; sm_61 and sm_75 vary independently); an
-object compile and check takes about 25 s there, a relink and full check about 4 minutes. The last line gives the
+a compile whose 78 kernels all match is the exception (5 of 65 CI compiles; sm_61 and sm_75 vary independently); an
+object compile and check takes 25 to 40 s there, a relink and full check about 4 minutes. The last line gives the
 number of object compiles and how many matched.
 
 LIB is an ELF shared library or object (Linux), or a Windows DLL or object file, whose CUDA fatbinary section
