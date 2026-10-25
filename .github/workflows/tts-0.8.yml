@@ -337,8 +337,30 @@ jobs:
         if: runner.os == 'macOS'
         run: mkdir -p /tmp/cibw && echo "TMPDIR=/tmp/cibw" >> "$GITHUB_ENV"
 
-      # Windows: bundle the MSVC C++ and OpenMP runtimes (msvcp140, vcomp140), which Python does not ship.
-      # kitten_inference is a namespace package, so delvewheel must not create its __init__.py.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+
+      # Windows: the wheels bundle the MSVC C++ and OpenMP runtimes (msvcp140, vcomp140), which Python does not
+      # ship. They must come from the redistributable folder of the Visual Studio that builds the engine: left to
+      # search PATH, delvewheel bundled an msvcp140 (14.40) older than the toolset (14.51), which Microsoft does
+      # not support. The "Wheel list and contents" job checks the versions.
+      - name: Find the MSVC runtime of the build toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          $redist = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt").Trim()
+          $arch = if ("${{ matrix.cibw_archs_windows }}" -eq "ARM64") { "arm64" } else { "x64" }
+          $dirs = @(Get-ChildItem "$vs\VC\Redist\MSVC\$redist\$arch" -Directory | Where-Object Name -Match '^Microsoft\.VC\d+\.(CRT|OpenMP)$')
+          "Visual Studio $vs, tools $tools, redist $redist ($arch)"
+          if ($dirs.Count -ne 2) { throw "expected one CRT and one OpenMP folder, found: $($dirs.Name -join ', ')" }
+          foreach ($d in $dirs) { Get-ChildItem $d.FullName -Filter *.dll | ForEach-Object { "{0} {1}" -f $_.FullName, $_.VersionInfo.FileVersion } }
+          "KITTEN_MSVC_REDIST=$($dirs.FullName -join ';')" >> $env:GITHUB_ENV
+
+      # kitten_inference is a namespace package, so delvewheel must not create its __init__.py. delvewheel is pinned
+      # and runs on its own Python, so every wheel (cp38 included) is repaired by the same version.
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
@@ -348,8 +370,9 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
-          CIBW_BEFORE_BUILD_WINDOWS: pip install "delvewheel>=1.10"
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+            uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_TEST_SKIP: ${{ matrix.test_skip }}
           CIBW_BUILD_VERBOSITY: "1"
@@ -366,17 +389,14 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
-          CIBW_BEFORE_BUILD_WINDOWS: pip install "delvewheel>=1.10"
-          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+            uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
           package-dir: tts-0.8
           output-dir: wheelhouse
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.13.5"
 
       - name: Test the cp38 arm64 wheel (Metal, then CPU)
         if: matrix.host_pythons != ''
@@ -583,16 +603,31 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Besides the package files, this checks two things per wheel: every bundled library is named in the
+      # shipped NOTICE, and on Windows every bundled MSVC runtime DLL is at least as new as the toolset that
+      # linked _engine.pyd (Microsoft supports only that combination).
       - name: List wheels and check their contents
         shell: bash
         run: |
           python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import hashlib, pathlib, sys, zipfile
+          import hashlib, json, pathlib, re, struct, sys, zipfile
+
+          def linker_version(pe):  # PE optional header: MajorLinkerVersion, MinorLinkerVersion
+              off = struct.unpack_from("<I", pe, 0x3C)[0]
+              assert pe[off:off + 4] == b"PE\0\0"
+              return pe[off + 26], pe[off + 27]
+
+          def file_version(pe):  # VS_FIXEDFILEINFO: signature, struct version, FileVersionMS, FileVersionLS
+              i = pe.find(struct.pack("<I", 0xFEEF04BD))
+              ms, ls = struct.unpack_from("<II", pe, i + 8)
+              return ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF
+
           wheels = sorted(pathlib.Path("dist").glob("*.whl"))
           print(f"{len(wheels)} wheels\n\n| wheel | bytes | sha256 |\n|---|---:|---|")
-          bad = []
+          bad, libs_seen, runtimes, sboms = [], {}, [], {}
           for w in wheels:
-              names = zipfile.ZipFile(w).namelist()
+              z = zipfile.ZipFile(w)
+              names = z.namelist()
               if "kitten_inference/__init__.py" in names:
                   bad.append(f"{w.name}: ships kitten_inference/__init__.py")
               if not any(n.startswith("kitten_inference/tts08/_engine") for n in names):
@@ -601,12 +636,44 @@ jobs:
                   bad.append(f"{w.name}: no model_defs")
               if "macosx" in w.name and "kitten_inference/tts08/metal_kernels.metallib" not in names:
                   bad.append(f"{w.name}: no metallib")
+              notice = next((n for n in names if n.endswith(".dist-info/licenses/NOTICE")), None)
+              notice_text = z.read(notice).decode() if notice else ""
+              for lic in ("LICENSE", "licenses/pybind11.txt", "licenses/GPL-3.0.txt",
+                          "licenses/GCC-exception-3.1.txt", "licenses/libc++.txt"):
+                  if not any(n.endswith(".dist-info/licenses/" + lic) for n in names):
+                      bad.append(f"{w.name}: licence file {lic} missing")
+              libs = [n for n in names if re.match(r"[^/]+\.libs/|.*/\.dylibs/", n) and not n.endswith("/")]
+              for lib in libs:
+                  base = re.sub(r"-[0-9a-f]{8,}.*$", "", lib.rsplit("/", 1)[-1])
+                  libs_seen.setdefault(base, set()).add(w.name.split("-")[-1][:-4])
+                  if base.lower() not in notice_text.lower():
+                      bad.append(f"{w.name}: bundled {lib} is not named in NOTICE")
               if "-win_" in w.name:
-                  libs = [n.lower() for n in names if n.startswith("kitten_inference_tts08.libs/")]
+                  pyd = next(n for n in names if re.match(r"kitten_inference/tts08/_engine.*\.pyd$", n))
+                  need = linker_version(z.read(pyd))
                   for dll in ("msvcp140", "vcomp140"):
-                      if not any(n.split("/")[-1].startswith(dll) for n in libs):
+                      if not any(l.split("/")[-1].lower().startswith(dll) for l in libs):
                           bad.append(f"{w.name}: {dll} not bundled")
+                  for lib in libs:
+                      if re.match(r"(msvcp|vcomp|vcruntime|concrt)\d", lib.split("/")[-1].lower()):
+                          have = file_version(z.read(lib))
+                          runtimes.append(f"{w.name}: {lib.split('/')[-1]} {'.'.join(map(str, have))}"
+                                          f" (_engine.pyd linker {need[0]}.{need[1]})")
+                          if have[:2] < need:
+                              bad.append(f"{w.name}: {lib} is {have}, older than the {need} toolset")
+              for n in names:
+                  if n.endswith(".cdx.json"):
+                      for c in json.loads(z.read(n)).get("components", []):
+                          sboms.setdefault(f"{c.get('name')} {c.get('version')}", set()).add(w.name.split("-")[-1][:-4])
               print(f"| {w.name} | {w.stat().st_size} | {hashlib.sha256(w.read_bytes()).hexdigest()} |")
+          print("\nBundled libraries (all named in NOTICE unless listed below):")
+          for base, tags in sorted(libs_seen.items()):
+              print(f"- {base}: {', '.join(sorted(tags))}")
+          print("\nMSVC runtime versions:")
+          print("\n".join(f"- {r}" for r in runtimes))
+          print("\nauditwheel SBOM components:")
+          for comp, tags in sorted(sboms.items()):
+              print(f"- {comp}: {', '.join(sorted(tags))}")
           print("\n" + ("\n".join(bad) if bad else "contents ok"))
           sys.exit(1 if bad else 0)
           PY
