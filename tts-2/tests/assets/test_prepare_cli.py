@@ -190,6 +190,12 @@ def test_summary_prints_size_and_next_command(tmp_path, capsys):
     assert len(out) == 4 and "--reference-audio" in out[3] and "--reference-transcript" in out[3]
 
 
+def test_next_command_quoting_follows_the_platform():
+    assert prepare.shell_quote("/data/my models/kitten", windows=False) == "'/data/my models/kitten'"
+    assert prepare.shell_quote(r"D:\models\kitten", windows=True) == r"D:\models\kitten"
+    assert prepare.shell_quote(r"D:\my models\kitten", windows=True) == r'"D:\my models\kitten"'
+
+
 def test_human_size():
     assert prepare.human_size(999) == "999 bytes"
     assert prepare.human_size(2_000_000) == "2.00 MB"

@@ -225,11 +225,18 @@ def human_size(n: int) -> str:
     return f"{n} bytes"
 
 
+def shell_quote(text: str, windows: bool | None = None) -> str:
+    """Quote one argument for the user's shell: POSIX quoting, or the Windows command-line rules on Windows."""
+    if os.name == "nt" if windows is None else windows:
+        return subprocess.list2cmdline([text])
+    return shlex.quote(text)
+
+
 def print_summary(out: Path, config_path: Path, *, cloning: bool) -> None:
     count, total = bundle_size(out)
     print(config_path)
     print(f"Bundle: {out} ({count} files, {human_size(total)})")
-    assets = shlex.quote(str(out))
+    assets = shell_quote(str(out))
     print(f"Next: kitten-tts-native --assets {assets} --text 'Hello from Kitten TTS.' --voice Bruno "
           "--output hello.wav")
     if cloning:
