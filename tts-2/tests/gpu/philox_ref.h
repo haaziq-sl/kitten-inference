@@ -1,6 +1,7 @@
-// CPU reference of cuRAND's Philox4x32-10 device generator (curand_init / curand4 / curand_normal4 as written in
-// CUDA 12.8's curand_kernel.h, curand_philox4x32_x.h and curand_normal.h), for checking that the HIP build's
-// generator (rocRAND, include/kt2n/gpu_rand.h) and the CUDA build's cuRAND give the same stream.
+// CPU reference of the Philox4x32-10 counter-based generator (J. K. Salmon et al., "Parallel random numbers: as
+// easy as 1, 2, 3", SC '11; the Random123 library) and the Box-Muller transform, in the stream layout of cuRAND's
+// device API (curand_init / curand4 / curand_normal4), for checking that the HIP build's generator (rocRAND,
+// include/kt2n/gpu_rand.h) and the CUDA build's cuRAND give the same stream.
 #pragma once
 
 #include <cmath>

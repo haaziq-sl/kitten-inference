@@ -1,3 +1,8 @@
+// The token parser below (TokenParser) is derived from NVIDIA NeMo Text Processing,
+// nemo_text_processing/text_normalization/token_parser.py:
+//   Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+//   Licensed under the Apache License, Version 2.0 (tts-2/licenses/Apache-2.0.txt).
+// KittenML ported it to C++ and changed it to run on the engine's OpenFst graphs (see tts-2/NOTICE).
 #include "nemo.h"
 
 #include <fst/fstlib.h>

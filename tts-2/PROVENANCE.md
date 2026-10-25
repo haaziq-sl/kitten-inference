@@ -1,14 +1,15 @@
 # Provenance
 
-This file records where the code in this repository comes from, which upstream files the preparation tool downloads, and what was left out. Licenses and copyright notices are in [NOTICE](NOTICE) and [licenses/](licenses/).
+This file records where the Kitten TTS 2 code in `tts-2/` of this repository comes from, which upstream files the preparation tool downloads, and what was left out. Licenses and copyright notices are in [NOTICE](NOTICE) and [licenses/](licenses/).
 
 ## Origin of the code
 
 The engine was first published as the `native/` directory, together with a command-line front end in `tools/kitten-tts/`, in [KittenML/kitten-tts-2-cpp pull request #6](https://github.com/KittenML/kitten-tts-2-cpp/pull/6), head commit `fd3ab3c40eae3b1f32440bfc6859e7756c11e8a9` ("kitten-tts: add native CUDA inference backend").
 
-This repository starts from that commit:
+The engine in `tts-2/` starts from that commit:
 
-- The contents of `native/` moved to the repository root. The model file formats, numerics and precision are unchanged, and the C API (`include/kt2n/engine.h`) keeps ABI version 2: the types, functions and configuration fields of `fd3ab3c` keep their layout, and their meaning except for the changes listed at the end of this file.
+- The contents of `native/` moved to `tts-2/` (first the root of a repository of its own, then this folder of
+  [KittenML/kitten-inference](https://github.com/KittenML/kitten-inference)). The model file formats, numerics and precision are unchanged, and the C API (`include/kt2n/engine.h`) keeps ABI version 2: the types, functions and configuration fields of `fd3ab3c` keep their layout, and their meaning except for the changes listed at the end of this file.
 - The command-line tool was rewritten as `kitten-tts-native` in `cli/`, from `tools/kitten-tts/native_cli.cpp` and related files. It uses the engine's own JSON and SHA-256 code, reads only local files and has no network code.
 - Downloading moved into `tools/prepare_assets.py`, which takes the latest model revision and pins every other source listed below.
 
@@ -43,7 +44,18 @@ These parts re-implement published code. [NOTICE](NOTICE) gives each license.
 - **An unused test script** (`tests/text/voice_contract.py`) that no test target ran.
 - **Network code in the command-line tool.** The old front end downloaded files at run time through llama.cpp's common library and libcurl and parsed JSON with a vendored copy of nlohmann/json. The new tool reads only a prepared local directory, so these dependencies are gone.
 - **The CPU backend.** The llama.cpp/GGML speech model and LibTorch decoder stay in kitten-tts-2-cpp and are not part of this repository.
-- **Not included:** a Python SDK, wheel or bindings; CI workflow files; a network server.
+- **Not included:** a network server.
+
+## Added in kitten-inference
+
+- `python/`: the Python package `kitten_inference.tts2` (distribution `kitten-inference-tts2`). Its API calls the
+  engine's C API with `ctypes`, its `kitten-tts2` command runs `kitten-tts-native`, and it prepares the model on first
+  use with a copy of `tools/kt2n_assets`.
+- The torch-free weight-norm fold (`tools/kt2n_assets/weight_norm.py`, NumPy), so preparation needs no PyTorch.
+- `packaging/`: the build scripts of the engine wheels `kitten-inference-tts2-cu12` (CUDA, Linux and Windows) and
+  `kitten-inference-tts2-rocm` (HIP), with the check that their GPU code is the default build's.
+- The GitHub Actions workflows that build, test and release these packages (`.github/workflows/` at the repository
+  root).
 
 ## What did not change
 

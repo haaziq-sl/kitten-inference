@@ -75,15 +75,35 @@ Those packages are used only by the maintainers' export tool
 The decoder conversion's weight-norm fold (tools/kt2n_assets/weight_norm.py)
 evaluates, in NumPy, the same floating-point operations as PyTorch's CUDA
 weight-norm kernel (aten/src/ATen/native/cuda/WeightNorm.cu, BSD-3-Clause),
-so that it reproduces the weights folded with PyTorch; it contains no PyTorch
-code.
+so that it reproduces the weights folded with PyTorch; that file itself
+contains no PyTorch code.
+
+
+PyTorch kernels reproduced in the engine
+----------------------------------------
+So that the engine's results match the reference model bit for bit, some of
+its GPU code is written after PyTorch 2.7.1's CUDA kernels (BSD-3-Clause):
+- the LayerNorm in src/cuda/kernels/ops_spk.cu follows
+  aten/src/ATen/native/cuda/layer_norm_kernel.cu (vectorized_layer_norm_kernel
+  and its Welford helpers compute_stats, cuWelfordOnlineSum,
+  cuWelfordCombine), with the same thread layout and order of operations;
+- the sampling noise (src/cuda/kernels/samp_philox.cuh), the sampler's
+  softmax block (src/cuda/kernels/samp_sampler.cu) and a scan in the vocoder
+  (src/render/hift/hift.cu) follow the launch geometry and arithmetic of
+  PyTorch's exponential_, softmax and scan kernels.
+This code is compiled into the CUDA and HIP engine libraries (both Python
+engine wheels). PyTorch's copyright notice and license: licenses/PyTorch.txt.
 
 
 Text normalization
 ------------------
 The normalization token parser in src/text/nemo.cc is derived from NVIDIA
-NeMo Text Processing (Apache-2.0):
+NeMo Text Processing (nemo_text_processing/text_normalization/token_parser.py,
+Apache-2.0; see licenses/Apache-2.0.txt):
+Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
 https://github.com/NVIDIA/NeMo-text-processing
+KittenML ported it to C++ and changed it to run on the engine's OpenFst
+graphs.
 Preparation reads English word lists from the nemo_text_processing 1.2.0 wheel
 on PyPI (Apache-2.0; read as data, never installed) and English grammar data
 from KittenML/kitten-text-processing at commit 1988d61 (Apache-2.0):
@@ -119,6 +139,20 @@ that acknowledgement does not replace the LGPL notice on FFmpeg's file.
 KittenML's adaptation uses mono streaming C++ classes, float64 time-domain
 correlation, staged speed changes and an exact output-length policy.
 This code remains present when the optional FFmpeg encoder build is disabled.
+Source of the adapted files, which are compiled into every engine library:
+src/post/atempo.cc and include/kt2n/post/atempo.h in
+https://github.com/KittenML/kitten-inference/tree/v<version>/tts-2, where
+<version> is the version of the package (for example v0.2.0). The
+kitten-inference-tts2-cu12 and kitten-inference-tts2-rocm wheels also carry
+both files, in a folder lgpl-source/ beside the license texts.
+
+The Windows build's log1pf (src/render/log1pf_fdlibm.h, used by
+src/render/rng.cc) is fdlibm's s_log1pf.c as in glibc:
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+Developed at SunPro, a Sun Microsystems, Inc. business. Permission to use,
+copy, modify, and distribute this software is freely granted, provided that
+this notice is preserved. Conversion to float by Ian Lance Taylor, Cygnus
+Support. The notice is also in licenses/fdlibm.txt.
 
 The float32 ziggurat constants in src/render/ziggurat_f32.inc are copied from
 NumPy 1.26.4, Copyright (c) 2005-2023, NumPy Developers, under BSD-3-Clause.
@@ -138,7 +172,25 @@ NVIDIA's terms; it is not Apache-2.0 material. CUDA 12.8's EULA lists
 libcudart_static.a among redistributable components, subject to its distribution
 requirements. Review those terms before distributing binaries:
 https://docs.nvidia.com/cuda/archive/12.8.0/eula/index.html
-The ROCm (HIP) build contains no NVIDIA code; see the next section.
+
+The CUDA build also compiles cuRAND's device functions from the CUDA
+Toolkit's headers (curand_kernel.h: curand_init, curand_normal4, used by the
+vocoder in src/render/hift/hift.cu) into its GPU code. They are NVIDIA
+software under the same EULA. Their Philox4x32-10 generator
+(curand_philox4x32_x.h) also carries D. E. Shaw Research's Random123 notice,
+which licenses/Random123.txt reproduces.
+
+Philox4x32-10 is the counter-based generator of J. K. Salmon, M. A. Moraes,
+R. O. Dror and D. E. Shaw, "Parallel random numbers: as easy as 1, 2, 3"
+(SC '11), from the Random123 library. src/cuda/kernels/samp_philox.cuh (both
+builds), include/kt2n/gpu_rand.h (HIP build, on rocRAND) and
+tests/gpu/philox_ref.h (tests) implement it and the Box-Muller transform with
+the stream layout of cuRAND's device API, so that a seed gives the same
+numbers in every build.
+
+The ROCm (HIP) build links no NVIDIA library and does not use cuRAND: its
+random numbers come from rocRAND and include/kt2n/gpu_rand.h (above). See the
+next section.
 
 
 AMD ROCm (HIP build)

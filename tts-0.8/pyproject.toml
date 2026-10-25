@@ -10,7 +10,11 @@ name = "kitten-inference-tts08"
 version = "0.2.0"
 description = "Kitten TTS 0.8 (15M, 40M and 80M models) on a native C++ engine"
 readme = "README.md"
-license = "Apache-2.0"
+# KittenML's code is Apache-2.0; the wheels also carry third-party code (NOTICE says which wheel has what): stb (MIT)
+# and pybind11 (BSD-3-Clause) in every wheel, libgomp (GPL-3.0-or-later WITH GCC-exception-3.1) in the Linux wheels,
+# libc++ (Apache-2.0 WITH LLVM-exception) in the Android wheel and the Microsoft Visual C++ runtime in the Windows
+# wheels.
+license = "Apache-2.0 AND MIT AND BSD-3-Clause AND GPL-3.0-or-later WITH GCC-exception-3.1 AND Apache-2.0 WITH LLVM-exception AND LicenseRef-Microsoft-Visual-C-Runtime"
 license-files = ["LICENSE", "NOTICE", "licenses/*.txt"]
 authors = [{ name = "KittenML" }]
 requires-python = ">=3.8"
