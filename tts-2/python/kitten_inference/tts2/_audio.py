@@ -25,6 +25,14 @@ FFMPEG_MISSING = ("ffmpeg was not found: voice cloning uses it to read the refer
                    else "sudo apt-get install -y ffmpeg"))
 
 
+class AudioError(ValueError):
+    """The reference recording could not be read or decoded."""
+
+
+class FFmpegNotFound(AudioError, FileNotFoundError):
+    """The ffmpeg executable is not on PATH."""
+
+
 def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:
     """The ffmpeg arguments: from standard input, or with ``path`` from that file (made absolute, so a name that starts
     with '-' is never read as an option)."""
