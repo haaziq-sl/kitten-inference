@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Size check of built kitten-inference-tts2-cu12 wheels (a CI step).
 
-  size_check.py WHEEL... [--max-mb 300]
+  size_check.py WHEEL... [--max-mb 100]
 
-Prints each wheel's size and its largest members (uncompressed and compressed). PyPI's default file limit is 100 MB:
-a wheel above it is reported as a warning (the project then needs a larger limit from PyPI). Above --max-mb the
-check fails: the wheel has grown far beyond what the size work measured (tts-2/packaging/README.md).
+Prints each wheel's size and its largest members (uncompressed and compressed), and fails when a wheel is larger than
+--max-mb: by default PyPI's file limit of 100 MB, above which the upload needs a larger limit from PyPI. The wheels
+were about 79 MB on 25 Oct 2026 (Linux 78.9 MB, Windows 78.7 MB).
 """
 import argparse
 import os
@@ -14,7 +14,7 @@ import zipfile
 
 p = argparse.ArgumentParser()
 p.add_argument("wheels", nargs="+")
-p.add_argument("--max-mb", type=float, default=300.0)
+p.add_argument("--max-mb", type=float, default=100.0)
 a = p.parse_args()
 ok = True
 summary = []
@@ -27,7 +27,6 @@ for w in a.wheels:
         print(f"  {i.filename}: {i.file_size / 1e6:.1f} MB, {i.compress_size / 1e6:.1f} MB compressed")
     line = f"{os.path.basename(w)} {size / 1e6:.1f} MB"
     if size > 100e6:
-        print(f"::warning::{os.path.basename(w)} is {size / 1e6:.1f} MB, above PyPI's default 100 MB file limit")
         line += " (above PyPI's default 100 MB limit)"
     if size > a.max_mb * 1e6:
         print(f"::error::{os.path.basename(w)} is {size / 1e6:.1f} MB, above {a.max_mb:.0f} MB")
