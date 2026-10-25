@@ -34,11 +34,17 @@ install(DIRECTORY "${FST_SRC}/src/include/fst" DESTINATION include)
 """
 
 
+# MSVC C runtime of the libraries: the DLL one (/MD, the engine's windows preset) or, with --msvc-static-runtime, the
+# static one (/MT, the wheel-windows preset).
+MSVC_RUNTIME = "MultiThreadedDLL"
+
+
 def cmake_build(source, build, prefix, args, jobs):
     """Configure, build and install one CMake project with Ninja + the MSVC from the developer prompt."""
     subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                     "-DCMAKE_C_COMPILER=cl", "-DCMAKE_CXX_COMPILER=cl", f"-DCMAKE_INSTALL_PREFIX={prefix}",
-                    "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *args],
+                    f"-DCMAKE_MSVC_RUNTIME_LIBRARY={MSVC_RUNTIME}", "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+                    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *args],
                    check=True)
     subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs)], check=True)
     subprocess.run(["cmake", "--install", str(build)], check=True)
@@ -75,7 +81,12 @@ def main():
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--msvc-static-runtime", action="store_true",
+                        help="Windows: build with the static C runtime (/MT), for the wheel-windows preset")
     args = parser.parse_args()
+    if args.msvc_static_runtime:
+        global MSVC_RUNTIME
+        MSVC_RUNTIME = "MultiThreaded"
     prefix = args.prefix.resolve()
     cache = (args.cache or prefix / "sources").resolve()
     cache.mkdir(parents=True, exist_ok=True)

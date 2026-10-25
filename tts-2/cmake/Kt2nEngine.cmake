@@ -134,8 +134,15 @@ if(TARGET kt2n_engine)
   include(GNUInstallDirs)
   include(CMakePackageConfigHelpers)
   add_library(kt2n::engine ALIAS kt2n_engine)
-  set_target_properties(kt2n_engine PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION 2
-    EXPORT_NAME engine BUILD_RPATH_USE_ORIGIN ON INSTALL_RPATH "$ORIGIN")
+  # KT2N_UNVERSIONED_LIBRARY (the wheel presets): one file, libkt2n_engine.so (its SONAME too), with no versioned names
+  # or symlinks, which a wheel cannot hold.
+  option(KT2N_UNVERSIONED_LIBRARY "Build libkt2n_engine.so without version suffixes and symlinks (Python wheels)" OFF)
+  if(KT2N_UNVERSIONED_LIBRARY)
+    set_target_properties(kt2n_engine PROPERTIES EXPORT_NAME engine BUILD_RPATH_USE_ORIGIN ON INSTALL_RPATH "$ORIGIN")
+  else()
+    set_target_properties(kt2n_engine PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION 2
+      EXPORT_NAME engine BUILD_RPATH_USE_ORIGIN ON INSTALL_RPATH "$ORIGIN")
+  endif()
   set_property(TARGET kt2n_engine PROPERTY INTERFACE_INCLUDE_DIRECTORIES
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>;$<INSTALL_INTERFACE:include>")
   install(TARGETS kt2n_engine EXPORT kt2nTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

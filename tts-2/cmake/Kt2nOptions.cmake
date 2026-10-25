@@ -40,6 +40,24 @@ if(MSVC)
   add_link_options("$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:LINKER:/STACK:8388608>")
 endif()
 
+# Package size (the wheel presets; both OFF by default). GCC/Clang toolchains only; MSVC's Release link already
+# drops unreferenced code (/OPT:REF) and keeps no symbols in the DLL.
+#   KT2N_GC_SECTIONS  one section per function and data object (host code, also nvcc's host side), and the linker
+#                     drops the unreferenced ones (--gc-sections)
+#   KT2N_STRIP        link with -s: no symbol table in the shared library and programs (the exported C API stays)
+option(KT2N_GC_SECTIONS "Host code in per-function sections, unreferenced ones dropped at link (--gc-sections)" OFF)
+option(KT2N_STRIP "Strip the symbol table from the linked library and programs (-s)" OFF)
+if(NOT MSVC)
+  if(KT2N_GC_SECTIONS)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-ffunction-sections> $<$<COMPILE_LANGUAGE:C,CXX>:-fdata-sections>
+                        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-ffunction-sections,-fdata-sections>)
+    add_link_options(LINKER:--gc-sections)
+  endif()
+  if(KT2N_STRIP)
+    add_link_options(LINKER:-s)
+  endif()
+endif()
+
 # Exact numerics: refuse flags that change floating-point results.
 foreach(_var IN ITEMS CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELWITHDEBINFO
                       CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_MINSIZEREL)

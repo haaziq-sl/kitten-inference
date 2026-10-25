@@ -27,6 +27,12 @@
 #                        paths an AMD build runs, for validating them on an NVIDIA GPU (include/kt2n/gpu_arch.h).
 #                        For validation only: slower than the default CUDA build.
 #
+# Package size (the wheel presets; the defaults leave the build as it is):
+#   KT2N_CUDA_COMPRESS_MODE  nvcc --compress-mode for the embedded GPU code (CUDA 12.8+): default, size, speed,
+#                        balance or none; empty (default) passes nothing. It changes how the code is stored, not the
+#                        code: the driver decompresses it when it loads the library.
+#   KT2N_CUDA_LINEINFO   ON (default): -lineinfo, source lines for profilers; OFF leaves them out.
+#
 # Numerics: never --use_fast_math, never -ftz=true (configure refuses them).
 # The CUDA runtime is linked statically (the machine that runs it may have no nvcc and we
 # do not want to depend on a particular libcudart.so).
@@ -36,6 +42,11 @@ set(KT2N_HIP_ARCHS "gfx1100;gfx1101;gfx1102;gfx1200;gfx1201" CACHE STRING "AMD G
 set(KT2N_HIP_FP_CONTRACT "fast-honor-pragmas" CACHE STRING
   "HIP device -ffp-contract mode: fast-honor-pragmas (as nvcc --fmad=true), on, off")
 option(KT2N_PORTABLE "Compile the portable (AMD) software paths instead of SM-specific instructions" OFF)
+set(KT2N_CUDA_COMPRESS_MODE "" CACHE STRING "nvcc --compress-mode for the GPU code (default, size, speed, balance, none; empty: not passed)")
+option(KT2N_CUDA_LINEINFO "Compile CUDA code with -lineinfo (source lines for profilers)" ON)
+if(KT2N_CUDA_COMPRESS_MODE AND NOT KT2N_CUDA_COMPRESS_MODE MATCHES "^(default|size|speed|balance|none)$")
+  message(FATAL_ERROR "KT2N_CUDA_COMPRESS_MODE must be default, size, speed, balance or none (got '${KT2N_CUDA_COMPRESS_MODE}')")
+endif()
 set(KT2N_CUDA "AUTO" CACHE STRING "Build CUDA targets: AUTO, ON or OFF")
 set_property(CACHE KT2N_CUDA PROPERTY STRINGS AUTO ON OFF)
 set(_kt2n_default_cuda_archs "61-real;75-real;80;86;89;90;100;120")
@@ -240,8 +251,16 @@ function(kt2n_cuda_target target)
     CUDA_STANDARD 20
     CUDA_STANDARD_REQUIRED ON)
   # -lineinfo for profilers; explicit exact-math flags so nothing can sneak in.
-  target_compile_options(${target} PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo --ftz=false --prec-div=true --prec-sqrt=true>)
+  if(KT2N_CUDA_LINEINFO)
+    target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo --ftz=false --prec-div=true --prec-sqrt=true>)
+  else()
+    target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANGUAGE:CUDA>:--ftz=false --prec-div=true --prec-sqrt=true>)
+  endif()
+  if(KT2N_CUDA_COMPRESS_MODE)
+    target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--compress-mode=${KT2N_CUDA_COMPRESS_MODE}>)
+  endif()
 endfunction()
 
 function(kt2n_print_summary)
