@@ -138,7 +138,13 @@ class KittenTTS2:
         self._max_prefix_ids = 0
         self._verified = set()  # model files whose SHA-256 matched in this process
         self.backend = _backend.find(backend)
-        self._lib = _abi.load(self.backend.lib)
+        try:
+            self._lib = _abi.load(self.backend.lib)
+        except _abi.LibraryError as exc:
+            if self.backend.name == "rocm" and "libamdhip64" in str(exc):
+                raise _abi.LibraryError(f"{exc}. The AMD engine needs the ROCm 7 runtime (libamdhip64.so.7) "
+                                        "installed on the system") from None
+            raise
         self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=revision,
                                          cache_dir=cache_dir)
         self._bundle = _bundle.load(self.model_dir)
@@ -366,7 +372,10 @@ class KittenTTS2:
                                "then load it here with load_voice()")
         pcm = np.ascontiguousarray(_audio.decode_reference(reference_audio_path), dtype=np.float32)
         with self._lock:
-            engine = self._ensure_mode(CLONING)
+            try:
+                engine = self._ensure_mode(CLONING)
+            except EngineError as exc:  # the engine with the cloning model did not fit (the previous one is back)
+                raise _clone_error(exc, starting=True) from None
             for old in list(self._custom_ids.values()):
                 engine.voice_evict(old)
             self._custom_ids.clear()
@@ -481,8 +490,8 @@ def _voice_error(exc: EngineError) -> Exception:
     return exc
 
 
-def _clone_error(exc: EngineError) -> Exception:
-    if exc.status == _abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE:
+def _clone_error(exc: EngineError, starting: bool = False) -> Exception:
+    if starting or exc.status == _abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE:
         return RuntimeError(f"this GPU cannot clone voices: {exc.message}. Cloning needs about 13 GB of free GPU "
                             "memory (a 16 GB card or larger); clone and save the voice there, then load it here")
     if exc.status in (_abi.ERR_INVALID_AUDIO, _abi.ERR_INVALID_AUDIO_DURATION, _abi.ERR_INVALID_AUDIO_SIGNAL,

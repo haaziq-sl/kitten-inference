@@ -29,9 +29,11 @@ class CustomBuildHook(BuildHookInterface):
         root = Path(self.root)
         for source, target in SOURCES.items():
             src = (root / source).resolve()
-            if src.exists():
-                for path, dest in _files(src, target):
-                    build_data["force_include"][str(path)] = dest
-            elif not (root / target).exists():
-                raise FileNotFoundError(f"{src} is missing (and {target} is not in this source tree): build from a "
-                                        "checkout of the repository or from the sdist")
+            if not src.exists():  # building the wheel from the sdist: the copy made for the sdist
+                src = root / target
+            if not src.exists():
+                raise FileNotFoundError(f"{(root / source).resolve()} is missing: build from a checkout of the "
+                                        "repository or from the sdist")
+            # The normal file selection excludes these paths (pyproject.toml), so each file is added exactly once.
+            for path, dest in _files(src, target):
+                build_data["force_include"][str(path)] = dest

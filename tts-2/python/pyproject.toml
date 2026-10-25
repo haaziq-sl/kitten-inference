@@ -42,7 +42,9 @@ Issues = "https://github.com/KittenML/kitten-inference/issues"
 core-metadata-version = "2.4"
 # kitten_inference/__init__.py belongs to the umbrella distribution (kitten-inference): only tts2/ ships here.
 only-include = ["kitten_inference/tts2"]
-exclude = ["__pycache__", "*.pyc"]
+# _assets, NOTICE and licenses are added by hatch_build.py (copied from tts-2/ at build time).
+exclude = ["__pycache__", "*.pyc", "/kitten_inference/tts2/_assets", "/kitten_inference/tts2/NOTICE",
+           "/kitten_inference/tts2/licenses"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
@@ -50,7 +52,8 @@ path = "hatch_build.py"
 [tool.hatch.build.targets.sdist]
 core-metadata-version = "2.4"
 include = ["kitten_inference/tts2", "tests", "hatch_build.py", "README.md", "LICENSE"]
-exclude = ["__pycache__", "*.pyc"]
+exclude = ["__pycache__", "*.pyc", "/kitten_inference/tts2/_assets", "/kitten_inference/tts2/NOTICE",
+           "/kitten_inference/tts2/licenses"]
 
 [tool.hatch.build.targets.sdist.hooks.custom]
 path = "hatch_build.py"
