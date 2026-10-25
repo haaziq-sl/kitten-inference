@@ -56,7 +56,7 @@ Options:
 | Windows ARM64 | 3.11–3.14 | built, not tested |
 | Android ARM64 | 3.13 | built, not tested |
 
-- Linux needs glibc 2.28 or newer (Ubuntu 20.04, Debian 10, RHEL 8 and later).
+- Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later.
 - x86_64 needs a CPU with AVX2 (Intel since 2013, AMD since 2015).
 - Linux ARM64 needs an ARMv8.2 CPU with dot-product instructions, such as a Raspberry Pi 5.
   A Raspberry Pi 4 is not supported.

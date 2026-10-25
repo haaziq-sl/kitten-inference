@@ -56,10 +56,6 @@ jobs:
               cp312-manylinux_x86_64
               cp313-manylinux_x86_64
               cp314-manylinux_x86_64
-            # soundfile and espeakng_loader ship glibc 2.28 wheels, so these wheels are tested
-            # on the runner itself (next step) instead of inside the glibc 2.17 build container.
-            test_skip: "*"
-            host_pythons: "3.8 3.9 3.10 3.11 3.12 3.13 3.14"
 
           - name: Linux x86_64 manylinux_2_28 CPython 3.8-3.14
             artifact: linux-x86_64-manylinux-2-28
@@ -79,8 +75,6 @@ jobs:
               cp312-manylinux_x86_64
               cp313-manylinux_x86_64
               cp314-manylinux_x86_64
-            test_skip: ""
-            host_pythons: ""
 
           - name: Linux ARM64 manylinux2014 CPython 3.8-3.14
             artifact: linux-aarch64-manylinux2014
@@ -100,8 +94,6 @@ jobs:
               cp312-manylinux_aarch64
               cp313-manylinux_aarch64
               cp314-manylinux_aarch64
-            test_skip: "*"
-            host_pythons: "3.8 3.9 3.10 3.11 3.12 3.13 3.14"
 
           - name: Linux ARM64 manylinux_2_28 CPython 3.8-3.14
             artifact: linux-aarch64-manylinux-2-28
@@ -121,13 +113,13 @@ jobs:
               cp312-manylinux_aarch64
               cp313-manylinux_aarch64
               cp314-manylinux_aarch64
-            test_skip: ""
-            host_pythons: ""
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build and test wheels
+      # The wheels are tested on the runner, not in the build container: the espeak-ng
+      # library from espeakng_loader needs glibc 2.29, newer than both manylinux images.
+      - name: Build wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
@@ -136,26 +128,18 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: ${{ matrix.manylinux_image }}
           CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
           CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
-          CIBW_ENVIRONMENT_LINUX: HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_DISABLE_PROGRESS_BARS=1
-          CIBW_TEST_COMMAND: >-
-            python -m unittest discover -s {package}/tests -v &&
-            python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-            --cache-dir {project}/.hf-cache --expect-backend cpu
-          CIBW_TEST_SKIP: ${{ matrix.test_skip }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
           package-dir: tts-0.8
           output-dir: wheelhouse
 
       - uses: astral-sh/setup-uv@v6
-        if: matrix.host_pythons != ''
 
-      - name: Test wheels on the runner
-        if: matrix.host_pythons != ''
+      - name: Test every wheel on the runner
         shell: bash
         run: |
           set -euo pipefail
-          for py in ${{ matrix.host_pythons }}; do
+          for py in 3.8 3.9 3.10 3.11 3.12 3.13 3.14; do
             tag="cp${py/./}"
             echo "::group::Python $py"
             uv venv -q -p "$py" "venv-$tag"
@@ -286,6 +270,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # espeak-ng ignores a data path of 160 characters or more, and the default macOS temp
+      # dir makes the test venv's espeak-ng-data path 161 characters long.
+      - name: Use a short temp dir
+        if: runner.os == 'macOS'
+        run: mkdir -p /tmp/cibw && echo "TMPDIR=/tmp/cibw" >> "$GITHUB_ENV"
+
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
@@ -383,6 +373,40 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+  oldest-linux:
+    # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
+    # pip picks the wheel, as it would for a user.
+    name: Ubuntu 20.04, Python 3.8, x86_64
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: tts08-wheels-linux-x86_64-*
+          path: wheelhouse
+          merge-multiple: true
+
+      - name: Install
+        run: |
+          set -eu
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv > /dev/null
+          ldd --version | head -1
+          python3 -m venv venv
+          venv/bin/python -m pip install -q --upgrade pip
+          venv/bin/python -m pip install --find-links wheelhouse kitten-inference-tts08
+          venv/bin/python -m pip list | grep -i -E "kitten|espeak|phonemizer|soundfile|numpy|huggingface"
+
+      - name: Test
+        run: |
+          venv/bin/python -m unittest discover -s tts-0.8/tests -v
+          venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
+
   lowest-deps:
     name: Lowest dependencies, Linux x86_64, Python ${{ matrix.python }}
     needs: linux-wheels
@@ -469,13 +493,14 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [linux-wheels, desktop-wheels, android-wheels, lowest-deps, wheel-list]
+    needs: [linux-wheels, desktop-wheels, android-wheels, oldest-linux, lowest-deps, wheel-list]
     if: >-
       always() &&
       github.repository == 'KittenML/kitten-inference' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.linux-wheels.result == 'success' &&
       needs.desktop-wheels.result == 'success' &&
+      needs.oldest-linux.result == 'success' &&
       needs.lowest-deps.result == 'success' &&
       needs.wheel-list.result == 'success'
     runs-on: ubuntu-latest

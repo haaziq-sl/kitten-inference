@@ -15,8 +15,9 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "KittenML" }]
 requires-python = ">=3.8"
 # Lower bounds are the oldest versions tested (CI job "lowest dependencies").
+# espeakng_loader 0.2.4 is the first whose Linux x86_64 library runs on glibc 2.29 (older ones need 2.34).
 dependencies = [
-    "espeakng_loader>=0.2.0",
+    "espeakng_loader>=0.2.4",
     "phonemizer>=3.0",
     "soundfile>=0.12.1",
     "numpy>=1.23",
