@@ -211,3 +211,23 @@ def test_pinned_wheel_checks_before_caching_and_replaces_a_bad_cached_copy(tmp_p
     assert cached.read_bytes() == wheel and len(calls) == 1
     assert prepare.pinned_wheel(tmp_path, offline=True, fetch=lambda url: calls.append(url) or b"") == wheel
     assert len(calls) == 1
+
+
+def test_imports_as_a_renamed_package_without_torch(tmp_path, monkeypatch):
+    # The wheel copies tools/kt2n_assets to kitten_inference/tts2/_assets: relative imports only, no torch at import.
+    import importlib
+    import shutil
+    root = tmp_path / "site"
+    shutil.copytree(Path(prepare.__file__).parent, root / "wheelpkg" / "_assets",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "wheelpkg" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(root))
+    monkeypatch.setitem(sys.modules, "torch", None)
+    for name in ("prepare", "convert_s3gen", "clone_assets", "weight_norm", "voices", "convert"):
+        module = importlib.import_module(f"wheelpkg._assets.{name}")
+        assert Path(module.__file__).is_relative_to(root)
+    renamed = importlib.import_module("wheelpkg._assets.prepare")
+    assert renamed.ROOT is None
+    assert "speaker/model.safetensors" in renamed.CLONING_ALLOW_PATTERNS
+    assert "lm/model.safetensors" in renamed.MODEL_ALLOW_PATTERNS
+    assert importlib.import_module("wheelpkg._assets.clone_assets").reference_sincnet()

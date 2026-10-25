@@ -37,8 +37,11 @@ MODEL_REPO = "KittenML/kitten-tts-2"
 ACOUSTIC_REPO = "ResembleAI/chatterbox-turbo"
 ACOUSTIC_FILE = "s3gen_meanflow.safetensors"
 SPEAKER_FILE = "speaker/model.safetensors"  # pyannote/embedding weights (MIT) inside the model repository
-MODEL_FILES = ["config.json", "lm/config.json", "lm/model.safetensors", "lm/tokenizer.json", "cpp/default/voices.json",
-               "voices/voices.json", "voices/*.npz"]
+# What preparation reads from the model repository (for callers that download the snapshot themselves).
+MODEL_ALLOW_PATTERNS = ["config.json", "lm/config.json", "lm/model.safetensors", "lm/tokenizer.json",
+                        "cpp/default/voices.json", "voices/voices.json", "voices/*.npz"]
+CLONING_ALLOW_PATTERNS = [SPEAKER_FILE]
+LM_SIDE_FILES = ("config.json", "tokenizer.json")  # the lm/ files besides the weights that model.kt2n records
 NEMO_WHEEL_URL = "https://files.pythonhosted.org/packages/b6/08/ca954a6b77d259561f56580adfd52eb69f54dc2469e1184157708480e7ed/nemo_text_processing-1.2.0-py3-none-any.whl"
 NEMO_WHEEL_SHA256 = "dd78657a0f031023de8b2c8fee6b55d71f444485826f7b507881e407afa5d804"
 # English compact grammars from the public kitten-text-processing repository.
@@ -307,7 +310,7 @@ def speaker_source(args, repo: str, revision: str, model: Path | None) -> Path:
         return local_file(model, SPEAKER_FILE)
     from huggingface_hub import snapshot_download
     snapshot = Path(snapshot_download(repo, revision=revision, cache_dir=args.cache_dir,
-                                      local_files_only=args.offline, token=False, allow_patterns=[SPEAKER_FILE]))
+                                      local_files_only=args.offline, token=False, allow_patterns=CLONING_ALLOW_PATTERNS))
     return local_file(snapshot, SPEAKER_FILE)
 
 
@@ -464,7 +467,7 @@ def main(argv=None) -> int:
         from huggingface_hub import snapshot_download
         model = Path(snapshot_download(a.repo, revision=a.revision, cache_dir=a.cache_dir,
                       local_files_only=a.offline, token=False,
-                      allow_patterns=MODEL_FILES + ([SPEAKER_FILE] if a.with_cloning else [])))
+                      allow_patterns=MODEL_ALLOW_PATTERNS + (CLONING_ALLOW_PATTERNS if a.with_cloning else [])))
     config = json.loads(local_file(model, "config.json").read_text(encoding="utf-8"))
     check_config(config)
     lm_dir = local_file(model, config["lm_dir"] + "/model.safetensors").parent
@@ -477,7 +480,8 @@ def main(argv=None) -> int:
         runtime = Path(scratch) / "runtime_config.json"
         runtime.write_text(json.dumps({"type": config["type"], "token_map": config["token_map"],
                                       "generation": config.get("generation", {})}), encoding="utf-8", newline="\n")
-        convert.convert(lm_dir, dest / "model.kt2n", runtime_config=str(runtime))
+        # Only the files preparation downloads: a shared Hugging Face cache may hold more of the same revision.
+        convert.convert(lm_dir, dest / "model.kt2n", runtime_config=str(runtime), side_files=LM_SIDE_FILES)
     convert_s3gen.convert(str(acoustic), str(dest / "s3gen.kt2n"),
                          manifest_path=Path(__file__).with_name("s3gen_tensors.tsv"),
                          expect_sha256=convert_s3gen.PINNED_SHA256, revision=convert_s3gen.PINNED_REVISION,
