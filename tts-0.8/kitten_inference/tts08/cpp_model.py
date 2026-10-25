@@ -1,4 +1,6 @@
 import os
+import platform
+import sys
 
 import espeakng_loader
 import numpy as np
@@ -56,15 +58,22 @@ class TextCleaner:
         return indexes
 
 
-def _import_model_inference():
+def _import_engine():
     try:
-        import model_inference as mi
+        from . import _engine
     except ImportError as exc:
         raise ImportError(
-            "KittenTTS native inference requires the kitten-inference wheel. "
-            "Install the wheel that matches this Python/platform before loading a model."
+            "The native engine (kitten_inference.tts08._engine) is missing or does not match "
+            'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
         ) from exc
-    return mi
+    return _engine
+
+
+def _default_backend(engine):
+    # Metal on Apple Silicon when a Metal device is available, otherwise CPU.
+    if sys.platform == "darwin" and platform.machine() == "arm64" and engine.set_backend("metal"):
+        return "metal"
+    return "cpu"
 
 
 def _coerce_voice_pack(values):
@@ -93,7 +102,7 @@ class KittenTTS_1_Cpp:
         style_index="token_count",
         sample_rate=SAMPLE_RATE,
     ):
-        """Initialize KittenTTS with the native model_inference engine."""
+        """Initialize KittenTTS with the native engine."""
         self.arch_path = arch_path
         self.weights_path = weights_path
         self.sample_rate = sample_rate
@@ -123,13 +132,13 @@ class KittenTTS_1_Cpp:
             if target in self.available_voices
         ] or self.available_voices
 
-        self._mi = _import_model_inference()
-        selected_backend = backend or "cpu"
+        self._mi = _import_engine()
+        selected_backend = backend or _default_backend(self._mi)
         if selected_backend == "amd_gpu":
             raise ValueError("The native engine does not support backend='amd_gpu'.")
         if not self._mi.set_backend(selected_backend):
             raise ValueError(
-                f"Backend {selected_backend!r} is not available in the installed kitten-inference wheel."
+                f"Backend {selected_backend!r} is not available in this build of kitten-inference-tts08."
             )
         self.session = self._mi.InferenceModel(arch_path, weights_path)
 
@@ -202,10 +211,7 @@ class KittenTTS_1_Cpp:
         if set_speed is None:
             if np.isclose(speed, 1.0):
                 return
-            raise RuntimeError(
-                "The installed kitten-inference wheel does not support speed control. "
-                "Install the latest kitten-inference wheel for this Python/platform."
-            )
+            raise RuntimeError("This build of the native engine does not support speed control.")
         set_speed(speed)
 
     def normalize_text(self, text, locale="en-US", return_spans=False):

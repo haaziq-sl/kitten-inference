@@ -9,6 +9,8 @@ from .preprocess import normalize_text
 DEFAULT_MODEL = "KittenML/kitten-tts-nano-0.1"
 NATIVE_CONFIG_TYPES = {"CPP1", "NATIVE1", "MODEL_INFERENCE"}
 NATIVE_WEIGHTS_REPO = "KittenML/meownn-models"
+# Built-in models always load this exact revision of the native weights.
+NATIVE_WEIGHTS_REVISION = "5e9bca0cc3a4e2a617f604b1333d5f34536c1eed"
 VOICE_NAMES = [
     "expr-voice-2-m",
     "expr-voice-2-f",
@@ -83,9 +85,8 @@ class KittenTTS:
             model_name: Hugging Face repository ID, local model directory, or a
                 KittenML model name such as ``kitten-tts-mini-0.8``.
             cache_dir: Directory to cache downloaded files
-            backend: Native engine backend. Defaults to ``cpu``; pass ``metal``
-                on Apple Silicon when using a Metal-enabled kitten-inference
-                wheel.
+            backend: ``"cpu"`` or ``"metal"``. Defaults to Metal on Apple
+                Silicon when a Metal device is available, otherwise CPU.
         """
         repo_id = _resolve_model_id(model_name)
         self.model = download_from_huggingface(repo_id=repo_id, cache_dir=cache_dir, backend=backend)
@@ -152,8 +153,8 @@ def _resolve_local_file(root, filename):
     return filename if os.path.isabs(filename) else os.path.join(root, filename)
 
 
-def _download_file(repo_id, filename, cache_dir):
-    return hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir)
+def _download_file(repo_id, filename, cache_dir, revision=None):
+    return hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir, revision=revision)
 
 
 def _builtin_arch_path(filename):
@@ -197,13 +198,16 @@ def _load_builtin_native_model(repo_id, spec, cache_dir=None, backend=None):
             NATIVE_WEIGHTS_REPO,
             f"{spec['voice_dir']}/{voice}.bin",
             cache_dir,
+            NATIVE_WEIGHTS_REVISION,
         )
         for voice in VOICE_NAMES
     }
 
     return KittenTTS_1_Cpp(
         arch_path=_builtin_arch_path(spec["arch_file"]),
-        weights_path=_download_file(NATIVE_WEIGHTS_REPO, spec["weights_file"], cache_dir),
+        weights_path=_download_file(
+            NATIVE_WEIGHTS_REPO, spec["weights_file"], cache_dir, NATIVE_WEIGHTS_REVISION
+        ),
         voice_paths=voice_paths,
         voice_aliases=DEFAULT_VOICE_ALIASES,
         backend=backend,
@@ -217,7 +221,7 @@ def _instantiate_native_model(config, get_file, backend=None):
     if config_type not in NATIVE_CONFIG_TYPES:
         if config_type in {"ONNX1", "ONNX2"}:
             raise ValueError(
-                "This KittenTTS build uses the native model_inference engine. "
+                "kitten_inference.tts08 runs native models only. "
                 "Use a native model repo/config with type CPP1, arch_file, and weights_file."
             )
         raise ValueError(f"Unsupported model type: {config_type!r}.")
