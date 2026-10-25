@@ -199,7 +199,13 @@ def unicode_path_check(cache_dir, backend):
         want = as_audio(builtin.generate(TEXT, voice="Bella"))
         validate_audio(got, f"nano from {root}")
         diff = check_same(f"nano from {root}", got, want, exact=resolved_backend(backend) == "cpu")
-        return [{"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}]
+        result = {"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}
+        if sys.platform == "win32":
+            import ctypes
+
+            # The ANSI code page that narrow C file APIs use in this process (65001 = UTF-8).
+            result["windows_ansi_code_page"] = ctypes.windll.kernel32.GetACP()
+        return [result]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

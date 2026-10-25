@@ -313,6 +313,22 @@ jobs:
           run --mode threads --out-dir threads
           exit $status
 
+      # GitHub's Windows runners use UTF-8 as the system ANSI code page, where narrow file paths happen to work.
+      # Run the non-ASCII path check again in a Python whose manifest selects code page 1252, as on most PCs.
+      - name: Non-ASCII model path with code page 1252 (CPython 3.12)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          py=venv-312/Scripts/python.exe
+          "$py" -c "import ctypes; print('runner ANSI code page:', ctypes.windll.kernel32.GetACP())"
+          legacy=$(cygpath -u "$("$py" tts-0.8/tests/code_page_python.py --locale en-US)")
+          site=$("$py" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          acp=$(PYTHONPATH="$site" "$legacy" -c "import ctypes; print(ctypes.windll.kernel32.GetACP())")
+          echo "ANSI code page in $legacy: $acp"
+          [ "$acp" != 65001 ] || { echo "::error::the manifest did not change the code page"; exit 1; }
+          PYTHONPATH="$site" "$legacy" tts-0.8/tests/audio_smoke.py --mode paths --out-dir paths-cp1252 --cache-dir .hf-cache
+
       - run: ls -l wheelhouse
         shell: bash
 
