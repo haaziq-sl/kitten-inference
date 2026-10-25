@@ -176,7 +176,7 @@ jobs:
           set -uo pipefail
           py=venv-cp312/bin/python
           status=0
-          for mode in models mix threads; do
+          for mode in models auto mix threads; do
             echo "::group::$mode"
             "$py" tts-0.8/tests/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
               || { echo "::error::audio_smoke --mode $mode failed (exit $?)"; status=1; }
@@ -291,7 +291,7 @@ jobs:
             test_command: >-
               python -m unittest discover -s {package}/tests -v &&
               python {package}/tests/audio_smoke.py --mode release --out-dir smoke-metal
-              --cache-dir {project}/.hf-cache --expect-backend metal &&
+              --cache-dir {project}/.hf-cache --expect-backend auto &&
               python {package}/tests/audio_smoke.py --mode release --out-dir smoke-cpu
               --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal &&
               python {package}/tests/audio_smoke.py --mode paths --out-dir smoke-paths
@@ -411,7 +411,7 @@ jobs:
             "venv-$tag/bin/python" -c "import platform; print(platform.python_version(), platform.machine())"
             "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
             "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-metal-$tag" \
-              --cache-dir .hf-cache --expect-backend metal
+              --cache-dir .hf-cache --expect-backend auto
             "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-cpu-$tag" \
               --cache-dir .hf-cache --backend cpu --expect-backend cpu --compare-to "smoke-metal-$tag"
           done
@@ -436,11 +436,13 @@ jobs:
             echo "::endgroup::"
           }
           if [ "${{ matrix.artifact }}" = macos-arm64 ]; then
-            run --mode models --out-dir models-metal --expect-backend metal
+            # int8 models default to the CPU on Apple Silicon; Metal stays available with backend="metal".
+            run --mode models --out-dir models-metal --backend metal --expect-backend metal
             run --mode models --out-dir models-cpu --backend cpu --expect-backend cpu --compare-to models-metal
           else
             run --mode models --out-dir models --expect-backend cpu
           fi
+          run --mode auto --out-dir auto
           run --mode mix --out-dir mix
           run --mode threads --out-dir threads
           exit $status

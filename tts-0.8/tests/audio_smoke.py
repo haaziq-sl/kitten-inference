@@ -58,7 +58,9 @@ SPEED_CASES = [
     },
 ]
 # micro and mini have wider layers than nano (for example a 256-wide LSTM instead of 64): run each once.
+# nano int8 is here too, so that every int8 model runs on Metal when the backend is set to metal.
 MODEL_CASES = [
+    {"model": "KittenML/kitten-tts-nano-0.8-int8", "voice": "Luna", "speed": 1.0, "filename": "nano-int8-luna.wav"},
     {"model": "KittenML/kitten-tts-mini-0.8", "voice": "Jasper", "speed": 1.0, "filename": "mini-jasper.wav"},
     {"model": "KittenML/kitten-tts-mini-0.8-int8", "voice": "Bella", "speed": 1.0, "filename": "mini-int8-bella.wav"},
     {"model": "KittenML/kitten-tts-micro-0.8", "voice": "Hugo", "speed": 1.0, "filename": "micro-hugo.wav"},
@@ -66,6 +68,7 @@ MODEL_CASES = [
 ]
 NANO = "KittenML/kitten-tts-nano-0.8"
 NANO_INT8 = "KittenML/kitten-tts-nano-0.8-int8"
+ALL_MODELS = [f"KittenML/kitten-tts-{size}-0.8{q}" for size in ("nano", "micro", "mini") for q in ("", "-int8")]
 # One model per thread, all generating at once. None is the default backend (Metal on Apple Silicon).
 THREAD_PLAN = [
     (NANO, None, "Bella"),
@@ -158,10 +161,36 @@ def check_same(label, got, want, exact):
     return diff
 
 
-def resolved_backend(backend):
+def resolved_backend(backend, model_name=NANO):
+    """The backend a model gets: the one asked for, else Metal for fp32 models on Apple Silicon, else the CPU."""
     if backend:
         return backend
-    return "metal" if sys.platform == "darwin" and platform.machine() == "arm64" else "cpu"
+    apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+    return "metal" if apple_silicon and not model_name.endswith("-int8") else "cpu"
+
+
+def auto_backend_check(cache_dir, runs=3):
+    """backend=None for every model: check which backend it gets, and time warm calls (median of `runs`)."""
+    results = []
+    for name in ALL_MODELS:
+        model = KittenTTS(name, cache_dir=str(cache_dir))
+        want = resolved_backend(None, name)
+        if model.model.backend != want:
+            raise AssertionError(f"{name}: default backend {model.model.backend!r}, expected {want!r}")
+        model.generate(TEXT, voice="Jasper")  # warm-up
+        times, used = [], set()
+        for _ in range(runs):
+            start = time.perf_counter()
+            audio = as_audio(model.generate(TEXT, voice="Jasper"))
+            times.append(time.perf_counter() - start)
+            used.add(_engine.active_backend())
+        if used != {want}:
+            raise AssertionError(f"{name}: ran on {sorted(used)}, expected {want!r}")
+        validate_audio(audio, name)
+        median = sorted(times)[len(times) // 2]
+        results.append({"model": name, "backend": want, "samples": int(len(audio)),
+                        "median_seconds": round(median, 4), "rtf": round(median / (len(audio) / SAMPLE_RATE), 4)})
+    return results
 
 
 def engine_load_with_default_c_locale(root, spec):
@@ -225,7 +254,7 @@ def unicode_path_check(cache_dir, backend):
         builtin = KittenTTS(NANO, cache_dir=str(cache_dir), backend=backend)
         want = as_audio(builtin.generate(TEXT, voice="Bella"))
         validate_audio(got, f"nano from {root}")
-        diff = check_same(f"nano from {root}", got, want, exact=resolved_backend(backend) == "cpu")
+        diff = check_same(f"nano from {root}", got, want, exact=resolved_backend(backend, NANO) == "cpu")
         result = {"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}
         if sys.platform == "win32":
             result.update(engine_load_with_default_c_locale(root, spec))
@@ -241,7 +270,7 @@ def backend_mix_check(cache_dir):
     cpu_ref = as_audio(cpu_model.generate(TEXT, voice="Luna"))
     default_model = KittenTTS(NANO, cache_dir=str(cache_dir))
     default_ref = as_audio(default_model.generate(TEXT, voice="Bella"))
-    default_exact = resolved_backend(None) == "cpu"
+    default_exact = resolved_backend(None, NANO) == "cpu"
 
     again = as_audio(cpu_model.generate(TEXT, voice="Luna"))
     results.append({
@@ -253,7 +282,7 @@ def backend_mix_check(cache_dir):
     KittenTTS(NANO, cache_dir=str(cache_dir), backend="cpu")
     again = as_audio(default_model.generate(TEXT, voice="Bella"))
     results.append({
-        "check": f"default-backend ({resolved_backend(None)}) model after a cpu model was made",
+        "check": f"default-backend ({resolved_backend(None, NANO)}) model after a cpu model was made",
         "samples": int(len(again)),
         "max_diff": check_same("default-backend model after a cpu model", again, default_ref, exact=default_exact),
     })
@@ -280,10 +309,10 @@ def threads_check(cache_dir, rounds=2, timeout=900):
             for r in range(rounds):
                 audio = as_audio(model.generate(TEXT, voice=voice))
                 diffs.append(check_same(
-                    f"thread {i} ({model_name}, {resolved_backend(backend)}) round {r}",
-                    audio, refs[(model_name, backend, voice)], exact=resolved_backend(backend) == "cpu",
+                    f"thread {i} ({model_name}, {resolved_backend(backend, model_name)}) round {r}",
+                    audio, refs[(model_name, backend, voice)], exact=resolved_backend(backend, model_name) == "cpu",
                 ))
-            outcomes[i] = {"thread": i, "model": model_name, "backend": resolved_backend(backend),
+            outcomes[i] = {"thread": i, "model": model_name, "backend": resolved_backend(backend, model_name),
                            "voice": voice, "max_diff": max(diffs)}
         except BaseException as exc:  # reported by the main thread
             outcomes[i] = {"thread": i, "error": f"{type(exc).__name__}: {exc}"}
@@ -310,15 +339,17 @@ def main():
     parser.add_argument("--out-dir", default="audio-smoke")
     parser.add_argument("--cache-dir", default=".hf-cache")
     parser.add_argument("--backend", default=None, help="Native backend to use, such as cpu or metal.")
-    parser.add_argument("--expect-backend", default=None, help="Fail unless the engine ran on this backend.")
+    parser.add_argument("--expect-backend", default=None,
+                        help="Fail unless the engine ran on this backend; auto: the backend each model should get.")
     parser.add_argument("--compare-to", default=None, help="Output dir of a run on another backend to compare with.")
     parser.add_argument(
         "--mode",
-        choices=["quick", "release", "speed", "models", "paths", "mix", "threads"],
+        choices=["quick", "release", "speed", "models", "paths", "mix", "threads", "auto"],
         default="release",
         help="quick: one WAV; release: nano voices, speeds and int8; speed: the speed check only; "
         "models: micro and mini, fp32 and int8; paths: a model folder with non-ASCII characters in its path; "
-        "mix: CPU and default-backend models in one process; threads: several models generating at once.",
+        "mix: CPU and default-backend models in one process; threads: several models generating at once; "
+        "auto: the default backend of every model, with warm timings.",
     )
     args = parser.parse_args()
 
@@ -340,6 +371,8 @@ def main():
         results.extend(backend_mix_check(cache_dir))
     elif args.mode == "threads":
         results.extend(threads_check(cache_dir))
+    elif args.mode == "auto":
+        results.extend(auto_backend_check(cache_dir))
     else:
         if args.mode == "release":
             results.extend(
@@ -356,7 +389,12 @@ def main():
             )
         results.extend([slow, fast])
 
-    if args.expect_backend:
+    if args.expect_backend == "auto":
+        for r in results:
+            want = resolved_backend(args.backend, r["model"])
+            if r["active_backend"] != want:
+                raise AssertionError(f"{r['model']}: expected backend {want!r}, ran on {r['active_backend']!r}")
+    elif args.expect_backend:
         used = sorted({r["active_backend"] for r in results})
         if used != [args.expect_backend]:
             raise AssertionError(f"expected backend {args.expect_backend!r}, ran on {used}")
