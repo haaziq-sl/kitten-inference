@@ -512,10 +512,9 @@ jobs:
           venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   wheel-list:
-    if: false
     name: Wheel list and contents
     needs: [linux-wheels, desktop-wheels, android-wheels]
-    if: always()
+    if: false
     runs-on: ubuntu-latest
 
     steps:
