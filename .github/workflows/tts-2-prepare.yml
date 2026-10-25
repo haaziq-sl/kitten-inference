@@ -65,9 +65,11 @@ jobs:
           allow-prereleases: true
       - name: Install the preparation requirements (no torch, wheels only)
         run: |
-          python -m pip install --only-binary :all: -r tts-2/requirements-prepare.txt pytest
+          # Wheels only. On Python 3.15 PyYAML (a dependency of huggingface-hub) has no wheel yet: build it alone from source.
+          extra=""; [ "${{ matrix.python }}" = "3.15" ] && extra="--no-binary pyyaml"
+          python -m pip install --only-binary :all: $extra -r tts-2/requirements-prepare.txt pytest
           if [ "${{ matrix.numpy }}" != latest ]; then python -m pip install --only-binary :all: "numpy==${{ matrix.numpy }}"; fi
-          python -m pip list | grep -i -E "^(numpy|tokenizers|huggingface.hub) "
+          python -m pip list | grep -i -E "^(numpy|tokenizers|huggingface.hub|pyyaml) "
           python - <<'PY'
           import importlib.util, platform, sys, numpy
           assert importlib.util.find_spec("torch") is None, "torch must not be installed"
@@ -125,8 +127,8 @@ jobs:
           config = json.loads((model / "config.json").read_text(encoding="utf-8"))
           with tempfile.TemporaryDirectory() as scratch:
               runtime = Path(scratch) / "runtime_config.json"
-              runtime.write_text(json.dumps({"type": config["type"], "token_map": config["token_map"],
-                                             "generation": config.get("generation", {})}), encoding="utf-8", newline="\n")
+              runtime.write_bytes(json.dumps({"type": config["type"], "token_map": config["token_map"],
+                                              "generation": config.get("generation", {})}).encode("utf-8"))
               convert.convert(model / config["lm_dir"], out / "model.kt2n", runtime_config=str(runtime),
                               side_files=prepare.LM_SIDE_FILES, log=lambda message: None)
           prepare.prepare_voices(model / config["cpp"]["decoders"]["default"]["voices"]["file"],
