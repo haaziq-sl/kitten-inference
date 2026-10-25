@@ -31,6 +31,7 @@ env:
 
 jobs:
   linux-wheels:
+    if: false
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -204,6 +205,7 @@ jobs:
           if-no-files-found: error
 
   desktop-wheels:
+    if: false
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -457,6 +459,7 @@ jobs:
           if-no-files-found: error
 
   android-wheels:
+    if: false
     # Experimental and non-blocking. Built, not tested: cibuildwheel runs Android tests only in an
     # emulator of the runner's own architecture (x86_64 here), and numpy, soundfile and
     # espeakng_loader publish no Android wheels on PyPI.
@@ -508,7 +511,41 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+  macos-default-backend-probe:
+    # Measurement only (this branch is not for merging): on Apple Silicon runners, backend=None must pick Metal for
+    # the fp32 models and the CPU for the int8 models; warm timings of each model on the backend it gets.
+    name: macOS default backend ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+      - name: Build the cp312 wheel as shipped, then check and time every model
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sysctl -n machdep.cpu.brand_string hw.ncpu || true
+          sw_vers || true
+          mkdir -p /tmp/cibw; export TMPDIR=/tmp/cibw
+          MACOSX_DEPLOYMENT_TARGET=11.0 uv build --wheel -p 3.12 --out-dir dist \
+            -C cmake.define.ENABLE_CUDA=OFF -C cmake.define.ENABLE_NATIVE_ARCH=OFF \
+            -C cmake.define.ENABLE_X86_AVX2=OFF -C cmake.define.ENABLE_ARM_DOTPROD=ON tts-0.8 > build.log 2>&1 \
+            || { tail -60 build.log; exit 1; }
+          grep -i "openmp" build.log | sort | uniq -c
+          uv venv -q --managed-python -p cpython-3.12-macos-aarch64-none venv
+          uv pip install -q -p venv/bin/python dist/*.whl
+          venv/bin/python -m unittest discover -s tts-0.8/tests -v 2>&1 | tail -3
+          venv/bin/python tts-0.8/tests/audio_smoke.py --mode auto --out-dir auto --cache-dir .hf-cache
+          venv/bin/python tts-0.8/tests/audio_smoke.py --mode models --out-dir models-metal --backend metal --cache-dir .hf-cache
+
   oldest-linux:
+    if: false
     # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
     # pip picks the wheel, as it would for a user.
     name: Ubuntu 20.04, Python 3.8, x86_64
@@ -543,6 +580,7 @@ jobs:
           venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   lowest-deps:
+    if: false
     name: Lowest dependencies, Linux x86_64, Python ${{ matrix.python }}
     needs: linux-wheels
     runs-on: ubuntu-latest
@@ -595,7 +633,7 @@ jobs:
   wheel-list:
     name: Wheel list and contents
     needs: [linux-wheels, desktop-wheels, android-wheels]
-    if: always()
+    if: false
     runs-on: ubuntu-latest
 
     steps:
