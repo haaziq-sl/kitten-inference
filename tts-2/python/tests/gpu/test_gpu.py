@@ -4,7 +4,7 @@ They need an installed engine package (kitten-inference-tts2-cu12 / -rocm, or a 
 make_dev_backend.py) and a GPU; otherwise they are skipped. Environment:
   KT2N_TEST_REVISION   model revision to prepare (default: the program's pinned revision below)
   KT2N_TEST_CACHE      cache directory for prepared models (default: the package default)
-  KT2N_TEST_CLONING=1  also run voice cloning (CUDA engine and about 13 GB of free GPU memory)
+  KT2N_TEST_CLONING=1  also run voice cloning (CUDA engine and about 11 GB of free GPU memory)
   KT2N_REQUIRE_GPU=1   fail instead of skipping when no engine or GPU is available
 """
 import json
@@ -168,7 +168,7 @@ def reference(tmp_path_factory, tts):
     return mp3, text
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (16 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
 def test_clone_save_load(tts, reference, tmp_path):
     if not tts.can_clone:
         _skip("this engine has no voice cloning")
@@ -188,7 +188,7 @@ def test_clone_save_load(tts, reference, tmp_path):
     _sane(c, "Back to a built-in voice.")
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (16 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
 def test_loaded_voice_in_a_new_process(tts, reference, tmp_path):
     """A voice saved here loads and speaks in a fresh KittenTTS2 that never cloned (saved-voice engine)."""
     if not tts.can_clone:
@@ -214,7 +214,7 @@ def test_ffmpeg_missing_message(tts, reference, monkeypatch):
         tts.clone_voice(reference[0], reference[1])
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (16 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
 def test_two_custom_voices(tts, reference, tmp_path):
     """The engine keeps one custom voice: switching evicts the previous one, except while a stream still uses it."""
     if not tts.can_clone:

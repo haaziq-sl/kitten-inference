@@ -25,9 +25,11 @@ kitten-tts2 --list-voices
 
 On first use the model is downloaded from Hugging Face (KittenML/kitten-tts-2, latest revision unless
 `revision=` / `--revision` pins one) and prepared on your machine, once per model revision, into
-`~/.cache/kitten-inference/tts2/`. No PyTorch and no Hugging Face account are needed.
+`~/.cache/kitten-inference/tts2/`: about 4.4 GB of downloads and 2 GB prepared, in 1.5 to 4 minutes on our test
+machines. No PyTorch and no Hugging Face account are needed. The Python API gives the same audio and first-audio time
+as the command (17.5 ms vs 17.4 ms, median of 7 streamed requests on an RTX 4090).
 
-Voice cloning (NVIDIA, about 13 GB of free GPU memory) uses the system `ffmpeg` to read the recording:
+Voice cloning (NVIDIA GPUs with 12 GB or more) uses the system `ffmpeg` to read the recording:
 
 ```python
 voice = tts.clone_voice("me.wav", "The exact words spoken in the recording.")

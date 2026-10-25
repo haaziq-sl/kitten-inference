@@ -259,7 +259,8 @@ class KittenTTS2:
         return self._engine
 
     def close(self) -> None:
-        """Stops the engine and frees its GPU memory. The object cannot be used afterwards."""
+        """Stops the engine and frees its GPU memory, except the CUDA context, which stays until the process exits
+        (2.1 GB on an RTX 3060; a new KittenTTS2 reuses it). The object cannot be used afterwards."""
         with self._lock:
             engine, self._engine = self._engine, None
             if engine is not None:
@@ -288,7 +289,8 @@ class KittenTTS2:
 
     @property
     def can_clone(self) -> bool:
-        """Whether this engine build includes voice cloning (CUDA engine). The GPU also needs about 13 GB free."""
+        """Whether this engine build includes voice cloning (CUDA engine). The GPU also needs about 11 GB free
+        (measured: a 12 GB RTX 3060 clones; smaller cards load saved voices only)."""
         return self.backend.can_clone and _abi.CAP_VOICE_CLONING in _abi.text(self._lib.kt2n_build_info()).split()
 
     def build_info(self) -> str:
@@ -381,13 +383,13 @@ class KittenTTS2:
     def clone_voice(self, reference_audio_path: Union[str, os.PathLike], transcript: str,
                     language: str = "en") -> Voice:
         """Makes a voice from a 2-30 s recording of one speaker (any format the system ffmpeg decodes, at most
-        10 MiB) and the exact words spoken in it. Needs the CUDA engine and about 13 GB of free GPU memory; the first
+        10 MiB) and the exact words spoken in it. Needs the CUDA engine and about 11 GB of free GPU memory; the first
         call adds the cloning files to the prepared model and restarts the engine with cloning."""
         if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("transcript must be the words spoken in the recording")
         if not self.can_clone:
             raise RuntimeError(f"voice cloning needs the NVIDIA (CUDA) engine; the installed {self.backend.distribution} "
-                               "has no voice cloning. Clone and save the voice on an NVIDIA GPU with 16 GB or more, "
+                               "has no voice cloning. Clone and save the voice on an NVIDIA GPU with 12 GB or more, "
                                "then load it here with load_voice()")
         pcm = np.ascontiguousarray(_audio.decode_reference(reference_audio_path), dtype=np.float32)
         with self._lock:
@@ -515,8 +517,8 @@ def _voice_error(exc: EngineError) -> Exception:
 
 def _clone_error(exc: EngineError, starting: bool = False) -> Exception:
     if starting or exc.status == _abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE:
-        return RuntimeError(f"this GPU cannot clone voices: {exc.message}. Cloning needs about 13 GB of free GPU "
-                            "memory (a 16 GB card or larger); clone and save the voice there, then load it here")
+        return RuntimeError(f"this GPU cannot clone voices: {exc.message}. Cloning needs about 11 GB of free GPU "
+                            "memory (a 12 GB card or larger); clone and save the voice there, then load it here")
     if exc.status in (_abi.ERR_INVALID_AUDIO, _abi.ERR_INVALID_AUDIO_DURATION, _abi.ERR_INVALID_AUDIO_SIGNAL,
                       _abi.ERR_INVALID_REFERENCE_TRANSCRIPT):
         return ValueError(exc.message)
