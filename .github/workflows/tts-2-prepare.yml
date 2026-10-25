@@ -37,17 +37,21 @@ env:
 
 jobs:
   convert:
-    name: ${{ matrix.os }} numpy ${{ matrix.numpy }}
+    name: ${{ matrix.os }} py${{ matrix.python }} numpy ${{ matrix.numpy }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022, macos-14]
+        python: ["3.12"]
         numpy: [latest]
         include:
-          - os: ubuntu-24.04
-            numpy: "1.26.4"
-          - os: windows-2022
-            numpy: "1.26.4"
+          - {os: ubuntu-24.04, python: "3.12", numpy: "1.26.4"}
+          - {os: windows-2022, python: "3.12", numpy: "1.26.4"}
+          # the oldest and newest Python the package supports, wheels only (no source builds)
+          - {os: ubuntu-24.04, python: "3.9", numpy: latest}
+          - {os: ubuntu-24.04, python: "3.15", numpy: latest}
+          - {os: windows-2022, python: "3.9", numpy: latest}
+          - {os: windows-2022, python: "3.15", numpy: latest}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -57,11 +61,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: Install the preparation requirements (no torch)
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - name: Install the preparation requirements (no torch, wheels only)
         run: |
-          python -m pip install -r tts-2/requirements-prepare.txt pytest
-          if [ "${{ matrix.numpy }}" != latest ]; then python -m pip install "numpy==${{ matrix.numpy }}"; fi
+          python -m pip install --only-binary :all: -r tts-2/requirements-prepare.txt pytest
+          if [ "${{ matrix.numpy }}" != latest ]; then python -m pip install --only-binary :all: "numpy==${{ matrix.numpy }}"; fi
+          python -m pip list | grep -i -E "^(numpy|tokenizers|huggingface.hub) "
           python - <<'PY'
           import importlib.util, platform, sys, numpy
           assert importlib.util.find_spec("torch") is None, "torch must not be installed"
@@ -157,7 +163,8 @@ jobs:
           verify = json.load(open(os.path.join(out, "s3gen.verify.json")))
           names = ("s3gen.kt2n", "model.kt2n", "voices.kt2n", "cloning/voicebuild_consts.safetensors",
                    "cloning/voicebuild_pyannote.safetensors")
-          result = {"os": "${{ matrix.os }}", "numpy": "${{ matrix.numpy }}", "verify_ok": verify["ok"],
+          result = {"os": "${{ matrix.os }}", "python": "${{ matrix.python }}", "numpy": "${{ matrix.numpy }}",
+                    "verify_ok": verify["ok"],
                     **{name: sha(name) for name in names}}
           print(json.dumps(result, indent=1))
           os.makedirs("digests", exist_ok=True)
@@ -169,7 +176,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ matrix.os }}-numpy-${{ matrix.numpy }}
+          name: digest-${{ matrix.os }}-py${{ matrix.python }}-numpy-${{ matrix.numpy }}
           path: digests/digest.json
 
   compare:
@@ -191,10 +198,10 @@ jobs:
                       "cloning/voicebuild_consts.safetensors": os.environ["EXPECTED_CLONE_CONSTS"],
                       "cloning/voicebuild_pyannote.safetensors": os.environ["EXPECTED_CLONE_PYANNOTE"]}
           files = tuple(expected)
-          lines = ["| runner | numpy | " + " | ".join(files) + " |", "|---|---|" + "---|" * len(files)]
+          lines = ["| runner | python | numpy | " + " | ".join(files) + " |", "|---|---|---|" + "---|" * len(files)]
           for r in rows:
-              lines.append(f"| {r['os']} | {r['numpy']} | " + " | ".join(r[f][:16] for f in files) + " |")
-          lines.append("| expected | | " + " | ".join(expected[f][:16] for f in files) + " |")
+              lines.append(f"| {r['os']} | {r['python']} | {r['numpy']} | " + " | ".join(r[f][:16] for f in files) + " |")
+          lines.append("| expected | | | " + " | ".join(expected[f][:16] for f in files) + " |")
           summary = "\n".join(lines)
           print(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
@@ -208,11 +215,12 @@ jobs:
           for r in rows:
               if good is not None and r["s3gen.kt2n"] != expected["s3gen.kt2n"]:
                   a, b = flat(good["s3gen_meta"]), flat(r["s3gen_meta"])
-                  print(f"{r['os']} numpy {r['numpy']}: s3gen.kt2n metadata differs:",
+                  print(f"{r['os']} python {r['python']} numpy {r['numpy']}: s3gen.kt2n metadata differs:",
                         {k: (a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)})
-          ok = len(rows) == 6
+          runners = 10  # the convert matrix
+          ok = len(rows) == runners
           for f in files:
               values = {r[f] for r in rows}
               ok &= values == {expected[f]}
-          sys.exit(0 if ok else f"digests differ or a runner is missing ({len(rows)} of 6 reported)")
+          sys.exit(0 if ok else f"digests differ or a runner is missing ({len(rows)} of {runners} reported)")
           PY
