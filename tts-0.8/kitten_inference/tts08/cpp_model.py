@@ -1,6 +1,8 @@
+import contextlib
 import os
 import platform
 import sys
+import threading
 
 import espeakng_loader
 import numpy as np
@@ -73,10 +75,70 @@ def _import_engine():
     return _engine
 
 
+class _EngineGate:
+    """Lets engine calls run at the same time only when that is safe.
+
+    The engine has one process-wide backend, which a model's kernels use while it loads and runs, and the
+    Metal backend records all GPU work into one shared command buffer. So CPU calls may overlap (one model
+    per thread), while a Metal call, or a call on another backend than the running ones, waits until the
+    engine is idle. Each call sets its own model's backend first.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._running = 0
+        self._exclusive = False
+        self._backend = None
+        self._waiting_exclusive = 0
+
+    def _must_wait(self, backend, exclusive):
+        if exclusive:
+            return self._running > 0
+        # A CPU call joins running CPU calls, but lets a waiting exclusive call go first.
+        return self._waiting_exclusive > 0 or (
+            self._running > 0 and (self._exclusive or self._backend != backend)
+        )
+
+    @contextlib.contextmanager
+    def use(self, engine, backend):
+        exclusive = backend != "cpu"
+        with self._cond:
+            if exclusive:
+                self._waiting_exclusive += 1
+            try:
+                while self._must_wait(backend, exclusive):
+                    self._cond.wait()
+            finally:
+                if exclusive:
+                    self._waiting_exclusive -= 1
+            if not self._running:
+                if not engine.set_backend(backend):
+                    self._cond.notify_all()
+                    raise ValueError(
+                        f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
+                    )
+                self._backend = backend
+                self._exclusive = exclusive
+            self._running += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._running -= 1
+                self._cond.notify_all()
+
+
+_ENGINE_GATE = _EngineGate()
+
+
 def _default_backend(engine):
     # Metal on Apple Silicon when a Metal device is available, otherwise CPU.
-    if sys.platform == "darwin" and platform.machine() == "arm64" and engine.set_backend("metal"):
-        return "metal"
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        try:
+            with _ENGINE_GATE.use(engine, "metal"):
+                return "metal"
+        except ValueError:
+            pass
     return "cpu"
 
 
@@ -137,14 +199,12 @@ class KittenTTS_1_Cpp:
         ] or self.available_voices
 
         self._mi = _import_engine()
-        selected_backend = backend or _default_backend(self._mi)
-        if selected_backend == "amd_gpu":
+        if backend == "amd_gpu":
             raise ValueError("The native engine does not support backend='amd_gpu'.")
-        if not self._mi.set_backend(selected_backend):
-            raise ValueError(
-                f"Backend {selected_backend!r} is not available in this build of kitten-inference-tts08."
-            )
-        self.session = self._mi.InferenceModel(arch_path, weights_path)
+        self.backend = backend or _default_backend(self._mi)
+        # The engine allocates and uploads the weights for the backend that is set while the model loads.
+        with _ENGINE_GATE.use(self._mi, self.backend):
+            self.session = self._mi.InferenceModel(arch_path, weights_path)
 
     def _load_voices(self, voices_path, voice_paths):
         if voices_path:
@@ -241,17 +301,18 @@ class KittenTTS_1_Cpp:
     def generate_single_chunk(self, text, voice=DEFAULT_VOICE, speed=1.0):
         voice = self._resolve_voice(voice)
         effective_speed = self._effective_speed(voice, speed)
-        self._set_native_speed(effective_speed)
 
         ids = self._phoneme_ids(text)
         style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
-        outputs = self.session.forward(
-            {
-                "phoneme_ids": ids,
-                "style_dec": style_dec,
-                "style_pred": style_pred,
-            }
-        )
+        with _ENGINE_GATE.use(self._mi, self.backend):
+            self._set_native_speed(effective_speed)
+            outputs = self.session.forward(
+                {
+                    "phoneme_ids": ids,
+                    "style_dec": style_dec,
+                    "style_pred": style_pred,
+                }
+            )
         audio = np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
         return audio[:-TAIL_TRIM_SAMPLES]
 

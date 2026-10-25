@@ -2,6 +2,7 @@
 import importlib
 import importlib.metadata as metadata
 import re
+import threading
 import unittest
 from pathlib import Path
 
@@ -68,6 +69,87 @@ class ApiTests(unittest.TestCase):
             self.skipTest("pyproject.toml not available")
         match = re.search(r'^version = "([^"]+)"', PYPROJECT.read_text(encoding="utf-8"), re.M)
         self.assertEqual(tts08.__version__, match.group(1))
+
+
+class FakeEngine:
+    def __init__(self):
+        self.calls = []
+
+    def set_backend(self, name):
+        self.calls.append(name)
+        return name in ("cpu", "metal")
+
+
+class EngineGateTests(unittest.TestCase):
+    """The guard around the engine's process-wide backend (cpp_model._EngineGate), with a stand-in engine."""
+
+    def setUp(self):
+        self.gate = importlib.import_module("kitten_inference.tts08.cpp_model")._EngineGate()
+        self.engine = FakeEngine()
+
+    def run_in_thread(self, backend, inside=None, release=None):
+        def call():
+            with self.gate.use(self.engine, backend):
+                if inside:
+                    inside.set()
+                if release:
+                    release.wait(10)
+
+        t = threading.Thread(target=call, daemon=True)
+        t.start()
+        return t
+
+    def test_each_call_sets_its_backend(self):
+        for backend in ("cpu", "metal", "cpu"):
+            with self.gate.use(self.engine, backend):
+                pass
+        self.assertEqual(self.engine.calls, ["cpu", "metal", "cpu"])
+
+    def test_cpu_calls_overlap(self):
+        both_inside = threading.Barrier(3, timeout=10)
+        threads = [threading.Thread(target=self._cpu_at_barrier, args=(both_inside,), daemon=True) for _ in range(2)]
+        for t in threads:
+            t.start()
+        both_inside.wait()  # raises BrokenBarrierError if the two CPU calls could not run together
+        for t in threads:
+            t.join(10)
+        self.assertEqual(self.engine.calls, ["cpu"])
+
+    def _cpu_at_barrier(self, barrier):
+        with self.gate.use(self.engine, "cpu"):
+            barrier.wait()
+
+    def test_a_metal_call_runs_alone(self):
+        inside, release, cpu_inside = threading.Event(), threading.Event(), threading.Event()
+        metal = self.run_in_thread("metal", inside, release)
+        self.assertTrue(inside.wait(10))
+        cpu = self.run_in_thread("cpu", cpu_inside)
+        self.assertFalse(cpu_inside.wait(0.3), "a CPU call ran while a Metal call was running")
+        release.set()
+        self.assertTrue(cpu_inside.wait(10))
+        metal.join(10)
+        cpu.join(10)
+        self.assertEqual(self.engine.calls, ["metal", "cpu"])
+
+    def test_a_metal_call_waits_for_running_cpu_calls(self):
+        inside, release, metal_inside = threading.Event(), threading.Event(), threading.Event()
+        cpu = self.run_in_thread("cpu", inside, release)
+        self.assertTrue(inside.wait(10))
+        metal = self.run_in_thread("metal", metal_inside)
+        self.assertFalse(metal_inside.wait(0.3), "a Metal call ran while a CPU call was running")
+        release.set()
+        self.assertTrue(metal_inside.wait(10))
+        cpu.join(10)
+        metal.join(10)
+        self.assertEqual(self.engine.calls, ["cpu", "metal"])
+
+    def test_an_unavailable_backend_raises_and_frees_the_gate(self):
+        with self.assertRaises(ValueError):
+            with self.gate.use(self.engine, "cuda"):
+                pass
+        with self.gate.use(self.engine, "cpu"):
+            pass
+        self.assertEqual(self.engine.calls, ["cuda", "cpu"])
 
 
 class PackagingTests(unittest.TestCase):
