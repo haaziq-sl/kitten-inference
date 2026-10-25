@@ -137,6 +137,87 @@ TEST(FfmpegDecode, AnUndecodableFileWithANonAsciiNameIsAnError) {
   EXPECT_THROW(ffmpeg_decode(utf8_name(gone), std::vector<char>(4096, '\0')), std::runtime_error);
 }
 
+// Changes the current folder for one test, and back.
+struct InFolder {
+  fs::path old = fs::current_path();
+  explicit InFolder(const fs::path& dir) { fs::current_path(dir); }
+  ~InFolder() { fs::current_path(old); }
+};
+
+// The by-name read, forced: the bytes on standard input are not audio, the file is. With the name as the CLI gets it
+// (absolute, UTF-8, spaces and characters outside any 8-bit code page; on Windows with its drive letter).
+TEST(FfmpegDecode, ReadsByNameWhenThePipeHasNoAudio) {
+  if (!have_ffmpeg()) GTEST_SKIP() << "ffmpeg is not on PATH";
+  const fs::path dir = temp_name("-byname");
+  fs::create_directories(dir);
+  const fs::path ascii = dir / "tone.wav";
+  const std::vector<int16_t> pcm = write_tone_wav(ascii);
+  const fs::path named = dir / fs::path(u8"kt2n by name \u00e9\u00df \u4f60\u597d.wav");
+  fs::rename(ascii, named);
+  const std::vector<float> got = ffmpeg_decode(utf8_name(fs::absolute(named)), std::vector<char>(4096, '\0'));
+  fs::remove_all(dir);
+  ASSERT_EQ(got.size(), pcm.size());
+  for (size_t i = 0; i < pcm.size(); ++i) ASSERT_EQ(got[i], static_cast<float>(pcm[i]) / 32768.0f) << i;
+}
+
+#if !defined(_WIN32)
+// A bare name read by name: without the "file:" prefix ffmpeg reads "2026-10-25T10:30.wav" as protocol
+// "2026-10-25T10" (recorders name files like this). Windows file names cannot contain ':'.
+TEST(FfmpegDecode, ReadsABareFileNameWithAColon) {
+  if (!have_ffmpeg()) GTEST_SKIP() << "ffmpeg is not on PATH";
+  const fs::path dir = temp_name("-colon");
+  fs::create_directories(dir);
+  const std::vector<int16_t> pcm = write_tone_wav(dir / "2026-10-25T10:30.wav");
+  std::vector<float> got;
+  {
+    InFolder here(dir);
+    got = ffmpeg_decode("2026-10-25T10:30.wav", std::vector<char>(4096, '\0'));  // not audio: read by name
+  }
+  fs::remove_all(dir);
+  ASSERT_EQ(got.size(), pcm.size());
+}
+#endif
+
+// An ffmpeg in the current folder is never run (Windows looks there before PATH; elsewhere an empty PATH entry means
+// the current folder): the one on PATH decodes, or, without one, the missing-ffmpeg message comes.
+TEST(FfmpegDecode, NeverRunsAnFfmpegFromTheCurrentFolder) {
+  const bool on_path = have_ffmpeg();  // before the planted one is there
+  const fs::path dir = temp_name("-planted");
+  fs::create_directories(dir);
+  const fs::path wav = dir / "tone.wav";
+  const std::vector<int16_t> pcm = write_tone_wav(wav);
+#if defined(_WIN32)
+  { std::ofstream(dir / "ffmpeg.exe", std::ios::binary) << "not a program"; }
+  { std::ofstream(dir / "ffmpeg.bat") << "@exit /b 3\r\n"; }
+#else
+  { std::ofstream(dir / "ffmpeg") << "#!/bin/sh\nexit 3\n"; }
+  fs::permissions(dir / "ffmpeg", fs::perms::owner_all);
+  const std::string old_path = std::getenv("PATH") ? std::getenv("PATH") : "";
+  setenv("PATH", (std::string(":.:") + old_path).c_str(), 1);
+#endif
+  std::vector<float> got;
+  std::string error;
+  {
+    InFolder here(dir);
+    try {
+      got = ffmpeg_decode("tone.wav", read_file(wav));
+    } catch (const std::exception& e) {
+      error = e.what();
+    }
+  }
+#if !defined(_WIN32)
+  setenv("PATH", old_path.c_str(), 1);
+#endif
+  fs::remove_all(dir);
+  if (on_path) {
+    ASSERT_EQ(error, "");
+    ASSERT_EQ(got.size(), pcm.size());
+  } else {
+    EXPECT_NE(error.find("ffmpeg was not found"), std::string::npos) << error;
+    EXPECT_EQ(error.find("Windows error"), std::string::npos) << error;
+  }
+}
+
 TEST(FfmpegDecode, ABadFileIsAnError) {
   if (!have_ffmpeg()) GTEST_SKIP() << "ffmpeg is not on PATH";
   const fs::path path = temp_name(".wav");

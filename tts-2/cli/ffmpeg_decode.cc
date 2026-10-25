@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -14,6 +15,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char** environ;
@@ -39,6 +41,38 @@ std::wstring widen(const std::string& s) {
   std::wstring w(static_cast<size_t>(n), L'\0');
   MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()), w.data(), n);
   return w;
+}
+
+// The program file for `name`, from the PATH folders that are absolute paths only (a name with a folder part is taken
+// as it is): CreateProcessW(NULL, ...) would look in the current folder before PATH, where a downloaded or planted
+// ffmpeg.exe would then run with the user's recording. Only an .exe is taken for a bare name (a .bat or .cmd would run
+// through cmd.exe). Empty when there is none.
+std::wstring find_program(const std::wstring& name) {
+  if (name.find_first_of(L"\\/:") != std::wstring::npos) return name;
+  const std::wstring file = name.find(L'.') == std::wstring::npos ? name + L".exe" : name;
+  const DWORD size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+  if (size == 0) return {};
+  std::wstring path(size, L'\0');
+  path.resize(GetEnvironmentVariableW(L"PATH", path.data(), size));
+  for (size_t start = 0; start <= path.size();) {
+    size_t end = path.find(L';', start);
+    if (end == std::wstring::npos) end = path.size();
+    std::wstring dir = path.substr(start, end - start);
+    start = end + 1;
+    dir.erase(std::remove(dir.begin(), dir.end(), L'"'), dir.end());
+    while (!dir.empty() && dir.back() == L' ') dir.pop_back();
+    while (!dir.empty() && dir.front() == L' ') dir.erase(dir.begin());
+    const bool drive = dir.size() >= 3 && ((dir[0] >= L'A' && dir[0] <= L'Z') || (dir[0] >= L'a' && dir[0] <= L'z')) &&
+                       dir[1] == L':' && (dir[2] == L'\\' || dir[2] == L'/');
+    const bool unc = dir.size() > 2 && dir[0] == L'\\' && dir[1] == L'\\';
+    if (!drive && !unc) continue;  // empty or relative: never the current folder
+    std::wstring candidate = dir;
+    if (candidate.back() != L'\\' && candidate.back() != L'/') candidate += L'\\';
+    candidate += file;
+    const DWORD attributes = GetFileAttributesW(candidate.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return candidate;
+  }
+  return {};
 }
 
 // Quotes one argument so that the C runtime's command-line parser (CommandLineToArgvW rules) gives it back unchanged.
@@ -72,8 +106,10 @@ void append_quoted(std::wstring& cmd, const std::wstring& arg) {
 // or nowhere with discard_stderr.
 Result run(const std::string& program, const std::vector<std::string>& args, const std::vector<char>* input,
            bool discard_stderr) {
+  const std::wstring exe = find_program(widen(program));
+  if (exe.empty()) throw FfmpegMissing(ffmpeg_missing_message());
   std::wstring cmd;
-  append_quoted(cmd, widen(program));
+  append_quoted(cmd, exe);
   for (const auto& a : args) {
     cmd += L' ';
     append_quoted(cmd, widen(a));
@@ -101,7 +137,7 @@ Result run(const std::string& program, const std::vector<std::string>& args, con
   si.hStdOutput = out_wr;
   si.hStdError = err ? err : nul;
   PROCESS_INFORMATION pi{};
-  const BOOL started = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+  const BOOL started = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
   const DWORD start_error = started ? 0 : GetLastError();
   CloseHandle(out_wr);
   if (in_rd) CloseHandle(in_rd);
@@ -153,11 +189,35 @@ Result run(const std::string& program, const std::vector<std::string>& args, con
   return r;
 }
 #else
+// The program file for `name`, from the PATH folders that are absolute paths only (a name with a '/' is taken as it
+// is): posix_spawnp would read an empty PATH entry as the current folder, where a downloaded or planted ffmpeg would
+// then run with the user's recording. Empty when there is none.
+std::string find_program(const std::string& name) {
+  if (name.find('/') != std::string::npos) return name;
+  const char* env = std::getenv("PATH");
+  if (env == nullptr) return {};
+  const std::string path = env;
+  for (size_t start = 0; start <= path.size();) {
+    size_t end = path.find(':', start);
+    if (end == std::string::npos) end = path.size();
+    const std::string dir = path.substr(start, end - start);
+    start = end + 1;
+    if (dir.empty() || dir[0] != '/') continue;  // empty or relative: never the current folder
+    const std::string candidate = dir + (dir.back() == '/' ? "" : "/") + name;
+    struct stat st {};
+    if (stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode) && access(candidate.c_str(), X_OK) == 0)
+      return candidate;
+  }
+  return {};
+}
+
 Result run(const std::string& program, const std::vector<std::string>& args, const std::vector<char>* input,
            bool discard_stderr) {
+  const std::string exe = find_program(program);
+  if (exe.empty()) throw FfmpegMissing(ffmpeg_missing_message());
   std::vector<std::string> argv_s;
   argv_s.reserve(args.size() + 1);
-  argv_s.push_back(program);
+  argv_s.push_back(exe);
   argv_s.insert(argv_s.end(), args.begin(), args.end());
   std::vector<char*> argv;
   for (auto& a : argv_s) argv.push_back(a.data());
@@ -177,7 +237,7 @@ Result run(const std::string& program, const std::vector<std::string>& args, con
   posix_spawn_file_actions_adddup2(&actions, out[1], 1);
   if (discard_stderr) posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
   pid_t pid = 0;
-  const int rc = posix_spawnp(&pid, program.c_str(), &actions, nullptr, argv.data(), environ);
+  const int rc = posix_spawn(&pid, exe.c_str(), &actions, nullptr, argv.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
   close(out[1]);
   if (input) close(in[0]);
@@ -258,8 +318,11 @@ std::vector<float> ffmpeg_decode(const std::string& path, const std::vector<char
 #endif
   // From standard input first, as the reference pipeline and the in-process decode read it (same samples); its
   // messages are not shown, since a file that needs seeking is then read by name.
+  // By name with the "file:" protocol prefix: ffmpeg reads "-i 2026-10-25T10:30.m4a" as protocol "2026-10-25T10"
+  // (everything before a ':' that has only URL scheme characters), as its documentation says for names with a ':'.
   Result r = run(program, ffmpeg_decode_args("pipe:0", rate, max_seconds), &data, true);
-  if (!r.exited_ok || r.out.size() < sizeof(float)) r = run(program, ffmpeg_decode_args(path, rate, max_seconds), nullptr, false);
+  if (!r.exited_ok || r.out.size() < sizeof(float))
+    r = run(program, ffmpeg_decode_args("file:" + path, rate, max_seconds), nullptr, false);
   if (!r.exited_ok) throw std::runtime_error("ffmpeg could not decode the reference audio (" + r.status + "): " + path);
   const size_t n = r.out.size() / sizeof(float);
   if (n == 0) throw std::runtime_error("ffmpeg found no audio in the reference audio file: " + path);

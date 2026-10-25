@@ -8,8 +8,9 @@
 // version, and also with some others (measured bit for bit on WAV, MP3, FLAC, Ogg Vorbis and M4A: FFmpeg 6.1.1 and
 // 8.1.3 programs against the default build's FFmpeg 6.1.1 libraries; FFmpeg 9.0.2 decodes M4A/AAC 142 samples shorter,
 // the other formats the same). Some files cannot be read from a pipe (an MP4/M4A file whose index is at the end): when
-// that gives no audio, ffmpeg reads the file by name instead (`-i FILE`), where the in-process decode has no audio at
-// all. ffmpeg is started directly (no shell).
+// that gives no audio, ffmpeg reads the file by name instead (`-i file:FILE`), where the in-process decode has no
+// audio at all. ffmpeg is started directly (no shell), found in the absolute folders of PATH only (never the current
+// folder; on Windows only ffmpeg.exe).
 #pragma once
 
 #include <stdexcept>
@@ -31,7 +32,8 @@ std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate =
 // The one-line error for a missing ffmpeg.
 std::string ffmpeg_missing_message();
 
-// Decodes the reference audio file `path`, whose bytes are `data`, with `program` (searched on PATH) and returns mono
+// Decodes the reference audio file `path`, whose bytes are `data`, with `program` (searched in PATH's absolute folders,
+// unless it names a folder) and returns mono
 // float32 samples at `rate` Hz. Throws FfmpegMissing when it cannot be started, std::runtime_error when it fails or
 // returns no audio (ffmpeg's own message is printed on standard error).
 std::vector<float> ffmpeg_decode(const std::string& path, const std::vector<char>& data, int rate = 24000,

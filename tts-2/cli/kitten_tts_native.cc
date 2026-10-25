@@ -690,6 +690,8 @@ bool load_engine_dll() {
 }
 
 int wmain(int argc, wchar_t** wargv) {
+  // No DLL from the current folder: it is otherwise searched before PATH, also for the fallback in load_engine_dll.
+  SetDllDirectoryW(L"");
   if (!load_engine_dll()) return 1;
   std::vector<std::string> args;
   args.reserve(size_t(argc));
