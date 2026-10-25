@@ -5,6 +5,7 @@ make_dev_backend.py) and a GPU; otherwise they are skipped. Environment:
   KT2N_TEST_REVISION   model revision to prepare (default: the program's pinned revision below)
   KT2N_TEST_CACHE      cache directory for prepared models (default: the package default)
   KT2N_TEST_CLONING=1  also run voice cloning (CUDA engine and about 11 GB of free GPU memory)
+  KT2N_TEST_MEMORY_FREE=1  this process is alone on the GPU (the Ctrl-C test then also checks the memory)
   KT2N_REQUIRE_GPU=1   fail instead of skipping when no engine or GPU is available
 """
 import json
@@ -89,6 +90,20 @@ def test_generate_complete_is_seeded_and_matches_the_cli(tts, tmp_path):
     assert report["engine"]["output"] == "complete"
 
 
+def test_unseeded_requests_differ(tts):
+    """Without a seed each request samples on its own (a "try again" gives another take); with one it repeats."""
+    a = tts.generate("Try this sentence again.", voice="Bruno")
+    b = tts.generate("Try this sentence again.", voice="Bruno")
+    assert not (a.size == b.size and np.array_equal(a, b)), "two unseeded requests gave the same audio"
+    c = tts.generate("Try this sentence again.", voice="Bruno", seed=21)
+    d = tts.generate("Try this sentence again.", voice="Bruno", seed=21)
+    assert np.array_equal(c, d)
+
+
+def test_revision_is_the_commit(tts):
+    assert tts.revision == REVISION and tts.model_dir.name == REVISION
+
+
 def test_generate_other_voice_and_options(tts):
     voices = tts.list_voices()
     other = next(v for v in voices if v != "Bruno")
@@ -136,6 +151,63 @@ def test_errors(tts):
         tts.generate("x", voice="Bruno", temprature=0.5)
 
 
+def test_chunks_reach_a_stream_while_another_thread_waits(tts, monkeypatch):
+    """Thread B's generate() waits behind stream A (one stream at a time) and polls the engine meanwhile. Each of
+    A's chunks must reach A as soon as it is polled, whichever thread polled it (engine event time -> delivery)."""
+    import threading
+    from kitten_inference.tts2 import _engine
+    lags = []
+    real_events = _engine.Engine.events
+
+    def events(self, ident):
+        for ev in real_events(self, ident):
+            if ev.kind == 1 and ev.at_ns:  # audio
+                lags.append((ident, (time.monotonic_ns() - ev.at_ns) / 1e6))
+            yield ev
+
+    monkeypatch.setattr(_engine.Engine, "events", events)
+    for _ in range(3):
+        it = tts.stream(TEXT * 2, voice="Bruno", seed=SEED)
+        next(it)
+        a = lags[-1][0]
+        waiter = threading.Thread(target=lambda: tts.generate("A second request.", voice="Bruno", seed=3))
+        waiter.start()
+        for _ in it:
+            pass
+        waiter.join(60)
+    mine = sorted(lag for ident, lag in lags if ident == a)
+    print(f"\nchunk hand-off with a waiting thread: median {mine[len(mine) // 2]:.2f} ms, max {mine[-1]:.2f} ms "
+          f"({len(mine)} chunks)", file=sys.stderr)
+    assert mine[-1] < 25, mine  # 0.1 ms in practice; the earlier pump held chunks for 160 ms (median)
+
+
+def test_gpu_check_sees_this_gpu():
+    from kitten_inference.tts2 import _gpu
+    assert _gpu.check("cuda", 0) >= 1
+    with pytest.raises(_gpu.GPUError, match="no NVIDIA GPU 7"):
+        _gpu.check("cuda", 7)
+    code = "from kitten_inference.tts2 import _gpu; _gpu.check('cuda', 0)"
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
+    assert run.returncode == 1 and "sees no GPU" in run.stderr, run.stderr[-500:]
+
+
+def test_ctrl_c_during_start_frees_the_engine(tmp_path):
+    """A real interrupt (as Ctrl-C) while kt2n_engine_create runs: no engine may stay behind, and the next
+    KittenTTS2() in the same process starts normally."""
+    script = Path(__file__).with_name("ctrl_c_start.py")
+    out = tmp_path / "r.json"
+    run = subprocess.run([sys.executable, str(script), REVISION, str(CACHE or ""), str(out)], capture_output=True,
+                         text=True, timeout=600)
+    assert run.returncode == 0, run.stderr[-2000:]
+    r = json.loads(out.read_text())
+    print(f"\nCtrl-C during start: {r}", file=sys.stderr)
+    assert r["interrupted"] and r["interrupt_during_create"], r
+    assert r["next_started"], r
+    # The engine create made was destroyed: the memory is back where close() left it (other processes aside).
+    assert r["after_interrupted_start_mib"] - r["after_close_mib"] < 512, r
+
+
 def test_save_wav_list_of_chunks(tts, tmp_path):
     chunks = list(tts.stream("Two short chunks.", voice="Bruno"))
     path = tts.save_wav(tmp_path / "s.wav", chunks)
@@ -168,7 +240,7 @@ def reference(tmp_path_factory, tts):
     return mp3, text
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (about 11 GB of free GPU memory)")
 def test_clone_save_load(tts, reference, tmp_path):
     if not tts.can_clone:
         _skip("this engine has no voice cloning")
@@ -184,11 +256,28 @@ def test_clone_save_load(tts, reference, tmp_path):
     assert loaded == voice
     b = tts.generate("This is my cloned voice speaking.", voice=loaded, seed=5)
     assert np.array_equal(a, b), "a saved and loaded voice gave other audio than the cloned one"
+    # The saved voice names the prepared model it belongs to, as the engine checks it.
+    from kitten_inference.tts2 import _bundle
+    assert _bundle.identity(_bundle.blob_meta(voice.artifact)) == tts._model_identity(tts.model_dir)
+    # A voice of another prepared model is refused before the engine is touched, with the fix in the message.
+    meta = _bundle.blob_meta(voice.artifact)
+    other = voice.artifact.replace(meta["checkpoint"].encode(), ("0" * len(meta["checkpoint"])).encode(), 1)
+    (tmp_path / "other.voice").write_bytes(other)
+    with pytest.raises(ValueError, match=r"works only with the model revision it was made with"):
+        tts.load_voice(tmp_path / "other.voice")
+    from kitten_inference.tts2 import Voice, EngineError
+    try:  # what the engine itself says (bypassing the check above)
+        tts._engine.voice_load(Voice(other).artifact)
+        engine_answer = "loaded"
+    except EngineError as exc:
+        engine_answer = f"status {exc.status}: {exc.message}"
+    print(f"\nengine on a voice of another model: {engine_answer}", file=sys.stderr)
+    assert engine_answer.startswith(("status 210", "status 213")), engine_answer
     c = tts.generate("Back to a built-in voice.", voice="Bruno", seed=5)  # built-in voices still work
     _sane(c, "Back to a built-in voice.")
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (about 11 GB of free GPU memory)")
 def test_loaded_voice_in_a_new_process(tts, reference, tmp_path):
     """A voice saved here loads and speaks in a fresh KittenTTS2 that never cloned (saved-voice engine)."""
     if not tts.can_clone:
@@ -200,7 +289,11 @@ def test_loaded_voice_in_a_new_process(tts, reference, tmp_path):
     code = (f"import numpy as np; from kitten_inference.tts2 import KittenTTS2; "
             f"t = KittenTTS2(revision={REVISION!r}, cache_dir={CACHE!r}); v = t.load_voice({str(path)!r}); "
             f"a = t.generate('A voice from a file.', voice=v, seed=9); np.save({str(tmp_path / 'a.npy')!r}, a)")
-    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=600)
+    tts.close()  # the new process has the GPU to itself (on a 12 GB card two engines do not fit)
+    try:
+        run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=600)
+    finally:
+        tts.__init__(revision=REVISION, cache_dir=CACHE)  # the shared object, started again for the next tests
     assert run.returncode == 0, run.stderr[-2000:]
     assert np.array_equal(np.load(tmp_path / "a.npy"), expected)
 
@@ -214,7 +307,7 @@ def test_ffmpeg_missing_message(tts, reference, monkeypatch):
         tts.clone_voice(reference[0], reference[1])
 
 
-@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (12 GB+ GPU)")
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (about 11 GB of free GPU memory)")
 def test_two_custom_voices(tts, reference, tmp_path):
     """The engine keeps one custom voice: switching evicts the previous one, except while a stream still uses it."""
     if not tts.can_clone:

@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 from pathlib import Path
@@ -5,6 +6,23 @@ from pathlib import Path
 import pytest
 
 GPU_DIR = Path(__file__).parent / "gpu"
+# Unit tests (not tests/gpu) that were skipped: KT2N_STRICT_SKIPS=1 (CI) makes them a failure, except tests for
+# another operating system (skip reason "platform: ...").
+_skipped = []
+
+
+def pytest_runtest_logreport(report):
+    if not report.skipped or "tests/gpu/" in report.nodeid.replace("\\", "/"):
+        return
+    reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+    if not str(reason).replace("Skipped: ", "").startswith("platform:"):
+        _skipped.append(f"{report.nodeid} ({reason})")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if os.environ.get("KT2N_STRICT_SKIPS") == "1" and _skipped:
+        print(f"\nKT2N_STRICT_SKIPS: {len(_skipped)} unit test(s) skipped: {', '.join(_skipped)}", file=sys.stderr)
+        session.exitstatus = 1
 
 
 def pytest_collection_modifyitems(config, items):

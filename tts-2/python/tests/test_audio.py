@@ -9,6 +9,10 @@ import pytest
 
 from kitten_inference.tts2 import _audio
 
+# CI installs ffmpeg on every OS and sets KT2N_REQUIRE_FFMPEG=1: the decode tests then never skip.
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None and os.environ.get("KT2N_REQUIRE_FFMPEG") != "1",
+                                  reason="ffmpeg is not installed")
+
 
 def test_pcm16_round_trip(tmp_path):
     pcm = np.array([0, 1, -1, 32767, -32768, 12345], dtype="<i2")
@@ -63,7 +67,7 @@ def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
     assert b[b.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.m4a") and b[:6] == a[:6]
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+@needs_ffmpeg
 def test_ffmpeg_decode(tmp_path):
     # 1 s of a 440 Hz tone, stereo 44.1 kHz -> mono 24 kHz float
     src = tmp_path / "tone.wav"
@@ -83,7 +87,7 @@ def test_ffmpeg_decode(tmp_path):
         _audio.decode_reference(bad)
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+@needs_ffmpeg
 def test_ffmpeg_decode_falls_back_to_the_file_name(tmp_path):
     # An M4A with its index at the end cannot be read from a pipe; it is then read by name.
     src = tmp_path / "tone.wav"
@@ -99,5 +103,32 @@ def test_ffmpeg_decode_falls_back_to_the_file_name(tmp_path):
     piped = subprocess.run(["ffmpeg", *_audio.ffmpeg_args()], input=m4a.read_bytes(), capture_output=True)
     pcm = _audio.decode_reference(m4a)
     assert abs(pcm.size - 20 * 24000) <= 2048 and np.abs(pcm).max() > 0.1
-    if piped.returncode == 0 and len(piped.stdout) >= 4:
-        pytest.skip("this ffmpeg reads the M4A from a pipe too (fallback not exercised)")
+    # Whether this ffmpeg could read that M4A from the pipe (the next test forces the by-name path either way).
+    print(f"pipe decode of an M4A with its index at the end: {'ok' if piped.returncode == 0 and piped.stdout else 'no audio'}")
+
+
+@needs_ffmpeg
+def test_by_name_fallback_with_a_non_ascii_name(tmp_path, monkeypatch):
+    # The by-name path with a real ffmpeg, whatever this ffmpeg can read from a pipe: the pipe attempt is made to
+    # find no audio. The name has spaces and non-ASCII letters (Windows passes it to ffmpeg as a UTF-16 command line).
+    folder = tmp_path / "Łukasz 田中 dir"
+    folder.mkdir()
+    src = folder / "-réf ü.wav"
+    t = np.arange(24000) / 24000.0
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes((0.3 * np.sin(2 * np.pi * 330 * t) * 32767).astype("<i2").tobytes())
+    real = _audio._ffmpeg
+    calls = []
+
+    def ffmpeg(exe, args, data):
+        calls.append(data is None)
+        if data is not None:  # the pipe attempt: as an M4A with its index at the end
+            return subprocess.CompletedProcess(args, 1, b"", b"moov atom not found")
+        return real(exe, args, data)
+
+    monkeypatch.setattr(_audio, "_ffmpeg", ffmpeg)
+    pcm = _audio.decode_reference(src)
+    assert calls == [False, True] and abs(pcm.size - 24000) <= 64 and np.abs(pcm).max() > 0.2
