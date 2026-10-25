@@ -55,10 +55,12 @@ def test_reference_limits(tmp_path):
 
 
 def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
-    a = _audio.ffmpeg_args(tmp_path / "-ref.wav")
-    assert a[a.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.wav") and a[-1] == "pipe:1" and "-nostdin" in a
+    a = _audio.ffmpeg_args()
+    assert a[a.index("-i") + 1] == "pipe:0" and a[-1] == "pipe:1" and "-nostdin" in a
     assert a[a.index("-ac") + 1] == "1" and a[a.index("-ar") + 1] == "24000"
     assert a[a.index("-t") + 1] == "30.100" and a[a.index("-f") + 1] == "f32le"
+    b = _audio.ffmpeg_args(tmp_path / "-ref.m4a")  # the by-name fallback
+    assert b[b.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.m4a") and b[:6] == a[:6]
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
@@ -79,3 +81,23 @@ def test_ffmpeg_decode(tmp_path):
     bad.write_bytes(b"this is not audio" * 100)
     with pytest.raises(_audio.AudioError, match="no decodable audio"):
         _audio.decode_reference(bad)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_ffmpeg_decode_falls_back_to_the_file_name(tmp_path):
+    # An M4A with its index at the end cannot be read from a pipe; it is then read by name.
+    src = tmp_path / "tone.wav"
+    t = np.arange(24000) / 24000.0
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes((0.3 * np.sin(2 * np.pi * 330 * t) * 32767).astype("<i2").tobytes())
+    m4a = tmp_path / "tone.m4a"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(src), "-c:a", "aac", str(m4a)],
+                   check=True)
+    piped = subprocess.run(["ffmpeg", *_audio.ffmpeg_args()], input=m4a.read_bytes(), capture_output=True)
+    pcm = _audio.decode_reference(m4a)
+    assert abs(pcm.size - 24000) <= 2048 and np.abs(pcm).max() > 0.1
+    if piped.returncode == 0 and piped.stdout:
+        pytest.skip("this ffmpeg reads the M4A from a pipe too (fallback not exercised)")
