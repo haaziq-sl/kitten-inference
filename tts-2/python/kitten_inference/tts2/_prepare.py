@@ -184,6 +184,7 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 log(f"[1/3] downloading {repo} at {sha[:12]} and the decoder weights (first use only)")
                 snapshot = _snapshot(repo, sha, patterns, cache_dir)
                 common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
+                downloaded = time.monotonic()
                 partial = root / f".partial-{sha}"
                 shutil.rmtree(partial, ignore_errors=True)
                 log(f"[2/3] preparing the model for this machine{' with voice cloning' if with_cloning else ''} "
@@ -203,6 +204,7 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 snapshot = _snapshot(repo, sha, list(prepare.MODEL_ALLOW_PATTERNS)
                                      + list(prepare.CLONING_ALLOW_PATTERNS), cache_dir)
                 common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
+                downloaded = time.monotonic()
                 # config.json is the commit point: without its cloning entry, files in native/cloning are a
                 # stopped earlier attempt.
                 shutil.rmtree(final / "native" / "cloning", ignore_errors=True)
@@ -211,6 +213,8 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 _run_prepare(argv, root / f"prepare-cloning-{sha[:12]}.log")
                 if not is_prepared(final, True):
                     raise PrepareError(f"preparation finished without the cloning files in {final}")
-            log(f"[3/3] model ready in {time.monotonic() - started:.0f} s: {final}")
+            done = time.monotonic()
+            log(f"[3/3] model ready in {done - started:.0f} s (downloads {downloaded - started:.0f} s, preparation "
+                f"{done - downloaded:.0f} s): {final}")
     _record_ref(root, repo, revision, sha)
     return final
