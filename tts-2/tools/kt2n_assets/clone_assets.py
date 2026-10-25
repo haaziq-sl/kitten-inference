@@ -1,13 +1,25 @@
-"""Validate and prepare the original native cloning networks.
+"""Validate and prepare the original native cloning networks (numpy only; no torch).
 
 Tensor digests pin the original FP32 export of pyannote/embedding and the
 reference front-end constants. Header ordering and legacy speaker-bank data
 may differ; no tensor arithmetic or precision conversion is performed here.
+
+public_clone_exports() writes the two export files from public inputs without
+torch: the pyannote/embedding weights that KittenML/kitten-tts-2 carries as
+speaker/model.safetensors, the decoder checkpoint, and pinned reference values
+for the tensors that the torch exporter (export_clone.py) derives with
+torch/torchaudio/librosa/asteroid-filterbanks. The files are byte-identical to
+what export_clone.py writes.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 import tempfile
+import zlib
+
+import numpy as np
 
 from .safetensors_raw import SafetensorsFile, sha256_file, write_safetensors
 
@@ -95,6 +107,137 @@ CONTRACTS = {'consts': {'kaldi_mel_banks': ([80, 257], '4696fcf5cd78c83eddf9e6c2
                                  '9167ff2b16471f6ee5bd86589dffb8be13ea413b738b2775d81df5ba6d346cef')}}
 
 
+# Front-end constants computed by preparation; the other two are copied from the acoustic checkpoint. Their float
+# math can round differently on different CPUs: torch's CPU log/exp/sin/cos go through Intel MKL's vector math
+# library, which picks its code path by CPU vendor (on an AMD CPU 12 of the 20,560 kaldi_mel_banks values differ
+# from the pinned ones, by at most 7.06e-6), and numpy picks its log/exp code by CPU features. The reference values
+# shipped beside this file are the pinned bytes, computed once on an Intel CPU; every preparation writes them.
+COMPUTED_CONSTS = ("kaldi_mel_banks", "kaldi_povey_400", "mel24_basis", "mel24_window", "poly_2_3_taps",
+                   "ta_24_16_kernel_cpu", "ta_24_16_kernel_dev")
+# Text file: per tensor, its shape and its little-endian float32 bytes, zlib-compressed, as lines of hex.
+REFERENCE_CONSTS = Path(__file__).with_name("clone_consts_reference.json")
+# pyannote/embedding tensors that speaker/model.safetensors does not carry: the SincNet filterbank buffers that
+# asteroid-filterbanks' ParamSincFB(80, 251, stride=10, sample_rate=16000) creates, and the 80 band-pass filters it
+# computes from them and the learned cut-offs (low_hz_, band_hz_, pinned below). Deterministic functions of pinned
+# inputs, computed once with the previous requirements-cloning.txt versions
+# (export_clone.py --speaker-safetensors ... --write-sincnet-reference) and shipped in the same format.
+DERIVED_PYANNOTE = ("sincnet.conv1d.0.filterbank.n_", "sincnet.conv1d.0.filterbank.window_",
+                    "sincnet.conv1d.0.filters")
+REFERENCE_SINCNET = Path(__file__).with_name("clone_sincnet_reference.json")
+SPEAKER_SKIPPED_SUFFIX = ".num_batches_tracked"  # integer batch counters; the original export left them out
+CONSTS_METADATA = {"ta_width": "10", "source": "native-cloning-constants-v1"}
+
+
+def pyannote_metadata() -> dict:
+    return {"model": f"{PYANNOTE_REPO}@{PYANNOTE_REVISION}"}
+
+
+def _pinned(kind: str, name: str, value: np.ndarray) -> bool:
+    shape, digest = CONTRACTS[kind][name]
+    raw = np.ascontiguousarray(value, dtype="<f4").tobytes()
+    return value.dtype == np.dtype("<f4") and list(value.shape) == shape and hashlib.sha256(raw).hexdigest() == digest
+
+
+def read_reference(path: Path, kind: str, names: tuple[str, ...]) -> dict:
+    """Reference values from ``path``, accepted only when each matches its pinned shape and SHA-256."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    arrays = {name: np.frombuffer(zlib.decompress(bytes.fromhex("".join(rec["data"]))), dtype="<f4")
+              .reshape(rec["shape"]) for name, rec in data["tensors"].items()}
+    if set(arrays) != set(names):
+        raise ValueError(f"clone {kind}: {path} does not hold the expected reference values")
+    for name, value in arrays.items():
+        if not _pinned(kind, name, value):
+            raise ValueError(f"clone {kind}: reference values in {path} do not match the pin: {name}")
+    return {name: arrays[name] for name in names}
+
+
+def write_reference(arrays: dict, path: Path) -> None:
+    """Write a reference file (done once, from a machine that reproduces every pin)."""
+    tensors = {}
+    for name in sorted(arrays):
+        raw = zlib.compress(np.ascontiguousarray(arrays[name], dtype="<f4").tobytes(), 9).hex()
+        tensors[name] = {"shape": list(arrays[name].shape), "data": [raw[i:i + 96] for i in range(0, len(raw), 96)]}
+    path.write_text(json.dumps({"format": "little-endian float32, zlib, hex", "tensors": tensors}, indent=1) + "\n",
+                    encoding="utf-8", newline="\n")
+
+
+def reference_constants(path: Path = REFERENCE_CONSTS) -> dict:
+    return read_reference(path, "consts", COMPUTED_CONSTS)
+
+
+def reference_sincnet(path: Path = REFERENCE_SINCNET) -> dict:
+    return read_reference(path, "pyannote", DERIVED_PYANNOTE)
+
+
+def public_speaker_state(path: Path) -> dict:
+    """The pyannote/embedding tensors of speaker/model.safetensors, each checked against its pin (no torch)."""
+    expected = CONTRACTS["pyannote"]
+    with SafetensorsFile(path) as source:
+        names = set(source.by_name)
+        unexpected = sorted(n for n in names - set(expected) if not n.endswith(SPEAKER_SKIPPED_SUFFIX))
+        missing = sorted(set(expected) - set(DERIVED_PYANNOTE) - names)
+        if unexpected or missing:
+            raise ValueError(f"clone pyannote: {path} is not the pinned pyannote/embedding network "
+                             f"(missing {missing[:3]}, unexpected {unexpected[:3]})")
+        state = {}
+        for name in expected:
+            if name not in names:
+                continue
+            info = source.by_name[name]
+            shape, digest = expected[name]
+            if info.dtype != "F32" or list(info.shape) != shape or source.tensor_sha256(name) != digest:
+                raise ValueError(f"clone pyannote: {path} does not match the pinned pyannote/embedding tensor {name}")
+            state[name] = source.array(name).copy()
+    return state
+
+
+def public_speaker_tensors(path: Path) -> dict:
+    """All 49 pinned pyannote tensors: speaker/model.safetensors plus the reference values for the derived ones."""
+    state = public_speaker_state(path)
+    for name, value in reference_sincnet().items():
+        state.setdefault(name, value)
+    return {name: state[name] for name in CONTRACTS["pyannote"]}
+
+
+def public_frontend_tensors(acoustic: Path) -> dict:
+    """The nine front-end constants: the pinned reference values plus two tensors of the acoustic checkpoint."""
+    from .convert_s3gen import PINNED_SHA256
+    if sha256_file(acoustic) != PINNED_SHA256:
+        raise ValueError("acoustic checkpoint checksum does not match the pinned upstream revision")
+    tensors = dict(reference_constants())
+    with SafetensorsFile(acoustic) as source:
+        for output, name in (("s3_mel_filters", "tokenizer._mel_filters"), ("s3_window", "tokenizer.window")):
+            if source.by_name[name].dtype != "F32":
+                raise ValueError(f"acoustic {name} must be FP32")
+            tensors[output] = source.array(name).copy()
+    return tensors
+
+
+def write_checked(path: Path, arrays: dict, kind: str, metadata: dict) -> dict:
+    tensors = {name: ("F32", value.shape, value.astype("<f4").tobytes(order="C")) for name, value in arrays.items()}
+    write_safetensors(path, tensors, metadata)
+    checked_tensors(path, kind)
+    return {"file": path.name, "size": path.stat().st_size, "sha256": sha256_file(path),
+            "tensors": len(tensors), "all_tensor_checksums_match": True}
+
+
+def public_clone_exports(speaker: Path, acoustic: Path, destination: Path) -> dict:
+    """Write voicebuild_consts/voicebuild_pyannote.safetensors (the export_clone.py layout) without torch."""
+    if destination.exists():
+        raise ValueError("export destination already exists; choose a new directory")
+    speaker_tensors = public_speaker_tensors(speaker)
+    consts = public_frontend_tensors(acoustic)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".clone-export-", dir=destination.parent) as scratch:
+        stage = Path(scratch) / "exports"
+        stage.mkdir()
+        write_checked(stage / "voicebuild_consts.safetensors", consts, "consts", CONSTS_METADATA)
+        write_checked(stage / "voicebuild_pyannote.safetensors", speaker_tensors, "pyannote", pyannote_metadata())
+        stage.rename(destination)
+    return {"pyannote_weights_sha256": sha256_file(speaker), "derived_tensors": REFERENCE_SINCNET.name,
+            "pyannote_access": "none: public weights in the model repository (MIT)"}
+
+
 def checked_tensors(path: Path, kind: str) -> dict:
     """Accept only the pinned network/constants; discard legacy bank metadata."""
     contract = CONTRACTS[kind]
@@ -126,10 +269,8 @@ def prepare_clone_files(acoustic: Path, consts: Path, pyannote: Path, destinatio
         stage = Path(scratch) / "cloning"
         stage.mkdir()
         shutil.copyfile(acoustic, stage / "s3gen.safetensors")
-        write_safetensors(stage / "voicebuild_consts.safetensors", tensors["consts"],
-                         {"ta_width": "10", "source": "native-cloning-constants-v1"})
-        write_safetensors(stage / "voicebuild_pyannote.safetensors", tensors["pyannote"],
-                         {"model": f"{PYANNOTE_REPO}@{PYANNOTE_REVISION}"})
+        write_safetensors(stage / "voicebuild_consts.safetensors", tensors["consts"], CONSTS_METADATA)
+        write_safetensors(stage / "voicebuild_pyannote.safetensors", tensors["pyannote"], pyannote_metadata())
         stage.rename(destination)
     return {"acoustic_repo": "ResembleAI/chatterbox-turbo", "acoustic_revision": PINNED_REVISION,
             "acoustic_sha256": PINNED_SHA256, "pyannote_repo": PYANNOTE_REPO,

@@ -467,3 +467,21 @@ def test_config_layers_drive_projection_count(tmp_path):
     assert json.loads((src / "config.json").read_text(encoding="utf-8")) == qwen3_config(spec)
     summary = convert(src, tmp_path / "x.kt2n", **QUIET)
     assert summary["ternary"] == 21
+
+
+def test_side_file_allowlist_ignores_other_cached_files(synth_src, tmp_path):
+    # A shared download cache can hold more files of the same revision (here vocab.json, merges.txt and an extra
+    # generation_config.json); with side_files the output is the same as from a directory with just those files.
+    lean = tmp_path / "lean" / "effective-bf16"
+    lean.mkdir(parents=True)
+    for name in ("model.safetensors", "config.json", "tokenizer.json"):
+        shutil.copyfile(synth_src / name, lean / name)
+    shutil.copyfile(synth_src.parent / "runtime_config.json", lean.parent / "runtime_config.json")
+    (synth_src / "generation_config.json").write_text("{}\n", encoding="utf-8", newline="\n")
+    try:
+        full, only = tmp_path / "full.kt2n", tmp_path / "only.kt2n"
+        convert(synth_src, full, side_files=("config.json", "tokenizer.json"), **QUIET)
+        convert(lean, only, **QUIET)
+        assert full.read_bytes() == only.read_bytes()
+    finally:
+        (synth_src / "generation_config.json").unlink()

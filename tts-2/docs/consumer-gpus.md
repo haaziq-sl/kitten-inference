@@ -32,7 +32,7 @@ again, and are marked "47-voice revision" otherwise.
 | GeForce RTX 30, 40 and 50 series | supported; same audio as version 0.1.0 | RTX 4060 Laptop GPU: real-time factor 0.079; RTX 5060 Ti: 0.047 |
 | GeForce RTX 20 series | supported, not optimal: no bf16 tensor cores, so part of the math runs in software | RTX 2060: real-time factor 0.45 → 0.22 |
 | GeForce GTX 16 series | supported, not optimal: as RTX 20 | GTX 1660 Ti: 0.58 → 0.27 |
-| GeForce GTX 10 series | supported, not optimal: as RTX 20; prepare the model with `--weight-norm-device cpu` or on another GPU ([below](#gtx-10-gtx-16-and-rtx-20)) | GTX 1080 Ti: 0.47 → 0.28 |
+| GeForce GTX 10 series | supported, not optimal: as RTX 20 | GTX 1080 Ti: 0.47 → 0.28 |
 | Cards with 8 GB or less | supported, not optimal: one stream, buffers fitted to the card (`--stream false` about 1.5% slower), no voice cloning; see [Small-memory cards](#small-memory-cards) | RTX 4060 Laptop GPU 8 GB: 0.079 |
 | 4 GB cards (3 GB cards not tested) | supported, not optimal: as above, and long streaming text is cut where the fitted sizes limit it | RTX 3050 Laptop GPU 4 GB: 0.17 |
 | 2 GB cards | not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start | — |
@@ -72,7 +72,6 @@ texts.
 | Cards where the fitted sizes limit streaming segments (seen on 4 GB cards), streaming only | a long streaming text chunk is split into shorter pieces, each spoken separately ([details](#small-memory-cards)) | Output can differ. Same GPU with and without the split, 24 texts, 2 seeds: 3 of 48 outputs skipped a sentence (without: none), word error rate 1.43% (without: 0.58%), same voice (similarity 0.995). On a real RTX 3050 Laptop GPU 4 GB: 1.71%, 2 of 47 outputs. On the 72 test requests, real 4 GB cards stayed within the usual variation (word error rate 0.80% to 0.99%; RTX 4090: 0.99%). `KT2N_FIT_SPLIT=0` refuses such text instead. `--stream false` is never split |
 | NVIDIA, builds made with CUDA 13 | another compiler version rounds differently | RTX 5060, 72 test requests: none bit for bit the same as the CUDA 12.8 build's; word error rate 1.39% against 1.42% |
 | GeForce GTX 10, GTX 16 and RTX 20 | no bf16 tensor cores: the engine does the same math in software; not changed by this version | 72 test requests: word error rate 0.80%, vs 0.99% on the RTX 4090; voice similarity 0.957, vs 0.910 for a different seed |
-| GeForce GTX 10 with a model prepared with `--weight-norm-device cpu` | some decoder weights differ slightly, by rounding | not measured |
 | Windows | the same GPU code as Linux, but not measured on the same GPU as Linux | NVIDIA L4, 24 texts, 2 seeds: word error rate 0.55% (RTX 4090 on Linux: 0.60%); transcripts differ from the RTX 4090's by 2 words in 4,327 |
 
 These are speech-recognition and speaker-similarity measurements; no listening test was done.
@@ -133,14 +132,6 @@ each with and without streaming; before = version 0.1.0 on the same card:
 | GTX 1070 8 GB | 0.61 → 0.37 | 0.36 s → 0.30 s |
 | GTX 1660 Ti 6 GB | 0.58 → 0.27 | 0.32 s → 0.24 s |
 | RTX 2060 12 GB | 0.45 → 0.22 | 0.25 s → 0.19 s |
-
-**Preparing the model on a GTX 10 card.** The README's model preparation folds some decoder weights on the GPU with
-PyTorch 2.7.1 for CUDA 12.8, which has no code for GTX 10 GPUs (compute capability 6.1). On these cards, add
-`--weight-norm-device cpu` to the `prepare_assets.py` command (some decoder weights then differ slightly, by rounding,
-from the files we tested with), or prepare the model on a machine with a newer NVIDIA GPU and copy the folder. The
-"same audio" comparisons on this page hold for the same prepared model files: the folded weights depend on the GPU
-that prepared them. Preparation with `--weight-norm-device cpu` ran on a GTX 1080 Ti in about 8 minutes; the audio of a
-model prepared that way was not measured on NVIDIA GPUs (on a Radeon it differed only at the level of rounding).
 
 ## Small-memory cards
 

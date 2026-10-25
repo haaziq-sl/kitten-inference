@@ -109,22 +109,16 @@ of type 'hipError_t'`; they are expected.
 
 ## 3. Prepare the model
 
-Preparation folds some decoder weights. With a ROCm build of PyTorch it gives different weights from the files we
-tested with, so it is refused. On a machine with only a Radeon GPU, prepare on the CPU:
+Preparation needs no GPU and no PyTorch, and gives the same files on every machine:
 
 ```sh
 python3 -m venv .venv-prepare
 . .venv-prepare/bin/activate
-python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r requirements-prepare.txt
-python tools/prepare_assets.py --out models/kitten-tts-2 --weight-norm-device cpu
+python tools/prepare_assets.py --out models/kitten-tts-2
 ```
 
-This took 4 to 7 minutes (most of it the download) and at most 3.7 GB of RAM in our tests (47-voice revision). Some decoder weights then differ slightly, by rounding, from
-the files we measured with. On an RX 9060 XT the audio then differed only at the level of rounding (about -64 dB), with
-the same words and voice (word error rate 1.02% either way on 72 test requests). To use the
-same files as our measurements, prepare the model on a Linux machine with an NVIDIA GPU (README, Quick start step 3)
-and copy the `models/kitten-tts-2` folder (prepared with the same version of this repository).
+This took 4 to 7 minutes (most of it the download) and at most 3.7 GB of RAM in our tests (47-voice revision).
 
 ## 4. Generate speech
 

@@ -1,11 +1,5 @@
-# Optional cloning step: prepare_assets.py --cloning-only on a prepared bundle
-# (or export_clone_assets.py). Runs on CPU, validated with Python 3.12. Install
-# torch/torchaudio from https://download.pytorch.org/whl/cpu first; see
-# README.md. These dependencies are not required for native inference.
-torch==2.7.1
-torchaudio==2.7.1
-numpy==1.26.4
-scipy==1.15.3
-librosa==0.11.0
-asteroid-filterbanks==0.4.0
-huggingface-hub==0.35.3
+# Optional cloning step: prepare_assets.py --with-cloning, or --cloning-only on
+# a prepared model. It needs nothing beyond the preparation requirements: the
+# cloning weights come from the model repository (no Hugging Face login), and
+# no PyTorch is needed. Not needed for native inference.
+-r requirements-prepare.txt

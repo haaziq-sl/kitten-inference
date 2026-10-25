@@ -1,0 +1,13 @@
+# Only for tools/export_clone_assets.py, the torch exporter that recomputes the
+# derived cloning tensors and checks them against their pins (maintainers; not
+# needed to prepare or run a model). Exact versions of the reference export,
+# validated with Python 3.12 on CPU. Install torch/torchaudio first:
+#   python -m pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+#   python -m pip install -r tools/requirements-export-clone.txt
+torch==2.7.1
+torchaudio==2.7.1
+numpy==1.26.4
+scipy==1.15.3
+librosa==0.11.0
+asteroid-filterbanks==0.4.0
+huggingface-hub==0.35.3

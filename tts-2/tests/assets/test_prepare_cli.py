@@ -121,7 +121,7 @@ def test_weight_norm_device_without_cuda_explains_the_fix(monkeypatch):
         prepare.check_weight_norm_device("cuda")
     message = str(exc.value.code)
     assert "cannot use CUDA" in message and "CUDA build of torch 2.7.1" in message
-    assert "requirements-prepare.txt" in message and "--weight-norm-device cpu" in message
+    assert "leave out --weight-norm-device" in message
     prepare.check_weight_norm_device("cpu")  # a CPU fold only needs torch itself
     monkeypatch.setitem(sys.modules, "torch", _fake_torch(True, "12.8"))
     prepare.check_weight_norm_device("cuda")
@@ -133,7 +133,7 @@ def test_weight_norm_device_refuses_rocm_torch(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         prepare.check_weight_norm_device("cuda")
     message = str(exc.value.code)
-    assert "ROCm (AMD) build" in message and "--weight-norm-device cpu" in message
+    assert "ROCm (AMD) build" in message and "leave out --weight-norm-device" in message.lower()
     prepare.check_weight_norm_device("cpu")  # a CPU fold is still allowed
 
 
@@ -141,7 +141,38 @@ def test_weight_norm_device_without_torch(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(SystemExit) as exc:
         prepare.check_weight_norm_device("cpu")
-    assert "requirements-prepare.txt" in str(exc.value.code)
+    message = str(exc.value.code)
+    assert "torch 2.7.1" in message and "default numpy fold needs no torch" in message
+
+
+def test_default_numpy_fold_needs_no_torch(monkeypatch):
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch would raise
+    prepare.check_weight_norm_device("numpy")
+
+
+def test_cli_defaults_and_contract_flags(tmp_path, monkeypatch):
+    seen = {}
+
+    def stop(device):
+        seen["device"] = device
+        raise SystemExit(3)
+
+    monkeypatch.setattr(prepare, "find_text_converter", lambda explicit: seen.setdefault("tool", explicit))
+    monkeypatch.setattr(prepare, "check_weight_norm_device", stop)
+    tool = _executable(tmp_path / "bin" / prepare.TEXT_CONVERTER)
+    with pytest.raises(SystemExit) as exc:
+        prepare.main(["--out", str(tmp_path / "bundle"), "--text-data-tool", str(tool)])
+    assert exc.value.code == 3 and seen == {"tool": tool, "device": "numpy"}
+
+
+def test_installed_package_has_no_source_tree_root(tmp_path, monkeypatch):
+    # In the wheel the package lives at kitten_inference/tts2/_assets: no tools/ or CMakeLists.txt above it.
+    monkeypatch.setattr(prepare, "ROOT", None)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    assert prepare.find_text_converter(None) is None
+    in_cwd = _executable(tmp_path / "build/default/bin" / prepare.TEXT_CONVERTER)
+    assert prepare.find_text_converter(None) == in_cwd
 
 
 def test_summary_prints_size_and_next_command(tmp_path, capsys):
@@ -157,6 +188,12 @@ def test_summary_prints_size_and_next_command(tmp_path, capsys):
     prepare.print_summary(tmp_path, tmp_path / "config.json", cloning=True)
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 4 and "--reference-audio" in out[3] and "--reference-transcript" in out[3]
+
+
+def test_next_command_quoting_follows_the_platform():
+    assert prepare.shell_quote("/data/my models/kitten", windows=False) == "'/data/my models/kitten'"
+    assert prepare.shell_quote(r"D:\models\kitten", windows=True) == r"D:\models\kitten"
+    assert prepare.shell_quote(r"D:\my models\kitten", windows=True) == r'"D:\my models\kitten"'
 
 
 def test_human_size():
@@ -180,3 +217,23 @@ def test_pinned_wheel_checks_before_caching_and_replaces_a_bad_cached_copy(tmp_p
     assert cached.read_bytes() == wheel and len(calls) == 1
     assert prepare.pinned_wheel(tmp_path, offline=True, fetch=lambda url: calls.append(url) or b"") == wheel
     assert len(calls) == 1
+
+
+def test_imports_as_a_renamed_package_without_torch(tmp_path, monkeypatch):
+    # The wheel copies tools/kt2n_assets to kitten_inference/tts2/_assets: relative imports only, no torch at import.
+    import importlib
+    import shutil
+    root = tmp_path / "site"
+    shutil.copytree(Path(prepare.__file__).parent, root / "wheelpkg" / "_assets",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "wheelpkg" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(root))
+    monkeypatch.setitem(sys.modules, "torch", None)
+    for name in ("prepare", "convert_s3gen", "clone_assets", "weight_norm", "voices", "convert"):
+        module = importlib.import_module(f"wheelpkg._assets.{name}")
+        assert Path(module.__file__).is_relative_to(root)
+    renamed = importlib.import_module("wheelpkg._assets.prepare")
+    assert renamed.ROOT is None
+    assert "speaker/model.safetensors" in renamed.CLONING_ALLOW_PATTERNS
+    assert "lm/model.safetensors" in renamed.MODEL_ALLOW_PATTERNS
+    assert importlib.import_module("wheelpkg._assets.clone_assets").reference_sincnet()

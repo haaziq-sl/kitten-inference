@@ -2,6 +2,13 @@
 
 Preparation runs on the CPU. All exported tensor bytes must match the pinned
 native contracts; inference does not import this module or its dependencies.
+
+This is the torch exporter (tools/requirements-export-clone.txt). Ordinary preparation
+does not need it: clone_assets.public_clone_exports() writes the same files from
+the model repository's speaker/model.safetensors without torch. This module
+recomputes the derived tensors and checks them against the pins, from either the
+gated upstream checkpoint (--pyannote-model, --download) or the public weights
+(--speaker-safetensors), and writes the reference files that ship beside it.
 """
 from __future__ import annotations
 
@@ -14,10 +21,12 @@ import sys
 import tempfile
 import typing
 
-from .clone_assets import (CONTRACTS, PYANNOTE_CHECKPOINT_SHA256, PYANNOTE_REPO,
-                           PYANNOTE_REVISION, checked_tensors)
+from .clone_assets import (COMPUTED_CONSTS, CONSTS_METADATA, CONTRACTS, DERIVED_PYANNOTE,  # noqa: F401
+                           PYANNOTE_CHECKPOINT_SHA256, PYANNOTE_REPO, PYANNOTE_REVISION, REFERENCE_CONSTS,
+                           REFERENCE_SINCNET, checked_tensors, public_speaker_state, pyannote_metadata,
+                           reference_constants, write_checked, write_reference)
 from .convert_s3gen import PINNED_REVISION, PINNED_SHA256
-from .safetensors_raw import SafetensorsFile, sha256_file, write_safetensors
+from .safetensors_raw import SafetensorsFile, sha256_file
 
 ACOUSTIC_REPO = "ResembleAI/chatterbox-turbo"
 ACOUSTIC_FILE = "s3gen_meanflow.safetensors"
@@ -66,16 +75,31 @@ def checkpoint_state(path: Path):
     return checkpoint["state_dict"]
 
 
+def public_state(path: Path):
+    """The FP32 state of speaker/model.safetensors (each tensor checked against its pin) as torch tensors."""
+    import torch
+
+    return {name: torch.from_numpy(value) for name, value in public_speaker_state(path).items()}
+
+
 def speaker_tensors(path: Path):
-    """Use the checkpoint's FP32 state and its original SincNet filterbank."""
-    state = checkpoint_state(path)
+    """Use the checkpoint's FP32 state (or the public speaker/model.safetensors) and the original SincNet filterbank."""
+    state = public_state(path) if Path(path).suffix == ".safetensors" else checkpoint_state(path)
     import torch
     from asteroid_filterbanks import ParamSincFB
 
     prefix = "sincnet.conv1d.0.filterbank."
     filters = ParamSincFB(80, 251, stride=10, sample_rate=16000)
-    filters.load_state_dict({name[len(prefix):]: value for name, value in state.items()
-                             if name.startswith(prefix)}, strict=True)
+    loaded = filters.load_state_dict({name[len(prefix):]: value for name, value in state.items()
+                                      if name.startswith(prefix)}, strict=False)
+    # The upstream checkpoint carries all four filterbank tensors. The public speaker/model.safetensors leaves out
+    # the two constructor buffers, n_ and window_; ParamSincFB's own values stand in for them (both are checked
+    # against the pins when the export is written).
+    if loaded.unexpected_keys or set(loaded.missing_keys) - {"n_", "window_"}:
+        raise ValueError(f"unexpected SincNet filterbank state: missing {loaded.missing_keys}, "
+                         f"unexpected {loaded.unexpected_keys}")
+    for key in loaded.missing_keys:
+        state[prefix + key] = getattr(filters, key)
     with torch.no_grad():
         state["sincnet.conv1d.0.filters"] = filters.filters()
     # The original Model.state_dict export excludes the training loss and the
@@ -84,16 +108,9 @@ def speaker_tensors(path: Path):
             for name in CONTRACTS["pyannote"]}
 
 
-# Front-end constants computed by preparation; the other two are copied from the acoustic checkpoint. Their float
-# math can round differently on different CPUs: torch's CPU log/exp/sin/cos go through Intel MKL's vector math
-# library, which picks its code path by CPU vendor (on an AMD CPU 12 of the 20,560 kaldi_mel_banks values differ
-# from the pinned ones, by at most 7.06e-6), and numpy picks its log/exp code by CPU features. Preparation computes
-# them as before, checks them against the reference values shipped beside this file (the pinned bytes, computed once
-# on an Intel CPU) and writes the reference values, so every CPU writes the same, pinned constants.
-COMPUTED_CONSTS = ("kaldi_mel_banks", "kaldi_povey_400", "mel24_basis", "mel24_window", "poly_2_3_taps",
-                   "ta_24_16_kernel_cpu", "ta_24_16_kernel_dev")
-# Text file: per tensor, its shape and its little-endian float32 bytes, zlib-compressed, as lines of hex.
-REFERENCE_CONSTS = Path(__file__).with_name("clone_consts_reference.json")
+# The front-end constants (COMPUTED_CONSTS) are computed as before, checked against the reference values shipped
+# beside clone_assets.py (the pinned bytes, computed once on an Intel CPU), and the reference values are written,
+# so every CPU writes the same, pinned constants (see clone_assets.py).
 CONST_TOLERANCE = 1e-4  # largest accepted absolute difference from the reference values (a few float32 steps;
                         # a wrong torch/torchaudio/librosa/scipy version differs by far more)
 
@@ -130,25 +147,6 @@ def computed_constants() -> dict:
     }
 
 
-def reference_constants(path: Path = REFERENCE_CONSTS) -> dict:
-    """The shipped reference values, accepted only when each matches its pinned shape and SHA-256."""
-    import hashlib
-    import zlib
-    import numpy as np
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-    arrays = {name: np.frombuffer(zlib.decompress(bytes.fromhex("".join(rec["data"]))), dtype="<f4")
-              .reshape(rec["shape"]) for name, rec in data["tensors"].items()}
-    if set(arrays) != set(COMPUTED_CONSTS):
-        raise ValueError(f"clone consts: {path} does not hold the expected reference constants")
-    for name, value in arrays.items():
-        shape, digest = CONTRACTS["consts"][name]
-        raw = np.ascontiguousarray(value, dtype="<f4").tobytes()
-        if value.dtype != np.dtype("<f4") or list(value.shape) != shape or hashlib.sha256(raw).hexdigest() != digest:
-            raise ValueError(f"clone consts: reference values in {path} do not match the pin: {name}")
-    return arrays
-
-
 def canonical_constants(computed: dict, reference: dict, tolerance: float = CONST_TOLERANCE) -> dict:
     """Return the reference values after checking that this CPU computed the same constants within tolerance."""
     import numpy as np
@@ -175,14 +173,7 @@ def canonical_constants(computed: dict, reference: dict, tolerance: float = CONS
 
 def write_reference_constants(arrays: dict, path: Path = REFERENCE_CONSTS) -> None:
     """Write the reference file (done once, from a machine that reproduces every pin)."""
-    import zlib
-    import numpy as np
-
-    tensors = {}
-    for name in sorted(arrays):
-        raw = zlib.compress(np.ascontiguousarray(arrays[name], dtype="<f4").tobytes(), 9).hex()
-        tensors[name] = {"shape": list(arrays[name].shape), "data": [raw[i:i + 96] for i in range(0, len(raw), 96)]}
-    path.write_text(json.dumps({"format": "little-endian float32, zlib, hex", "tensors": tensors}, indent=1) + "\n", encoding="utf-8", newline="\n")
+    write_reference(arrays, path)
 
 
 def frontend_tensors(acoustic: Path):
@@ -202,19 +193,17 @@ def frontend_tensors(acoustic: Path):
     return tensors
 
 
-def _write_checked(path: Path, arrays, kind: str, metadata):
-    tensors = {name: ("F32", value.shape, value.astype("<f4").tobytes(order="C"))
-               for name, value in arrays.items()}
-    write_safetensors(path, tensors, metadata)
-    checked_tensors(path, kind)
-    return {"file": path.name, "size": path.stat().st_size, "sha256": sha256_file(path),
-            "tensors": len(tensors), "all_tensor_checksums_match": True}
+_write_checked = write_checked
 
 
-def export(checkpoint: Path, acoustic: Path, destination: Path) -> dict:
-    """Publish a local directory only after all 58 tensor checks pass."""
+def export(checkpoint: Path, acoustic: Path, destination: Path, sincnet_reference: Path | None = None) -> dict:
+    """Publish a local directory only after all 58 tensor checks pass.
+
+    ``checkpoint`` is the gated upstream pytorch_model.bin or the public speaker/model.safetensors. With
+    ``sincnet_reference`` the derived SincNet tensors are also written there (after the checks passed)."""
     if destination.exists():
         raise ValueError("export destination already exists; choose a new directory")
+    public = Path(checkpoint).suffix == ".safetensors"
     speaker = speaker_tensors(checkpoint)
     consts = frontend_tensors(acoustic)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -222,13 +211,13 @@ def export(checkpoint: Path, acoustic: Path, destination: Path) -> dict:
         stage = Path(scratch) / "exports"
         stage.mkdir()
         files = [
-            _write_checked(stage / "voicebuild_consts.safetensors", consts, "consts",
-                           {"ta_width": "10", "source": "native-cloning-constants-v1"}),
-            _write_checked(stage / "voicebuild_pyannote.safetensors", speaker, "pyannote",
-                           {"model": f"{PYANNOTE_REPO}@{PYANNOTE_REVISION}"}),
+            write_checked(stage / "voicebuild_consts.safetensors", consts, "consts", CONSTS_METADATA),
+            write_checked(stage / "voicebuild_pyannote.safetensors", speaker, "pyannote", pyannote_metadata()),
         ]
         report = {"version": 1, "pyannote_repo": PYANNOTE_REPO, "pyannote_revision": PYANNOTE_REVISION,
                   "pyannote_checkpoint_sha256": PYANNOTE_CHECKPOINT_SHA256,
+                  "pyannote_input": {"file": Path(checkpoint).name, "sha256": sha256_file(checkpoint),
+                                     "kind": "public speaker/model.safetensors" if public else "upstream checkpoint"},
                   "acoustic_repo": ACOUSTIC_REPO, "acoustic_revision": PINNED_REVISION,
                   "acoustic_sha256": PINNED_SHA256, "files": files,
                   "tensor_validation": "native-cloning-fp32-v1", "legacy_speaker_bank": "absent",
@@ -237,6 +226,8 @@ def export(checkpoint: Path, acoustic: Path, destination: Path) -> dict:
                       "torch", "torchaudio", "numpy", "scipy", "librosa", "asteroid-filterbanks")}}
         (stage / "export.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")
         stage.rename(destination)
+    if sincnet_reference is not None:
+        write_reference({name: speaker[name] for name in DERIVED_PYANNOTE}, sincnet_reference)
     return report
 
 
@@ -247,12 +238,16 @@ def main(argv=None) -> int:
                         help="Authorized pinned pytorch_model.bin, or its directory")
     source.add_argument("--download", action="store_true",
                         help="Download the gated pinned model using your existing Hugging Face login/HF_TOKEN")
+    source.add_argument("--speaker-safetensors", type=Path,
+                        help="The public speaker/model.safetensors of KittenML/kitten-tts-2 (no login)")
+    parser.add_argument("--write-sincnet-reference", type=Path, metavar="JSON",
+                        help=f"Also write the derived SincNet tensors as a reference file (like {REFERENCE_SINCNET.name})")
     parser.add_argument("--acoustic-source", type=Path, help="Pinned public s3gen_meanflow.safetensors")
     parser.add_argument("--cache-dir", type=Path, help="Hugging Face cache directory")
     parser.add_argument("--offline", action="store_true", help="Use local files or cached downloads only")
     parser.add_argument("--out", type=Path, required=True, help="New export directory")
     args = parser.parse_args(argv)
-    checkpoint = args.pyannote_model
+    checkpoint = args.pyannote_model or args.speaker_safetensors
     acoustic = args.acoustic_source
     if args.out.exists():
         parser.error("export destination already exists; choose a new directory")
@@ -267,7 +262,8 @@ def main(argv=None) -> int:
         if acoustic is None:
             acoustic = Path(hf_hub_download(ACOUSTIC_REPO, ACOUSTIC_FILE,
                                             revision=PINNED_REVISION, **common))
-    print(json.dumps(export(checkpoint, acoustic, args.out), indent=2))
+    extra = {"sincnet_reference": args.write_sincnet_reference} if args.write_sincnet_reference else {}
+    print(json.dumps(export(checkpoint, acoustic, args.out, **extra), indent=2))
     return 0
 
 

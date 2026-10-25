@@ -1,7 +1,9 @@
 """Convert the pinned acoustic checkpoint, preserving tensor order and arithmetic.
 
-The adjacent s3gen_tensors.tsv defines the expected tensors. Weight-normalization
-folding runs on CUDA by default to match the inference checkpoint preparation.
+The adjacent s3gen_tensors.tsv defines the expected tensors. The weight-normalization
+fold runs in numpy by default (weight_norm.py: the arithmetic of PyTorch's CUDA kernel,
+evaluated exactly, so the output is byte-identical on every machine). ``--device cuda``
+or ``cpu`` folds with torch instead, as earlier versions did.
 """
 
 from __future__ import annotations
@@ -19,8 +21,9 @@ from typing import Any
 
 import numpy as np
 
-from kt2n_assets.format import ALIGN, HEADER_SIZE, align_up, dumps_meta
-from kt2n_assets.safetensors_raw import SafetensorsFile
+from . import weight_norm
+from .format import ALIGN, HEADER_SIZE, align_up, dumps_meta
+from .safetensors_raw import SafetensorsFile
 
 MAGIC = b"KT2NS3G1"
 VERSION = 1
@@ -29,7 +32,9 @@ CONVERTER = {"name": "kt2n.convert_s3gen", "version": "1.0.0"}
 PINNED_SHA256 = "d65cb687a2ed581ee6cc297e919ffefa63386944f42364ae13b78a594945514f"
 PINNED_SIZE = 1064875036
 PINNED_REVISION = "1e4698ca7cbb41ff030c4185f0927a3b42d76924"
+SOURCE_FILE = "s3gen_meanflow.safetensors"
 MANIFEST = pathlib.Path(__file__).with_name("s3gen_tensors.tsv")
+DEVICES = ("numpy", "cpu", "cuda")
 
 # Frozen geometry; the C++ loader compares it with render/ops.h.
 CONFIG: dict[str, Any] = {
@@ -72,6 +77,11 @@ def _file_sha(path: str) -> str:
     return h.hexdigest()
 
 
+def manifest_sha256(path: pathlib.Path) -> str:
+    """The manifest's digest with LF line ends: a Windows checkout (git core.autocrlf) has CRLF, same content."""
+    return _sha(path.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def read_manifest(path: pathlib.Path) -> list[dict[str, Any]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or lines[0].split("\t") != ["native_name", "group", "dtype", "shape", "transform", "sources"]:
@@ -101,13 +111,29 @@ def bf16_rne_bits(x: np.ndarray) -> np.ndarray:
     return rounded.astype("<u2")
 
 
+def bf16_rne_reference(x: np.ndarray) -> np.ndarray:
+    """An independent f32 -> bf16 round-to-nearest-even (by value, in float64) for the torch-free verifier."""
+    x = np.asarray(x, dtype="<f4").reshape(-1)
+    lo = (x.view("<u4") & np.uint32(0xFFFF0000)).view("<f4")  # truncated towards zero
+    hi = (lo.view("<u4") + np.uint32(0x10000)).view("<f4")  # next bf16 away from zero (inf past the largest)
+    # IEEE rounding treats the step past the largest finite value as 2^128 (unbounded exponent), then gives inf.
+    hi64 = np.where(np.isinf(hi), np.copysign(2.0 ** 128, x.astype(np.float64)), hi.astype(np.float64))
+    dlo = np.abs(x.astype(np.float64) - lo.astype(np.float64))
+    dhi = np.abs(hi64 - x.astype(np.float64))
+    even_lo = ((lo.view("<u4") >> np.uint32(16)) & np.uint32(1)) == 0
+    pick_hi = (dhi < dlo) | ((dhi == dlo) & ~even_lo)
+    return (np.where(pick_hi, hi.view("<u4"), lo.view("<u4")) >> np.uint32(16)).astype("<u2")
+
+
 def _torch():
-    import torch  # noqa: PLC0415 - only the weight-norm fold and the verifier need torch
+    import torch  # noqa: PLC0415 - only --device cuda|cpu imports torch
 
     return torch
 
 
-def weight_norm_fold(v: np.ndarray, g: np.ndarray, device: str) -> np.ndarray:
+def weight_norm_fold(v: np.ndarray, g: np.ndarray, device: str, method: str = weight_norm.DEFAULT_METHOD) -> np.ndarray:
+    if device == "numpy":
+        return weight_norm.fold(v, g, method)
     torch = _torch()
     tv = torch.from_numpy(np.array(v, order="C", copy=True)).to(device)
     tg = torch.from_numpy(np.array(g, order="C", copy=True)).to(device)
@@ -152,6 +178,8 @@ def pack_header(meta_len: int, data_len: int) -> bytes:
 
 def convert(src_path: str, out_path: str, *, manifest_path: pathlib.Path, expect_sha256: str | None,
             revision: str, device: str, extra_groups: list[tuple[str, str]]) -> dict[str, Any]:
+    if device not in DEVICES and not device.startswith("cuda:"):
+        raise ConvertError(f"unknown weight-norm device {device!r} (numpy, cpu or cuda)")
     started = time.time()
     src_path = os.path.realpath(src_path)
     size = os.path.getsize(src_path)
@@ -214,12 +242,15 @@ def convert(src_path: str, out_path: str, *, manifest_path: pathlib.Path, expect
         "config": CONFIG,
         "source": {
             "safetensors": {
-                "file": os.path.basename(src_path), "revision": revision, "size": size, "sha256": sha,
+                # numpy output must not depend on where the source file lives (a Hugging Face cache blob on
+                # Linux and macOS, a plain copy on Windows), so it records the published name of the pinned file.
+                "file": SOURCE_FILE if device == "numpy" and sha == PINNED_SHA256 else os.path.basename(src_path),
+                "revision": revision, "size": size, "sha256": sha,
                 "header_len": src.header_len, "header_sha256": _sha(src.header_bytes),
                 "tensor_count": len([k for k in header_obj if k != "__metadata__"]),
             },
-            "converter": dict(CONVERTER, weight_norm_device=_device_name(device)),
-            "manifest_sha256": _sha(manifest_path.read_bytes()),
+            "converter": _converter(device),
+            "manifest_sha256": manifest_sha256(manifest_path),
             "extra_groups": [{"group": g, "file": os.path.basename(f.path), "sha256": _file_sha(f.path)}
                              for g, f in extra_files],
         },
@@ -249,6 +280,13 @@ def convert(src_path: str, out_path: str, *, manifest_path: pathlib.Path, expect
             "seconds": round(time.time() - started, 1), "weight_norm_device": _device_name(device)}
 
 
+def _converter(device: str) -> dict[str, Any]:
+    out = dict(CONVERTER, weight_norm_device=_device_name(device))
+    if device == "numpy":
+        out["weight_norm_method"] = weight_norm.DEFAULT_METHOD
+    return out
+
+
 def _device_name(device: str) -> str:
     if device.startswith("cuda"):
         torch = _torch()
@@ -260,7 +298,10 @@ def verify(path: str, src_path: str) -> dict[str, Any]:
     """Container rules + segment sha256 + every transform recomputed from the source."""
     import mmap
 
-    torch = _torch()
+    try:
+        torch = _torch()
+    except ImportError:
+        torch = None
     problems: list[str] = []
     size = os.path.getsize(path)
     fh = open(path, "rb")
@@ -286,7 +327,12 @@ def verify(path: str, src_path: str) -> dict[str, Any]:
     rows = read_manifest(MANIFEST)
     if [t["name"] for t in meta["tensors"][: len(rows)]] != [r["native_name"] for r in rows]:
         problems.append("tensor order differs from s3gen_tensors.tsv")
-    device = "cuda" if "cuda" in meta["source"]["converter"]["weight_norm_device"] else "cpu"
+    converter = meta["source"]["converter"]
+    recorded = converter["weight_norm_device"]
+    device = "numpy" if recorded == "numpy" else "cuda" if "cuda" in recorded else "cpu"
+    method = converter.get("weight_norm_method", weight_norm.DEFAULT_METHOD)
+    if device != "numpy" and torch is None:
+        problems.append(f"the file was folded with torch ({recorded}); verifying it needs torch")
     counts = {"copy": 0, "bf16_rne": 0, "weight_norm_dim0": 0}
     wn_cpu_maxdiff = 0.0
     wn_cpu_ulps = 0
@@ -310,21 +356,28 @@ def verify(path: str, src_path: str) -> dict[str, Any]:
             if bytes(raw) != bytes(src.raw(t["sources"][0]["name"])) or t.get("src_sha256") != seg["sha256"]:
                 problems.append(f"{t['name']}: copy bytes")
         elif kind == "bf16_rne":
-            a = torch.from_numpy(np.array(src.array(t["sources"][0]["name"])))
-            ref = a.to(torch.bfloat16).view(torch.int16).numpy().view("<u2").reshape(-1)
+            a = np.array(src.array(t["sources"][0]["name"]))
+            if torch is not None:
+                ref = torch.from_numpy(a).to(torch.bfloat16).view(torch.int16).numpy().view("<u2").reshape(-1)
+            else:
+                ref = bf16_rne_reference(a)
             got = np.frombuffer(raw, dtype="<u2")
             if not np.array_equal(ref, got):
-                problems.append(f"{t['name']}: bf16 differs from torch .to(bfloat16)")
+                problems.append(f"{t['name']}: bf16 differs from " +
+                                ("torch .to(bfloat16)" if torch is not None else "round-to-nearest-even"))
         else:
             v = src.array(t["sources"][0]["name"])
             g = src.array(t["sources"][1]["name"])
-            ref = weight_norm_fold(v, g, device).reshape(-1)
+            if device != "numpy" and torch is None:
+                continue
+            ref = weight_norm_fold(v, g, device, method).reshape(-1)
             got = np.frombuffer(raw, dtype="<f4")
             if not np.array_equal(ref.view("<u4"), got.view("<u4")):
                 problems.append(f"{t['name']}: weight-norm fold differs from {device} recompute")
-            cpu = weight_norm_fold(v, g, "cpu").reshape(-1)
-            wn_cpu_maxdiff = max(wn_cpu_maxdiff, float(np.abs(cpu - got).max()))
-            wn_cpu_ulps += int((cpu.view("<u4") != got.view("<u4")).sum())
+            if torch is not None:
+                cpu = weight_norm_fold(v, g, "cpu").reshape(-1)
+                wn_cpu_maxdiff = max(wn_cpu_maxdiff, float(np.abs(cpu - got).max()))
+                wn_cpu_ulps += int((cpu.view("<u4") != got.view("<u4")).sum())
     covered.sort()
     cursor = 0
     for a, b in covered + [(data_len, data_len)]:
@@ -334,8 +387,9 @@ def verify(path: str, src_path: str) -> dict[str, Any]:
         cursor = max(cursor, b)
     return {"ok": not problems, "problems": problems[:20], "tensors": len(meta["tensors"]), "transforms": counts,
             "groups": meta.get("groups"), "file_sha256": _file_sha(path), "file_len": size,
-            "weight_norm_device": meta["source"]["converter"]["weight_norm_device"],
-            "weight_norm_vs_cpu": {"max_abs_diff": wn_cpu_maxdiff, "values_differing": wn_cpu_ulps}}
+            "weight_norm_device": recorded, "weight_norm_method": method if device == "numpy" else None,
+            "weight_norm_vs_cpu": ({"max_abs_diff": wn_cpu_maxdiff, "values_differing": wn_cpu_ulps}
+                                   if torch is not None else "skipped (torch not installed)")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -345,7 +399,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--manifest", default=str(MANIFEST))
     ap.add_argument("--expect-sha256", default=PINNED_SHA256)
     ap.add_argument("--revision", default=PINNED_REVISION)
-    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--device", default="numpy",
+                    help="weight-norm fold: numpy (default, torch-free, same bytes on every machine), cuda or cpu (torch)")
     ap.add_argument("--extra-group", action="append", default=[], help="NAME=FILE.safetensors (reserved slot)")
     ap.add_argument("--verify", metavar="KT2N")
     ap.add_argument("--report")
