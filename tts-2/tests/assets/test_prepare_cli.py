@@ -71,7 +71,7 @@ def test_pinned_grammar_offline_needs_cache_or_grammar_dir(tmp_path, monkeypatch
 
 def _executable(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\n", encoding="utf-8", newline="\n")
+    path.write_bytes(("#!/bin/sh\n").encode("utf-8"))
     path.chmod(0o755)
     return path
 
@@ -178,7 +178,7 @@ def test_installed_package_has_no_source_tree_root(tmp_path, monkeypatch):
 def test_summary_prints_size_and_next_command(tmp_path, capsys):
     (tmp_path / "native").mkdir()
     (tmp_path / "native" / "model.kt2n").write_bytes(b"\0" * 1500)
-    (tmp_path / "config.json").write_text("{}", encoding="utf-8", newline="\n")
+    (tmp_path / "config.json").write_bytes(("{}").encode("utf-8"))
     prepare.print_summary(tmp_path, tmp_path / "config.json", cloning=False)
     out = capsys.readouterr().out.splitlines()
     assert out[0] == str(tmp_path / "config.json")

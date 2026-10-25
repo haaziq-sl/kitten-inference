@@ -418,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     text = json.dumps(result, indent=1, sort_keys=True)
     print(text)
     if a.report:
-        pathlib.Path(a.report).write_text(text + "\n", encoding="utf-8", newline="\n")
+        pathlib.Path(a.report).write_bytes((text + "\n").encode("utf-8"))
     return 0 if result.get("ok", True) else 1
 
 

@@ -62,11 +62,11 @@ def test_only_unchanged_public_voice_inherits_raw_vector(tmp_path, monkeypatch):
     (tmp_path / 'voices').mkdir()
     (tmp_path / 'cpp/default').mkdir(parents=True)
     public = tmp_path / 'voices/voices.json'
-    public.write_text(json.dumps({'Bruno': {'artifacts': 'bruno.npz'}}), encoding="utf-8", newline="\n")
+    public.write_bytes((json.dumps({'Bruno': {'artifacts': 'bruno.npz'}})).encode("utf-8"))
     raw = np.linspace(-0.5, 0.5, 512, dtype='f4')
     np.savez(tmp_path / 'voices/bruno.npz', embedding=raw)
     source = tmp_path / 'cpp/default/voices.json'
-    source.write_text(json.dumps({'Bruno': reference()}), encoding="utf-8", newline="\n")
+    source.write_bytes((json.dumps({'Bruno': reference()})).encode("utf-8"))
     cfg = {'token_map': TOKEN_MAP, 'voices': 'voices/voices.json',
            'cpp': {'decoders': {'default': {'voices': {'file': 'cpp/default/voices.json'}}}}}
     out = tmp_path / 'voices.kt2n'
@@ -77,7 +77,7 @@ def test_only_unchanged_public_voice_inherits_raw_vector(tmp_path, monkeypatch):
     override = reference()
     override['speaker'][0] = 0.5
     custom = tmp_path / 'custom.json'
-    custom.write_text(json.dumps({'Bruno': override}), encoding="utf-8", newline="\n")
+    custom.write_bytes((json.dumps({'Bruno': override})).encode("utf-8"))
     prepare_voices(custom, tmp_path / 'tokenizer.json', cfg, out, 'a' * 64, 'b' * 64, model_dir=tmp_path)
     loaded = voices.read(out.read_bytes())
     assert loaded.voices[0]['kind'] == 'prepared'
@@ -121,7 +121,7 @@ def test_model_contract_and_path_traversal(tmp_path):
     out = tmp_path / 'model'
     out.mkdir()
     outside = tmp_path / 'secret'
-    outside.write_text('synthetic', encoding="utf-8", newline="\n")
+    outside.write_bytes(('synthetic').encode("utf-8"))
     with pytest.raises(ValueError, match='unsafe'):
         local_file(out, '../secret')
     (out / 'escape').symlink_to(outside)
@@ -141,8 +141,8 @@ def test_huggingface_snapshot_blob_symlinks(tmp_path, shared):
 
 
 def test_converter_side_metadata_excludes_alternate_weights(tmp_path):
-    (tmp_path / 'config.json').write_text('{}', encoding="utf-8", newline="\n")
-    (tmp_path / 'runtime_config.json').write_text('{}', encoding="utf-8", newline="\n")
+    (tmp_path / 'config.json').write_bytes(('{}').encode("utf-8"))
+    (tmp_path / 'runtime_config.json').write_bytes(('{}').encode("utf-8"))
     (tmp_path / 'model-ternary.safetensors').write_bytes(b'not a side file')
     files = source_files(tmp_path, 'model.safetensors', tmp_path / 'runtime_config.json')
     assert set(files) == {'config.json', 'runtime_config.json'}

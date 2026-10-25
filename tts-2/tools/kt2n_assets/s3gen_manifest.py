@@ -125,7 +125,7 @@ def main(argv=None) -> int:
         t[0] += 1
         t[1] += n
         t[2] += n * SIZES[r["dtype"]]
-    pathlib.Path(a.out).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    pathlib.Path(a.out).write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
     summary = {"source_tensors": len(header), "native_tensors": len(rows),
                "groups": {g: {"tensors": t[0], "params": t[1], "bytes": t[2]} for g, t in totals.items()}}
     print(json.dumps(summary, indent=1))
