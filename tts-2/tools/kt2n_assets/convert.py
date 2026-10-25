@@ -133,11 +133,15 @@ def find_runtime_config(src_dir: Path, explicit: str | None) -> Path:
     raise ConvertError(f"{RUNTIME_CONFIG} not found in {src_dir} or its parent (use --runtime-config)")
 
 
-def source_files(src_dir: Path, st_name: str, runtime_config: Path) -> dict[str, dict[str, Any]]:
-    """sha256 + size of every side file (tokenizer etc.); config files also verbatim (base64)."""
+def source_files(src_dir: Path, st_name: str, runtime_config: Path,
+                 only: tuple[str, ...] | None = None) -> dict[str, dict[str, Any]]:
+    """sha256 + size of every side file (tokenizer etc.); config files also verbatim (base64).
+
+    ``only`` limits the record to the named side files, so that the output does not depend on what else a shared
+    download cache holds for the same revision."""
     out: dict[str, dict[str, Any]] = {}
     paths = {p.name: p for p in sorted(src_dir.iterdir())
-             if p.is_file() and p.name != st_name and p.suffix in (".json", ".txt")}
+             if p.is_file() and p.name != st_name and p.suffix in (".json", ".txt") and (only is None or p.name in only)}
     paths[RUNTIME_CONFIG] = runtime_config
     for name, path in sorted(paths.items()):
         data = path.read_bytes()
@@ -214,8 +218,11 @@ def convert(
     runtime_config: str | None = None,
     safetensors_name: str = SAFETENSORS_NAME,
     log: Any = None,
+    side_files: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Convert and return a summary dict. Writes ``out_path`` atomically."""
+    """Convert and return a summary dict. Writes ``out_path`` atomically.
+
+    ``side_files``: record only these side files of ``src_dir`` (default: every .json/.txt file)."""
     t0 = time.time()
     src = Path(src_dir)
     out = Path(out_path)
@@ -225,7 +232,7 @@ def convert(
         raise ConvertError(f"{st_path} not found")
     rc_path = find_runtime_config(src, runtime_config)
     check_output_path(out, [st_path, rc_path] + [p for p in src.iterdir() if p.is_file()])
-    files = source_files(src, safetensors_name, rc_path)
+    files = source_files(src, safetensors_name, rc_path, side_files)
     config = json.loads(base64.b64decode(files["config.json"]["b64"])) if "config.json" in files else None
     if config is None:
         raise ConvertError(f"config.json not found in {src}")

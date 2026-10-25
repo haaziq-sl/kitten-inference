@@ -66,14 +66,12 @@ In the same Command Prompt:
 ```bat
 py -3.12 -m venv .venv-prepare
 call .venv-prepare\Scripts\activate.bat
-python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements-prepare.txt
 python tools\prepare_assets.py --out models\kitten-tts-2
 ```
 
-This downloads PyTorch (about 3.3 GB) and the latest revision of the model (about 4.6 GB) and converts the model into `models\kitten-tts-2` (about 2 GB), in about 5 to 20 minutes, depending on your connection. The tool may print warnings that Hugging Face downloads cannot use symlinks on this machine and about unauthenticated
-requests; both are harmless. Ignore the `Next: kitten-tts-native ...` line it prints at the end and use step 4. On a
-GeForce GTX 10 series GPU, add `--weight-norm-device cpu` to the last command, as described in the [README](../README.md#3-prepare-the-model). You can also copy a `models\kitten-tts-2` folder prepared on another computer with the same version of this repository instead (Linux or Windows).
+This downloads the latest revision of the model (about 4.6 GB) and converts the model into `models\kitten-tts-2` (about 2 GB); how long it takes depends on your connection. The tool may print warnings that Hugging Face downloads cannot use symlinks on this machine and about unauthenticated
+requests; both are harmless. Ignore the `Next: kitten-tts-native ...` line it prints at the end and use step 4. You can also copy a `models\kitten-tts-2` folder prepared on another computer with the same version of this repository instead (Linux or Windows).
 
 ## 4. Generate speech
 

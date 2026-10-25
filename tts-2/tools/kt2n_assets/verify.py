@@ -299,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
                     expect_sha256=args.expect_sha256, label=args.label, audit_mode=args.audit)
     text = json.dumps(report, indent=2, sort_keys=True)
     if args.report:
-        Path(args.report).write_text(text + "\n", encoding="utf-8", newline="\n")
+        Path(args.report).write_bytes((text + "\n").encode("utf-8"))
     for name, chk in report["checks"].items():
         state = ("skip" if not chk["required"] else "SKIP") if chk.get("skipped") else ("ok" if chk["ok"] else "FAIL")
         print(f"{state:4} {name:22} checked={chk['checked']:<5} failures={chk['failures']} "

@@ -119,25 +119,15 @@ The build writes everything to `build/default/`. It contains code for every supp
 
 ### 3. Prepare the model
 
-On a GeForce GTX 10 series GPU, read the first note below the commands before you run them.
-
 ```sh
 python3 -m venv .venv-prepare
 . .venv-prepare/bin/activate
-python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements-prepare.txt
 python tools/prepare_assets.py --out models/kitten-tts-2
 ```
 
-This downloads about 4.6 GB from Hugging Face, GitHub and PyPI (the latest revision of the model and its voices, and the text-normalization data) and converts them once into `models/kitten-tts-2` (about 2 GB). `--revision` pins another model revision. No Hugging Face account is needed: you can ignore the warning about unauthenticated requests to the Hugging Face Hub. Part of the conversion runs on the NVIDIA GPU.
+This downloads about 4.6 GB from Hugging Face, GitHub and PyPI (the latest revision of the model and its voices, and the text-normalization data) and converts them once into `models/kitten-tts-2` (about 2 GB). `--revision` pins another model revision. No Hugging Face account is needed: you can ignore the warning about unauthenticated requests to the Hugging Face Hub.
 
-- **GeForce GTX 10 series (compute capability 6.1):** this PyTorch build has no code for these GPUs. Instead of the last command above, run:
-
-  ```sh
-  python tools/prepare_assets.py --out models/kitten-tts-2 --weight-norm-device cpu
-  ```
-
-  Some decoder weights then differ slightly, by rounding, from the files we tested with. You can also prepare the model on a machine with a newer GPU and copy the `models/kitten-tts-2` folder.
 - The last line the tool prints, `Next: kitten-tts-native ...`, assumes an installed tool. Before you install it ([below](#use-the-library-in-your-own-program)), use the path in step 4.
 
 ### 4. Generate speech
@@ -199,14 +189,10 @@ Ctrl-C cancels a running request; the tool then exits with status 130. The exit 
 
 Cloning needs the `default` build from the Quick start, extra model files, and about 13 GB of free GPU memory (a 16 GB card or larger). On GPUs with 8 GB or less, cloning is off: the engine starts, and building a voice fails with a message that says so. On 10 to 12 GB cards it needs more memory than the card has and may fail at start (not tested). On those cards, build and save the voice on a larger GPU, then load it. Not tested with this version: building a cloned voice end to end (it was tested with an earlier version, on a 24 GB card); loading saved voices was tested with voices saved from built-in voices.
 
-Cloning uses [pyannote/embedding](https://huggingface.co/pyannote/embedding), which is gated: accept its conditions on Hugging Face and create an access token first. Then, in the repository folder after the Quick start, add the cloning files to the prepared model once (`hf auth login` asks for the token):
+In the repository folder after the Quick start, add the cloning files to the prepared model once, in the same environment (no Hugging Face account needed):
 
 ```sh
-python3.12 -m venv .venv-cloning
-. .venv-cloning/bin/activate
-python -m pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -r requirements-cloning.txt
-hf auth login
+. .venv-prepare/bin/activate
 python tools/prepare_assets.py --out models/kitten-tts-2 --cloning-only
 ```
 
@@ -222,7 +208,7 @@ build/default/bin/kitten-tts-native --assets models/kitten-tts-2 \
   --text "Using the saved voice." --output saved.wav
 ```
 
-Building a cloned voice needs about 23 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 13 GB (the audio is the same). A saved voice works only with the same prepared model, and loading it needs neither the cloning files nor Hugging Face access. `--voice-cache none` lets it load on 4 GB cards too: with a loaded voice and no `--voice-cache` option, the tool also prepares all built-in voices, which does not fit there.
+Building a cloned voice needs about 23 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 13 GB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. `--voice-cache none` lets it load on 4 GB cards too: with a loaded voice and no `--voice-cache` option, the tool also prepares all built-in voices, which does not fit there.
 
 ## Using less GPU memory
 

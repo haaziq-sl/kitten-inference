@@ -1,7 +1,8 @@
 """Prepare a self-contained native bundle from the public Kitten TTS 2 model.
 
-Only preparation needs Python model tooling. Runtime consumes the checked native
-manifest, model files and prepared voices without network access.
+Only preparation needs Python model tooling (numpy, tokenizers, huggingface_hub;
+no PyTorch). Runtime consumes the checked native manifest, model files and
+prepared voices without network access.
 
 The model comes from the latest Hugging Face revision unless --revision pins one,
 and the prepared manifest records the exact commit. Every other download is
@@ -29,10 +30,18 @@ import zipfile
 from . import convert, convert_s3gen, voices
 from .safetensors_raw import sha256_file
 
+# The source tree (tts-2/) when this runs from tools/kt2n_assets; None when the package is installed elsewhere.
 ROOT = Path(__file__).resolve().parents[2]
+ROOT = ROOT if (ROOT / "CMakeLists.txt").is_file() and (ROOT / "tools").is_dir() else None
 MODEL_REPO = "KittenML/kitten-tts-2"
 ACOUSTIC_REPO = "ResembleAI/chatterbox-turbo"
 ACOUSTIC_FILE = "s3gen_meanflow.safetensors"
+SPEAKER_FILE = "speaker/model.safetensors"  # pyannote/embedding weights (MIT) inside the model repository
+# What preparation reads from the model repository (for callers that download the snapshot themselves).
+MODEL_ALLOW_PATTERNS = ["config.json", "lm/config.json", "lm/model.safetensors", "lm/tokenizer.json",
+                        "cpp/default/voices.json", "voices/voices.json", "voices/*.npz"]
+CLONING_ALLOW_PATTERNS = [SPEAKER_FILE]
+LM_SIDE_FILES = ("config.json", "tokenizer.json")  # the lm/ files besides the weights that model.kt2n records
 NEMO_WHEEL_URL = "https://files.pythonhosted.org/packages/b6/08/ca954a6b77d259561f56580adfd52eb69f54dc2469e1184157708480e7ed/nemo_text_processing-1.2.0-py3-none-any.whl"
 NEMO_WHEEL_SHA256 = "dd78657a0f031023de8b2c8fee6b55d71f444485826f7b507881e407afa5d804"
 # English compact grammars from the public kitten-text-processing repository.
@@ -168,7 +177,8 @@ def find_text_converter(explicit: Path | None) -> Path | None:
     """--text-converter, else a built kt2n_prepare_text_data (source tree, then cwd), else PATH."""
     if explicit is not None:
         return explicit if explicit.is_file() else None
-    for build in (*converter_candidates(ROOT), *converter_candidates(Path.cwd())):
+    roots = ([ROOT] if ROOT is not None else []) + [Path.cwd()]
+    for build in (candidate for root in roots for candidate in converter_candidates(root)):
         candidate = build / TEXT_CONVERTER
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
@@ -177,24 +187,30 @@ def find_text_converter(explicit: Path | None) -> Path | None:
 
 
 def check_weight_norm_device(device: str) -> None:
-    """Fail before any download when the requested weight-norm fold device is unusable."""
+    """Fail before any download when the requested weight-norm fold device is unusable.
+
+    The default numpy fold needs no torch; only --weight-norm-device cuda|cpu imports it."""
+    if device == "numpy":
+        return
     try:
         import torch
     except ImportError as exc:
-        raise SystemExit("error: torch is needed to fold the decoder weight norms; install the preparation "
-                         f"requirements (requirements-prepare.txt) first ({exc})") from None
+        raise SystemExit(f"error: --weight-norm-device {device} folds the decoder weight norms with torch, which is "
+                         "not installed. Install torch 2.7.1 (for cuda: python -m pip install torch==2.7.1 "
+                         "--index-url https://download.pytorch.org/whl/cu128), or leave out --weight-norm-device: "
+                         f"the default numpy fold needs no torch ({exc})") from None
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise SystemExit(
-            f"error: the decoder weight norms are folded on CUDA by default, but this torch {torch.__version__} "
+            f"error: --weight-norm-device cuda folds the decoder weight norms on CUDA, but this torch {torch.__version__} "
             f"cannot use CUDA (built for CUDA: {torch.version.cuda or 'no'}). Install a CUDA build of torch 2.7.1 "
-            "(see requirements-prepare.txt) on a machine with an NVIDIA GPU and driver. "
-            "--weight-norm-device cpu also works, but its folded weights differ slightly from the tested bundle.")
+            "on a machine with an NVIDIA GPU and driver, or leave out --weight-norm-device (the default numpy fold "
+            "needs no torch and no GPU).")
     if device.startswith("cuda") and getattr(torch.version, "hip", None):
         # ROCm torch answers torch.cuda.is_available() too, but folds on an AMD GPU with other arithmetic.
         raise SystemExit(
             f"error: this torch {torch.__version__} is a ROCm (AMD) build; folding the decoder weight norms on it gives "
-            "weights that differ from the tested bundle. Prepare the model on a machine with an NVIDIA GPU and copy "
-            "the directory, or pass --weight-norm-device cpu (its folded weights also differ slightly).")
+            "weights that differ from the tested bundle. Leave out --weight-norm-device (the default numpy fold needs "
+            "no torch and no GPU).")
 
 
 def bundle_size(root: Path) -> tuple[int, int]:
@@ -209,11 +225,18 @@ def human_size(n: int) -> str:
     return f"{n} bytes"
 
 
+def shell_quote(text: str, windows: bool | None = None) -> str:
+    """Quote one argument for the user's shell: POSIX quoting, or the Windows command-line rules on Windows."""
+    if os.name == "nt" if windows is None else windows:
+        return subprocess.list2cmdline([text])
+    return shlex.quote(text)
+
+
 def print_summary(out: Path, config_path: Path, *, cloning: bool) -> None:
     count, total = bundle_size(out)
     print(config_path)
     print(f"Bundle: {out} ({count} files, {human_size(total)})")
-    assets = shlex.quote(str(out))
+    assets = shell_quote(str(out))
     print(f"Next: kitten-tts-native --assets {assets} --text 'Hello from Kitten TTS.' --voice Bruno "
           "--output hello.wav")
     if cloning:
@@ -287,7 +310,18 @@ def acoustic_source(args) -> Path:
     return acoustic
 
 
-def prepare_cloning(args, acoustic: Path, manifest: dict) -> dict:
+def speaker_source(args, repo: str, revision: str, model: Path | None) -> Path:
+    """speaker/model.safetensors from the same model snapshot: --model-dir, else the Hugging Face cache/download
+    (public; no login)."""
+    if model is not None:
+        return local_file(model, SPEAKER_FILE)
+    from huggingface_hub import snapshot_download
+    snapshot = Path(snapshot_download(repo, revision=revision, cache_dir=args.cache_dir,
+                                      local_files_only=args.offline, token=False, allow_patterns=CLONING_ALLOW_PATTERNS))
+    return local_file(snapshot, SPEAKER_FILE)
+
+
+def prepare_cloning(args, acoustic: Path, manifest: dict, model: Path | None = None) -> dict:
     from .clone_assets import prepare_clone_files
     catalogue = voices.read(local_file(args.out, manifest["voices"]["file"]).read_bytes())
     bank = [v for v in catalogue.voices if v["kind"] == "builtin"]
@@ -300,18 +334,24 @@ def prepare_cloning(args, acoustic: Path, manifest: dict) -> dict:
     destination = args.out / "native/cloning"
     if args.clone_consts and args.clone_pyannote:
         source = prepare_clone_files(acoustic, args.clone_consts, args.clone_pyannote, destination)
+    elif not args.pyannote_model:
+        # Default: the pyannote/embedding weights in the model repository plus pinned derived constants; no torch,
+        # no login. The files are byte-identical to the torch exporter's (export_clone.py).
+        from .clone_assets import public_clone_exports
+        repo, revision = manifest["source"]["model_repo"], manifest["source"]["revision"]
+        speaker = speaker_source(args, repo, revision, model)
+        with tempfile.TemporaryDirectory(prefix="kt2n-clone-export-") as scratch:
+            exports = Path(scratch) / "exports"
+            public = public_clone_exports(speaker, acoustic, exports)
+            source = prepare_clone_files(acoustic, exports / "voicebuild_consts.safetensors",
+                                         exports / "voicebuild_pyannote.safetensors", destination)
+        source.update(public, pyannote_source=f"{repo}@{revision}/{SPEAKER_FILE}")
     else:
-        # Only an explicitly requested cloning bundle imports these CPU model
-        # preparation dependencies or uses authorized gated-model access.
-        from .clone_assets import PYANNOTE_REPO, PYANNOTE_REVISION
+        # --pyannote-model: the original exporter on the gated upstream checkpoint (needs torch, torchaudio,
+        # librosa, scipy and asteroid-filterbanks; see export_clone.py).
         from .export_clone import export
         checkpoint = args.pyannote_model
-        if checkpoint is None:
-            from huggingface_hub import hf_hub_download
-            checkpoint = Path(hf_hub_download(PYANNOTE_REPO, "pytorch_model.bin",
-                revision=PYANNOTE_REVISION, cache_dir=args.cache_dir,
-                local_files_only=args.offline, token=True))
-        elif checkpoint.is_dir():
+        if checkpoint.is_dir():
             checkpoint = checkpoint / "pytorch_model.bin"
         with tempfile.TemporaryDirectory(prefix="kt2n-clone-export-") as scratch:
             exports = Path(scratch) / "exports"
@@ -338,24 +378,33 @@ def main(argv=None) -> int:
     p.add_argument("--voices", type=Path,
                    help="voices.json in the model's cpp/default layout, including prepared references")
     p.add_argument("--voices-only", action="store_true", help="Update voice catalogue in an existing native bundle")
-    p.add_argument("--with-cloning", "--cloning", action="store_true", help="Include the original optional cloning networks")
+    p.add_argument("--with-cloning", "--cloning", action="store_true",
+                   help="Include the optional voice-cloning networks (their weights come from the same model "
+                        f"revision, {SPEAKER_FILE}; no Hugging Face login and no torch)")
     p.add_argument("--cloning-only", action="store_true", help="Add cloning to an existing native bundle")
     p.add_argument("--clone-consts", type=Path, help="Original voicebuild_consts.safetensors export")
     p.add_argument("--clone-pyannote", type=Path, help="Original authorized voicebuild_pyannote.safetensors export")
     p.add_argument("--pyannote-model", type=Path,
-                   help="Authorized pinned pyannote checkpoint/directory; otherwise cloning uses your HF login")
+                   help="Optional: the pinned upstream pyannote/embedding checkpoint (pytorch_model.bin or its "
+                        "directory) instead of the model repository's copy; needs the export_clone.py dependencies "
+                        "(torch). The result is the same")
     p.add_argument("--acoustic-source", type=Path, help="Pinned full decoder safetensors; otherwise use HF cache/download")
     p.add_argument("--grammar-dir", type=Path,
                    help="Local kitten-text-processing data directory (or its en/ subdirectory) for offline use; "
                         f"otherwise the pinned English grammar files of {GRAMMAR_REPO} at {GRAMMAR_COMMIT[:7]} "
                         "are downloaded and checked")
-    p.add_argument("--text-converter", type=Path,
+    p.add_argument("--text-converter", "--text-data-tool", dest="text_converter", type=Path,
                    help=f"Built {TEXT_CONVERTER} executable (default: build/bin/, build/default/bin/ or "
                         "another build/*/bin/ of this source tree or the current directory, then PATH)")
     p.add_argument("--nemo-wheel", type=Path, help="Pinned NeMo 1.2.0 wheel (read data only; never installed)")
-    p.add_argument("--weight-norm-device", choices=("cpu", "cuda"), default="cuda",
-                   help="Device for folding the decoder weight norms (default cuda, as in the tested bundle; "
-                        "needs a CUDA build of torch). cpu results differ slightly")
+    p.add_argument("--weight-norm-device", choices=("numpy", "cuda", "cpu"), default="numpy",
+                   help="How to fold the decoder weight norms. numpy (default): no torch or GPU, the same files on "
+                        "every machine, and the same folded weights (so the same audio) as cuda. Its files differ "
+                        "from earlier versions' in metadata only, but a voice saved with a model prepared by an "
+                        "earlier version does not load with them. cuda (torch 2.7.1+cu128 and an NVIDIA GPU): the "
+                        "files earlier versions wrote; they record the GPU model and the torch version, so they come "
+                        "out the same again only on the same GPU model with the same torch. cpu (torch): folds "
+                        "slightly differently")
     a = p.parse_args(argv)
     a.out = a.out.resolve()
     config_path = a.out / "config.json"
@@ -380,7 +429,8 @@ def main(argv=None) -> int:
             if record(local_file(a.out, expected["file"]), a.out) != expected:
                 raise ValueError(f"bundle checksum mismatch: {key}")
         acoustic = acoustic_source(a)
-        manifest["cloning"] = prepare_cloning(a, acoustic, manifest)
+        manifest["cloning"] = prepare_cloning(a, acoustic, manifest,
+                                              a.model_dir.resolve() if a.model_dir else None)
         atomic_bytes(config_path, (json.dumps(cfg, indent=2) + "\n").encode())
         print_summary(a.out, config_path, cloning=True)
         return 0
@@ -428,8 +478,7 @@ def main(argv=None) -> int:
         from huggingface_hub import snapshot_download
         model = Path(snapshot_download(a.repo, revision=a.revision, cache_dir=a.cache_dir,
                       local_files_only=a.offline, token=False,
-                      allow_patterns=["config.json", "lm/config.json", "lm/model.safetensors",
-                                      "lm/tokenizer.json", "cpp/default/voices.json", "voices/voices.json", "voices/*.npz"]))
+                      allow_patterns=MODEL_ALLOW_PATTERNS + (CLONING_ALLOW_PATTERNS if a.with_cloning else [])))
     config = json.loads(local_file(model, "config.json").read_text(encoding="utf-8"))
     check_config(config)
     lm_dir = local_file(model, config["lm_dir"] + "/model.safetensors").parent
@@ -440,9 +489,10 @@ def main(argv=None) -> int:
     source_text = prepare_text(grammar_dir, converter, wheel, dest / "text")
     with tempfile.TemporaryDirectory(prefix="kt2n-config-") as scratch:
         runtime = Path(scratch) / "runtime_config.json"
-        runtime.write_text(json.dumps({"type": config["type"], "token_map": config["token_map"],
-                                      "generation": config.get("generation", {})}), encoding="utf-8", newline="\n")
-        convert.convert(lm_dir, dest / "model.kt2n", runtime_config=str(runtime))
+        runtime.write_bytes((json.dumps({"type": config["type"], "token_map": config["token_map"],
+                                      "generation": config.get("generation", {})})).encode("utf-8"))
+        # Only the files preparation downloads: a shared Hugging Face cache may hold more of the same revision.
+        convert.convert(lm_dir, dest / "model.kt2n", runtime_config=str(runtime), side_files=LM_SIDE_FILES)
     convert_s3gen.convert(str(acoustic), str(dest / "s3gen.kt2n"),
                          manifest_path=Path(__file__).with_name("s3gen_tensors.tsv"),
                          expect_sha256=convert_s3gen.PINNED_SHA256, revision=convert_s3gen.PINNED_REVISION,
@@ -464,7 +514,7 @@ def main(argv=None) -> int:
     # model repository, publishers copy native/ and only the native config key.
     config.pop("cpp", None)
     if a.with_cloning:
-        manifest["cloning"] = prepare_cloning(a, acoustic, manifest)
+        manifest["cloning"] = prepare_cloning(a, acoustic, manifest, model)
     config["native"] = manifest
     atomic_bytes(config_path, (json.dumps(config, indent=2) + "\n").encode())
     print_summary(a.out, config_path, cloning=a.with_cloning)

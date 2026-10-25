@@ -42,10 +42,9 @@ python -m pytest tests/assets
 - **Out of GPU memory, or "exceed the memory budget":** close other GPU programs, keep `--max-streams 1`, leave out `--memory-profile` and `--voice-cache` (the tool then picks settings that fit), or use `--memory-profile low --voice-cache none`. Plain `--voice-cache lru` sets aside room for 16 voices and does not fit on 4 GB cards. For voice cloning, see [Voice cloning](README.md#voice-cloning).
 - **"the default memory profile needs about N MiB or more of free GPU memory":** you passed `--memory-profile default` on a GPU without room for it. Leave out `--memory-profile` (the tool then picks the low-memory profile when needed), or pass `--memory-profile low`.
 - **"the low-memory profile needs about N MiB of free GPU memory":** the GPU has too little free memory for one stream (the minimum is about 2,583 MiB after the CUDA context). Close other GPU programs and leave out `--voice-cache`; see [Small GPUs](docs/memory.md#small-gpus).
-- **`pip` says "No matching distribution found" or a download fails:** usually a short network problem reaching PyPI or download.pytorch.org. Run the same command again. Check that you use Python 3.10 to 3.12 (`python --version`).
+- **`pip` says "No matching distribution found" or a download fails:** usually a short network problem reaching PyPI. Run the same command again. Check that you use Python 3.10 to 3.12 (`python --version`).
 - **Preparation cannot find `kt2n_prepare_text_data`:** build the project first (README, Quick start step 2), or pass `--text-converter build/default/bin/kt2n_prepare_text_data`.
-- **Preparation says this torch cannot use CUDA:** check `nvidia-smi`, and that you installed torch from the `cu128` index as in the README's Quick start, step 3. On a GTX 10 series GPU, use `--weight-norm-device cpu`.
+- **Preparation says this torch cannot use CUDA:** you passed `--weight-norm-device cuda` or `cpu`, which use PyTorch. Leave the option out: the default needs neither PyTorch nor a GPU.
 - **Preparation is refused with a checksum mismatch:** delete the affected file from the cache directory and run the command again.
-- **Cloning preparation cannot download pyannote/embedding:** accept the model's conditions on Hugging Face, then run `hf auth login` with the same account.
 - **"voice cloning is not available in this library build":** build with the `default` preset, which includes cloning.
 - **"this bundle has no voice cloning files":** run the [cloning preparation](README.md#voice-cloning) step on the model directory.
