@@ -12,13 +12,21 @@ def test_defaults():
     assert p.struct_size == ctypes.sizeof(_abi.RequestParams)
     assert ctypes.string_at(p.text, p.text_len) == b"Hello"
     assert (p.voice, p.speed, p.format, p.output, p.flags) == (7, 1.0, _abi.FORMAT_PCM, _abi.OUTPUT_COMPLETE, 0)
-    assert p.sampler.present == 0 and p.request_id is None and p.control_json is None
+    assert p.sampler.present == 0 and p.control_json is None
+
+
+def test_unseeded_requests_get_their_own_request_id():
+    # The engine seeds an unseeded request from sha256(request_id); one shared (empty) id made every unseeded
+    # request sound the same.
+    ids = {_api.request_params("Hello", 7, stream=False).request_id for _ in range(50)}
+    assert len(ids) == 50 and all(i.startswith(b"req_") and len(i) == 36 for i in ids)
 
 
 def test_stream_and_seed():
     p = _api.request_params("x", 1, stream=True, seed=42)
     assert p.output == _abi.OUTPUT_STREAM
     assert p.flags & _abi.REQ_SEED and p.seed == 42
+    assert p.request_id is None  # seeded: the seed alone decides (same audio as kitten-tts2 --seed)
     big = _api.request_params("x", 1, stream=False, seed=2**64 - 1)
     assert big.seed == 2**64 - 1
     for bad in (-1, 2**64, 1.5, True, "7"):

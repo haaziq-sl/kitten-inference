@@ -29,10 +29,11 @@ USAGE = """kitten-tts2: Kitten TTS 2 command line (runs the bundled kitten-tts-n
   kitten-tts2 --list-voices
   kitten-tts2 --prepare-only [--revision R] [--with-cloning]
 
-The model is downloaded and prepared on first use (about 2 GB, once per model revision) and --assets is added for
-you. Options of this command, besides the ones below:
+The model is downloaded (about 4.6 GB, kept in the Hugging Face cache) and prepared (2 GB) on first use, once per
+model revision, and --assets is added for you. Options of this command, besides the ones below:
   --revision R          model revision on Hugging Face (default: the latest)
-  --cache-dir DIR       where prepared models are kept (default: ~/.cache/kitten-inference/tts2)
+  --cache-dir DIR       where prepared models (and then also the downloads) are kept
+                        (default: ~/.cache/kitten-inference/tts2)
   --backend cuda|rocm   which installed engine to use (default: the installed one)
   --prepare-only        prepare the model, print its directory and exit
   --with-cloning        with --prepare-only: also prepare the voice cloning files
@@ -91,6 +92,19 @@ def native_options(native: Sequence[str]) -> set:
     return names
 
 
+def _device(native: Sequence[str]) -> int:
+    """The --device value of a native argument list (0 when absent or not a number: the tool reports that)."""
+    for i, arg in enumerate(native):
+        value = arg.partition("=")[2] if arg.startswith("--device=") else (
+            native[i + 1] if arg == "--device" and i + 1 < len(native) else None)
+        if value is not None:
+            try:
+                return max(0, int(value))
+            except ValueError:
+                return 0
+    return 0
+
+
 def _run(cli: str, args: List[str]) -> int:
     sys.stdout.flush()
     sys.stderr.flush()
@@ -138,10 +152,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"kitten-tts2 {__version__} ({backend.distribution} {backend.version})")
         return _run(str(backend.cli), native)
     if own.get("--prepare-only") or "--assets" not in names:
+        from . import _gpu
+        # Before the first download, unless only preparing (that needs no GPU): a missing driver or GPU is reported
+        # now, not after minutes of work. The native tool checks again when it starts.
+        gpu_check = None if own.get("--prepare-only") else (
+            lambda: _gpu.check(backend.name, _device(native), log=_prepare._log))
         try:
             directory = _prepare.ensure(text_data_tool=backend.text_data_tool, revision=own.get("--revision"),
                                         cache_dir=own.get("--cache-dir"),
-                                        with_cloning=bool(own.get("--with-cloning")) or "--reference-audio" in names)
+                                        with_cloning=bool(own.get("--with-cloning")) or "--reference-audio" in names,
+                                        before_download=gpu_check)
         except KeyboardInterrupt:
             print("kitten-tts2: cancelled", file=sys.stderr)
             return 130

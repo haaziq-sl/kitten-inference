@@ -7,12 +7,13 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
 import numpy as np
 
-from . import _abi, _audio, _backend, _bundle, _prepare
+from . import _abi, _audio, _backend, _bundle, _gpu, _prepare
 from ._engine import Engine, EngineError
 
 SAMPLE_RATE = _audio.SAMPLE_RATE
@@ -32,6 +33,10 @@ SAMPLING = {
 OTHER_OPTIONS = ("speed", "normalize")
 VOICE_FILE_LIMIT = 64 << 20  # as kitten-tts-native --load-voice
 
+# What building a voice needs with the default settings, in the messages below. Measured on a 12 GB card with another
+# process holding memory: cloning worked with 11,285 MiB free and failed with 11,157 MiB free.
+CLONE_MEMORY = "about 11,300 MiB (11 GB) of free GPU memory"
+
 # Engine modes, in increasing order of what they allow (and of the GPU memory they use).
 BUILTIN, CUSTOM, CLONING = 0, 1, 2
 _MODE_NAMES = {BUILTIN: "built-in voices", CUSTOM: "saved voices", CLONING: "voice cloning"}
@@ -39,7 +44,8 @@ _MODE_NAMES = {BUILTIN: "built-in voices", CUSTOM: "saved voices", CLONING: "voi
 
 class Voice:
     """A cloned or loaded voice. It holds the saved-voice artifact, which works only with the model it was made
-    with (the same prepared model revision)."""
+    with (the same model revision, prepared by this version): when Hugging Face has a newer model, keep using the
+    voice with KittenTTS2(revision=<that revision>); load_voice() names it."""
 
     def __init__(self, artifact: bytes, name: str = ""):
         self.artifact = bytes(artifact)
@@ -83,11 +89,17 @@ def request_params(text: str, voice_id: int, *, stream: bool, seed: Optional[int
     p.format = _abi.FORMAT_PCM  # the same 16-bit samples kitten-tts-native writes (levelled and peak-normalised)
     p.output = _abi.OUTPUT_STREAM if stream else _abi.OUTPUT_COMPLETE
     p.speech_mode = _abi.SPEECH_MODE_DEFAULT
+    request_id = None
     if seed is not None:
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 1 << 64:
             raise ValueError(f"seed must be an integer from 0 to 2**64-1; got {seed!r}")
         p.flags |= _abi.REQ_SEED
         p.seed = seed
+    else:
+        # Without a seed the engine derives the sampling seeds from the request id (as the reference service does,
+        # which gives every request its own id); without an id every request would sound the same.
+        request_id = f"req_{uuid.uuid4().hex}".encode("ascii")
+        p.request_id = request_id
     if options.get("normalize") is False:  # None (like the sampling options) means the default: normalise
         p.flags |= _abi.REQ_NORMALIZE_OFF
     if preset is not None:
@@ -101,17 +113,18 @@ def request_params(text: str, voice_id: int, *, stream: bool, seed: Optional[int
             raise TypeError(f"{key} must be an integer; got {value!r}")
         setattr(p.sampler, name, kind(value))
         p.sampler.present |= bit
-    p._keep = encoded  # the struct points into this buffer
+    p._keep = (encoded, request_id)  # the struct points into these buffers
     return p
 
 
 class KittenTTS2:
     """Kitten TTS 2 on this machine's GPU.
 
-    On first use it downloads KittenML/kitten-tts-2 (the latest revision, or ``revision``) and prepares it into
-    ``<cache_dir or ~/.cache/kitten-inference/tts2>/<model sha>/``; later uses reuse that directory. It then starts
-    the engine on GPU ``device`` with the same settings as the ``kitten-tts2`` command: the automatic memory profile
-    and a voice cache that keeps the voice in use, so small GPUs work.
+    On first use it checks the GPU driver, downloads KittenML/kitten-tts-2 (the latest revision, or ``revision``)
+    and prepares it into ``<cache_dir or ~/.cache/kitten-inference/tts2>/<model sha>/``; later uses reuse that
+    directory. ``revision`` (after start: the commit sha in use) pins the model, e.g. for voices saved with it. It
+    then starts the engine on GPU ``device`` with the same settings as the ``kitten-tts2`` command: the automatic
+    memory profile and a voice cache that keeps the voice in use, so small GPUs work.
 
     ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts2: only the voices
     in use), "all", "lru" or "none". ``backend``: "cuda" or "rocm" (default: the installed engine, or
@@ -147,10 +160,18 @@ class KittenTTS2:
                 raise _abi.LibraryError(f"{exc}. The AMD engine needs the ROCm 7 runtime (libamdhip64.so.7) "
                                         "installed on the system") from None
             raise
+        # A missing driver or GPU is reported now, not after minutes of downloading and preparing the model.
+        _gpu.check(self.backend.name, device, log=_prepare._log)
         self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=revision,
                                          cache_dir=cache_dir)
         self._bundle = _bundle.load(self.model_dir)
+        self._identity: Optional[tuple] = None  # (checkpoint, s3gen sha) of the prepared model, read on demand
         self._start(BUILTIN)
+
+    @property
+    def revision(self) -> str:
+        """The KittenML/kitten-tts-2 commit this object runs (pass it as revision= to get the same model again)."""
+        return self._bundle.model_sha or self.model_dir.name
 
     # -- engine lifetime ---------------------------------------------------------------------------------------
     def _config(self, mode: int, bundle: _bundle.Bundle) -> _abi.EngineConfig:
@@ -194,7 +215,8 @@ class KittenTTS2:
         """(Re)creates the engine for ``mode``; the SHA-256 checks of the model files run beside the start."""
         bundle = self._bundle
         if mode == CLONING and not bundle.has_cloning:
-            self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=self._revision,
+            # the commit already in use, never main again: the running model must not change under the caller
+            self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=self.revision,
                                              cache_dir=self._cache_dir, with_cloning=True)
             bundle = self._bundle = _bundle.load(self.model_dir, need_cloning=True)
         elif mode == CLONING:
@@ -239,14 +261,18 @@ class KittenTTS2:
             if engine is not None:
                 engine.destroy()
             raise _bundle.BundleError(f"{exc}. Delete {self.model_dir} and run again to prepare it anew") from None
-        except BaseException:
-            if engine is not None:  # e.g. Ctrl-C while the checks finish: do not keep an engine nobody owns
+        except Exception:
+            if engine is not None:
                 engine.destroy()
             try:
                 verifier.result()
             except _bundle.BundleError as exc:  # a damaged file explains a failed start best
                 raise _bundle.BundleError(f"{exc}. Delete {self.model_dir} and run again to prepare it anew") \
                     from None
+            raise
+        except BaseException:  # Ctrl-C: Engine() frees an engine it made itself; one that started is freed here
+            if engine is not None:
+                engine.destroy()
             raise
         self._verified.update(f[0] for f in todo)
         return engine
@@ -289,8 +315,8 @@ class KittenTTS2:
 
     @property
     def can_clone(self) -> bool:
-        """Whether this engine build includes voice cloning (CUDA engine). The GPU also needs about 11 GB free
-        (measured: a 12 GB RTX 3060 clones; smaller cards load saved voices only)."""
+        """Whether this engine build includes voice cloning (CUDA engine). Building a voice also needs about 11,300 MiB
+        of free GPU memory; GPUs with less load saved voices only."""
         return self.backend.can_clone and _abi.CAP_VOICE_CLONING in _abi.text(self._lib.kt2n_build_info()).split()
 
     def build_info(self) -> str:
@@ -314,7 +340,7 @@ class KittenTTS2:
                 except EngineError as exc:
                     ids = _prefix_ids(self._lib, voice.artifact)
                     if exc.status != _abi.ERR_GPU_MEMORY_LIMIT or self._mode != CUSTOM or ids <= self._max_prefix_ids:
-                        raise _voice_error(exc) from None
+                        raise self._voice_error(exc, voice) from None
                     # the low-memory fit planned for a shorter voice prompt: start again planning for this one
                     self._max_prefix_ids = ids
                     self._start(CUSTOM)
@@ -360,14 +386,72 @@ class KittenTTS2:
         ids = _prefix_ids(self._lib, voice.artifact)
         if ids < 0:
             raise ValueError(f"not a Kitten TTS 2 voice file: {path}")
+        self._check_voice_model(voice)  # before the engine restarts for saved voices
         with self._lock:
             if self._mode == BUILTIN:
                 self._max_prefix_ids = max(self._max_prefix_ids, ids)
             self._voice_id(voice)
         return voice
 
+    def _model_identity(self, root: Path) -> tuple:
+        """(checkpoint, s3gen sha) of the prepared model in ``root``, as the engine compares saved voices with it."""
+        return _bundle.identity(_bundle.file_meta(_bundle.load(root).voices))
+
+    def _voice_model(self, voice: Voice) -> Optional[str]:
+        """The revision of a prepared model in this cache that ``voice`` belongs to, if one is there."""
+        want = _bundle.identity(_bundle.blob_meta(voice.artifact))
+        for config in sorted(self.model_dir.parent.glob("*/config.json")):
+            if config.parent == self.model_dir:
+                continue
+            try:
+                if self._model_identity(config.parent) == want:
+                    return config.parent.name
+            except (OSError, ValueError, _bundle.BundleError):
+                continue
+        return None
+
+    def _mismatch(self, voice: Voice) -> ValueError:
+        other = None
+        try:
+            other = self._voice_model(voice)
+        except (OSError, ValueError, _bundle.BundleError):
+            pass
+        if other:
+            return ValueError(f"this voice was made with the model revision {other}, but this KittenTTS2 runs "
+                              f"{self.revision}. A saved voice works only with the model it was made with: "
+                              f"KittenTTS2(revision=\"{other}\") loads it (that model is still prepared in "
+                              f"{self.model_dir.parent}), or clone the voice again with this model")
+        return ValueError(f"this voice was made with another model than the one this KittenTTS2 runs (revision "
+                          f"{self.revision}). A saved voice works only with the model revision it was made with: pass "
+                          "that revision as KittenTTS2(revision=...), or clone the voice again with this model")
+
+    def _check_voice_model(self, voice: Voice) -> None:
+        """Refuses a saved voice of another prepared model before the engine is touched (the engine checks the same
+        two digests, and more, when it loads the voice)."""
+        try:
+            want = _bundle.identity(_bundle.blob_meta(voice.artifact))
+            if self._identity is None:
+                self._identity = self._model_identity(self.model_dir)
+        except (OSError, ValueError, _bundle.BundleError):
+            return  # the engine decides
+        if all(want) and want != self._identity:
+            raise self._mismatch(voice)
+
+    def _voice_error(self, exc: EngineError, voice: Voice) -> Exception:
+        if exc.status != _abi.ERR_VOICE_ARTIFACT_VERSION_MISMATCH:
+            return exc
+        try:
+            same_files = _bundle.identity(_bundle.blob_meta(voice.artifact)) == self._identity
+        except (ValueError, _bundle.BundleError):
+            same_files = False
+        if same_files:  # the model files match; the voice's own record does not (engine: which field)
+            return ValueError(f"this voice does not match the prepared model this KittenTTS2 runs (revision "
+                              f"{self.revision}; engine: {exc.message}): clone the voice again with this model")
+        return ValueError(f"{self._mismatch(voice)} (engine: {exc.message})")
+
     def save_voice(self, voice: Voice, path: Union[str, os.PathLike]) -> Path:
-        """Writes ``voice`` to ``path`` (atomically). It loads again with load_voice() on the same model."""
+        """Writes ``voice`` to ``path`` (atomically). It loads again with load_voice() on the same model revision
+        (``self.revision``; pass it as revision= when Hugging Face has a newer one)."""
         if not isinstance(voice, Voice):
             raise TypeError("save_voice() takes a Voice from clone_voice() or load_voice()")
         path = Path(path)
@@ -383,13 +467,14 @@ class KittenTTS2:
     def clone_voice(self, reference_audio_path: Union[str, os.PathLike], transcript: str,
                     language: str = "en") -> Voice:
         """Makes a voice from a 2-30 s recording of one speaker (any format the system ffmpeg decodes, at most
-        10 MiB) and the exact words spoken in it. Needs the CUDA engine and about 11 GB of free GPU memory; the first
-        call adds the cloning files to the prepared model and restarts the engine with cloning."""
+        10 MiB) and the exact words spoken in it. Needs the CUDA engine and about 11,300 MiB of free GPU memory
+        while the voice is built; the first call adds the cloning files to the prepared model (1.1 GB) and restarts
+        the engine with cloning."""
         if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("transcript must be the words spoken in the recording")
         if not self.can_clone:
             raise RuntimeError(f"voice cloning needs the NVIDIA (CUDA) engine; the installed {self.backend.distribution} "
-                               "has no voice cloning. Clone and save the voice on an NVIDIA GPU with 12 GB or more, "
+                               f"has no voice cloning. Clone and save the voice on an NVIDIA GPU with {CLONE_MEMORY}, "
                                "then load it here with load_voice()")
         pcm = np.ascontiguousarray(_audio.decode_reference(reference_audio_path), dtype=np.float32)
         with self._lock:
@@ -509,16 +594,11 @@ def _prefix_ids(lib, artifact: bytes) -> int:
     return int(lib.kt2n_voice_artifact_lm_prefix_ids(artifact, len(artifact)))
 
 
-def _voice_error(exc: EngineError) -> Exception:
-    if exc.status == _abi.ERR_VOICE_ARTIFACT_VERSION_MISMATCH:
-        return ValueError(f"this voice was saved with another prepared model: {exc.message}")
-    return exc
-
-
 def _clone_error(exc: EngineError, starting: bool = False) -> Exception:
     if starting or exc.status == _abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE:
-        return RuntimeError(f"this GPU cannot clone voices: {exc.message}. Cloning needs about 11 GB of free GPU "
-                            "memory (a 12 GB card or larger); clone and save the voice there, then load it here")
+        message = exc.message.replace("kt2n_voice_load", "load_voice()")
+        return RuntimeError(f"this GPU cannot clone voices: {message}. Building a voice needs {CLONE_MEMORY}; "
+                            "clone and save the voice on a GPU that has it, then load it here with load_voice()")
     if exc.status in (_abi.ERR_INVALID_AUDIO, _abi.ERR_INVALID_AUDIO_DURATION, _abi.ERR_INVALID_AUDIO_SIGNAL,
                       _abi.ERR_INVALID_REFERENCE_TRANSCRIPT):
         return ValueError(exc.message)

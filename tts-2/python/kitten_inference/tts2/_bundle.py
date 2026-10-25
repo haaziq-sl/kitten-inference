@@ -144,16 +144,44 @@ class Verifier:
             raise BundleError(self._errors[min(self._errors)])
 
 
-def voice_catalogue(voices_file: Path) -> List[dict]:
-    """The voice records of a voices.kt2n file (its JSON metadata only; no tensor data is read)."""
+def _meta(header: bytes, read_meta, what) -> dict:
+    if len(header) < 32 or header[:8] not in (b"KT2NVOX1", b"KT2NENG1"):
+        raise BundleError(f"not a voices file: {what}")
+    _magic, _version, _flags, meta_off, meta_len = struct.unpack("<8sIIQQ", header[:32])
+    try:
+        meta = json.loads(read_meta(meta_off, meta_len).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise BundleError(f"not a voices file: {what}") from None
+    if not isinstance(meta, dict):
+        raise BundleError(f"not a voices file: {what}")
+    return meta
+
+
+def file_meta(voices_file: Path) -> dict:
+    """The JSON metadata of a voices.kt2n file (no tensor data is read)."""
     with open(voices_file, "rb") as f:
         header = f.read(64)
-        if len(header) < 64 or header[:8] not in (b"KT2NVOX1", b"KT2NENG1"):
-            raise BundleError(f"not a voices file: {voices_file}")
-        _magic, _version, _flags, meta_off, meta_len = struct.unpack("<8sIIQQ", header[:32])
-        f.seek(meta_off)
-        meta = json.loads(f.read(meta_len).decode("utf-8"))
-    voices = meta.get("voices")
+
+        def read(off, n):
+            f.seek(off)
+            return f.read(n)
+        return _meta(header, read, voices_file)
+
+
+def blob_meta(data: bytes) -> dict:
+    """The JSON metadata of a voices.kt2n-format blob in memory, such as a saved voice."""
+    return _meta(bytes(data[:64]), lambda off, n: bytes(data[off:off + n]), "saved voice")
+
+
+def identity(meta: dict) -> Tuple[str, str]:
+    """(checkpoint, s3gen_sha256): the prepared model a voice belongs to, as the engine compares it when a saved voice
+    is loaded (the SHA-256 of the prepared model.kt2n and s3gen.kt2n)."""
+    return str(meta.get("checkpoint") or ""), str(meta.get("s3gen_sha256") or "")
+
+
+def voice_catalogue(voices_file: Path) -> List[dict]:
+    """The voice records of a voices.kt2n file (its JSON metadata only; no tensor data is read)."""
+    voices = file_meta(voices_file).get("voices")
     if not isinstance(voices, list):
         raise BundleError(f"no voices in {voices_file}")
     return voices

@@ -92,3 +92,37 @@ def test_prepare_failure_exit_status(harness, monkeypatch, capsys):
     monkeypatch.setattr(_prepare, "ensure", boom)
     assert _cli.main(["--text", "x"]) == 1
     assert "no network" in capsys.readouterr().err
+
+
+def test_gpu_check_before_the_first_download(harness, monkeypatch):
+    from kitten_inference.tts2 import _gpu
+    checked = []
+    monkeypatch.setattr(_gpu, "check", lambda backend, device=0, log=None: checked.append((backend, device)))
+    assert _cli.main(["--text", "x", "--device", "1"]) == 0
+    hook = harness["prepare"][-1]["before_download"]
+    hook()  # ensure() calls it only when it has to download and prepare
+    assert checked == [("cuda", 1)]
+    assert _cli.main(["--prepare-only"]) == 0
+    assert harness["prepare"][-1]["before_download"] is None  # preparing alone needs no GPU
+
+
+def test_gpu_check_failure_stops_before_downloading(harness, monkeypatch, capsys):
+    from kitten_inference.tts2 import _gpu
+
+    def ensure(**kw):
+        kw["before_download"]()
+        raise AssertionError("downloaded")
+
+    def no_gpu(backend, device=0, log=None):
+        raise _gpu.GPUError("no NVIDIA driver found on this machine")
+
+    monkeypatch.setattr(_prepare, "ensure", ensure)
+    monkeypatch.setattr(_gpu, "check", no_gpu)
+    assert _cli.main(["--text", "x"]) == 1
+    assert "no NVIDIA driver found" in capsys.readouterr().err
+
+
+def test_device_value():
+    assert _cli._device(["--text", "x", "--device", "2"]) == 2
+    assert _cli._device(["--device=3"]) == 3 and _cli._device(["--text", "x"]) == 0
+    assert _cli._device(["--device", "gpu"]) == 0
