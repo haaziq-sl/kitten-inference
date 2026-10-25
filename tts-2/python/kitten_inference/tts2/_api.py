@@ -126,9 +126,9 @@ class KittenTTS2:
     then starts the engine on GPU ``device`` with the same settings as the ``kitten-tts2`` command: the automatic
     memory profile and a voice cache that keeps the voice in use, so small GPUs work.
 
-    ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts2: only the voices
-    in use), "all", "lru" or "none". ``backend``: "cuda" or "rocm" (default: the installed engine, or
-    $KITTEN_TTS2_BACKEND).
+    ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts2: the voice in
+    use stays ready; after clone_voice() no voice is kept, which costs each request about 14 ms), "all", "lru" or
+    "none". ``backend``: "cuda" or "rocm" (default: the installed engine, or $KITTEN_TTS2_BACKEND).
     """
 
     sample_rate = SAMPLE_RATE
@@ -142,7 +142,8 @@ class KittenTTS2:
         self._voice_cache = None if voice_cache is None else _enum(voice_cache, VOICE_CACHES, "voice_cache")
         self._device = device
         self._revision = revision
-        self._cache_dir = cache_dir
+        # absolute now: the engine starts again later (load_voice, clone_voice), maybe after a change of folder
+        self._cache_dir = None if cache_dir is None else Path(cache_dir).expanduser().absolute()
         self._lock = threading.RLock()
         self._engine: Optional[Engine] = None
         self._mode = BUILTIN
@@ -163,7 +164,7 @@ class KittenTTS2:
         # A missing driver or GPU is reported now, not after minutes of downloading and preparing the model.
         _gpu.check(self.backend.name, device, log=_prepare._log)
         self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=revision,
-                                         cache_dir=cache_dir)
+                                         cache_dir=self._cache_dir)
         self._bundle = _bundle.load(self.model_dir)
         self._identity: Optional[tuple] = None  # (checkpoint, s3gen sha) of the prepared model, read on demand
         self._start(BUILTIN)
@@ -200,12 +201,16 @@ class KittenTTS2:
             c.inline_voice_lru = 1
             c.clone_slots = 1
         if self._voice_cache is None:
-            # kitten-tts-native's defaults: one voice prepared on first use; NONE (only voices in use) with
-            # custom voices, which also lets a saved voice load on 4 GB cards.
-            if mode == BUILTIN:
-                c.voice_cache_mode, c.voice_cache_max_voices = _abi.VOICE_CACHE_LRU, 1
-            else:
+            # As kitten-tts-native without --voice-cache: the voice in use stays prepared (LRU, one voice per
+            # stream), for built-in and loaded voices alike, so each request starts as fast as the command's. With
+            # cloning on, no voice is kept (NONE): the 12 GB cloning threshold (about 11,300 MiB free) was measured
+            # that way, and a kept voice (up to 197 MiB) would come out of that margin while the next voice is built.
+            # That costs each request after clone_voice() about 14 ms of first audio (33 ms against 19 ms on an
+            # RTX 4090).
+            if mode == CLONING:
                 c.voice_cache_mode = _abi.VOICE_CACHE_NONE
+            else:
+                c.voice_cache_mode, c.voice_cache_max_voices = _abi.VOICE_CACHE_LRU, 1
         else:
             c.voice_cache_mode = self._voice_cache
         c._keep = keep

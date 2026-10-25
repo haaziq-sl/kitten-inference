@@ -151,6 +151,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if "--version" in names:
         print(f"kitten-tts2 {__version__} ({backend.distribution} {backend.version})")
         return _run(str(backend.cli), native)
+    if (own.get("--with-cloning") or "--reference-audio" in names) and not backend.can_clone:
+        # Before the cloning files are downloaded and prepared (1.1 GB): this engine could not use them.
+        print(f"kitten-tts2: voice cloning needs the NVIDIA (CUDA) engine; the installed {backend.distribution} has no "
+              "voice cloning. Clone and save the voice on an NVIDIA GPU (kitten-tts2 --reference-audio ... "
+              "--save-voice FILE), then use it here with --load-voice FILE", file=sys.stderr)
+        return 2
     if own.get("--prepare-only") or "--assets" not in names:
         from . import _gpu
         # Before the first download, unless only preparing (that needs no GPU): a missing driver or GPU is reported

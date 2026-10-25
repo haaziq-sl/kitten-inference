@@ -36,12 +36,37 @@ def test_to_pcm16_clips_and_checks():
 
 
 def test_ffmpeg_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setenv("PATH", str(tmp_path / "no-programs-here"))
     ref = tmp_path / "ref.wav"
     ref.write_bytes(b"RIFF")
     with pytest.raises(_audio.FFmpegNotFound) as e:
         _audio.decode_reference(ref)
     assert ("winget install --id Gyan.FFmpeg -e" if os.name == "nt" else "sudo apt-get install -y ffmpeg") in str(e.value)
+
+
+def test_ffmpeg_only_from_absolute_path_folders(monkeypatch, tmp_path):
+    # An ffmpeg in the current folder (shutil.which takes it first on Windows, and for an empty PATH entry anywhere)
+    # or in a relative PATH entry is never run with the recording; only an absolute PATH folder counts.
+    name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    here, real = tmp_path / "here", tmp_path / "bin"
+    for folder in (here, real, here / "relative"):
+        folder.mkdir()
+        (folder / name).write_bytes(b"#!/bin/sh\n")
+        (folder / name).chmod(0o755)
+    monkeypatch.chdir(here)
+    monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "relative", str(real)]))
+    assert _audio.find_ffmpeg() == os.path.join(str(real), name)
+    monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "relative"]))
+    with pytest.raises(_audio.FFmpegNotFound):
+        _audio.find_ffmpeg()
+    if os.name == "nt":  # a batch file would run through cmd.exe: never taken
+        batch = tmp_path / "batch"
+        batch.mkdir()
+        for ext in (".bat", ".cmd", ".com"):
+            (batch / f"ffmpeg{ext}").write_text("@echo off\n")
+        monkeypatch.setenv("PATH", str(batch))
+        with pytest.raises(_audio.FFmpegNotFound):
+            _audio.find_ffmpeg()
 
 
 def test_reference_limits(tmp_path):

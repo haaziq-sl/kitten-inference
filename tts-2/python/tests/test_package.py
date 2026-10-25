@@ -1,7 +1,9 @@
 """The installed package: import, metadata, the bundled preparation code and the console script."""
 import importlib
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +18,15 @@ def _dist():
         pytest.skip("kitten-inference-tts2 is not installed (running from the source tree)")
 
 
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
 def test_import_and_version():
-    assert tts2.__version__ == "0.2.0"
+    # __version__ is a literal (CONTRACT: no metadata lookups); a post release must change it with the pyproject
+    assert re.fullmatch(r"\d+\.\d+\.\d+(\.post\d+)?", tts2.__version__), tts2.__version__
+    if PYPROJECT.is_file():
+        assert tts2.__version__ == re.search(r'^version = "([^"]+)"', PYPROJECT.read_text(encoding="utf-8"),
+                                             re.M).group(1)
     assert callable(tts2.KittenTTS2)
     for name in tts2.__all__:
         assert hasattr(tts2, name), name
@@ -27,7 +36,7 @@ def test_metadata():
     dist = _dist()
     meta = dist.metadata
     assert meta["Name"] == "kitten-inference-tts2"
-    assert dist.version == "0.2.0"
+    assert dist.version == tts2.__version__
     assert meta["Requires-Python"] == ">=3.9"
     requires = {r.split(";")[0].replace(" ", "") for r in (dist.requires or [])}
     names = {r.split(">")[0].split("<")[0].split("=")[0].lower() for r in requires}

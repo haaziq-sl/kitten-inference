@@ -120,8 +120,11 @@ def test_engine_config_saved_voice_and_cloning():
     t = _tts(max_prefix_ids=380)
     c = t._config(_api.CUSTOM, _Bundle())
     assert c.flags == 0 and c.max_custom_voices == 1 and c.voice_build_dir is None
-    assert c.voice_cache_mode == _abi.VOICE_CACHE_NONE and c.custom_voice_max_prefix_ids == 380
+    # as kitten-tts-native --load-voice: the voice in use stays prepared (lru, one voice per stream)
+    assert (c.voice_cache_mode, c.voice_cache_max_voices) == (_abi.VOICE_CACHE_LRU, 1)
+    assert c.custom_voice_max_prefix_ids == 380
     c = t._config(_api.CLONING, _Bundle())
+    assert c.voice_cache_mode == _abi.VOICE_CACHE_NONE  # the 12 GB cloning threshold was measured this way
     assert c.flags == 0 and c.voice_build_dir == b"/m/native/cloning"
     assert (c.clone_slots, c.inline_voice_lru, c.max_custom_voices) == (1, 1, 1)
     assert c.custom_voice_max_prefix_ids == 0  # a new clone may have a longer prompt

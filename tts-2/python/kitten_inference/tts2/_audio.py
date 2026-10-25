@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import wave
 from pathlib import Path
@@ -42,10 +41,19 @@ def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:
 
 
 def find_ffmpeg() -> str:
-    path = shutil.which("ffmpeg")
-    if not path:
-        raise FFmpegNotFound(FFMPEG_MISSING)
-    return path
+    """The ffmpeg program on PATH. Only absolute PATH folders count: shutil.which would also take one from the current
+    folder (on Windows before every PATH entry, and on any system for an empty PATH entry), where a downloaded or
+    planted ffmpeg would then get the recording. On Windows only ffmpeg.exe is taken: a .bat or .cmd runs through
+    cmd.exe, which would read characters such as & in the file name as commands."""
+    name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        folder = folder.strip().strip('"') if os.name == "nt" else folder
+        if not folder or not os.path.isabs(folder) or (os.name == "nt" and not os.path.splitdrive(folder)[0]):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise FFmpegNotFound(FFMPEG_MISSING)
 
 
 def decode_reference(path: os.PathLike, ffmpeg: Optional[str] = None) -> np.ndarray:

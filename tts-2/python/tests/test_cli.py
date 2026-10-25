@@ -54,6 +54,22 @@ def test_reference_audio_prepares_cloning(harness):
     assert harness["prepare"][0]["with_cloning"] is True
 
 
+def test_cloning_on_an_engine_without_it_stops_before_preparing(no_backends, fake_backend, monkeypatch, capsys):
+    # The ROCm engine has no voice cloning: no 1.1 GB of cloning files, and the advice is one a pip user can follow.
+    fake_backend("rocm", caps=())
+    prepared, ran = [], []
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: prepared.append(kw))
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(args) or 0)
+    for argv in (["--text", "x", "--reference-audio", "ref.wav", "--reference-transcript", "words"],
+                 ["--prepare-only", "--with-cloning"]):
+        assert _cli.main(argv) == 2
+        err = capsys.readouterr().err
+        assert "voice cloning needs the NVIDIA (CUDA) engine" in err and "--load-voice FILE" in err
+        assert "rebuild" not in err
+    assert prepared == [] and ran == []
+    assert _cli.main(["--text", "x", "--load-voice", "me.voice"]) == 0 and len(prepared) == 1
+
+
 def test_explicit_assets_is_kept(harness):
     assert _cli.main(["--assets", "/mine", "--list-voices"]) == 0
     assert harness["prepare"] == [] and harness["run"][0][1] == ["--assets", "/mine", "--list-voices"]
