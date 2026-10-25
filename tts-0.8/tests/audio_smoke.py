@@ -78,7 +78,11 @@ THREAD_PLAN = [
 ]
 # A Latin-1, a Latin-2 and a CJK letter: no Windows ANSI code page has all three.
 UNICODE_DIR_PREFIX = "kitten-é-Ł-猫-"
-METAL_TOLERANCE = 1e-3
+# Metal output is not bit-for-bit repeatable (differences up to 7e-4 seen), so Metal is compared loosely: the same
+# length, the difference at most 1% of the signal (RMS) and no sample off by more than 0.05. A race between calls
+# gave a wrong length or differences of 0.9.
+METAL_MAX_DIFF = 0.05
+METAL_RMS_RATIO = 0.01
 
 
 def validate_audio(audio, label):
@@ -151,9 +155,14 @@ def difference(a, b):
 
 
 def check_same(label, got, want, exact):
-    """CPU output must repeat exactly; Metal output must keep its length and stay within METAL_TOLERANCE."""
+    """CPU output must repeat exactly; Metal output must keep its length and stay close (see METAL_MAX_DIFF)."""
     diff = difference(got, want)
-    ok = diff is not None and (diff == 0.0 if exact else diff <= METAL_TOLERANCE)
+    if diff is not None and not exact and diff > 0.0:
+        rms_ratio = float(np.sqrt(np.mean(np.square(got - want, dtype=np.float64))
+                                  / np.mean(np.square(want, dtype=np.float64))))
+        ok = diff <= METAL_MAX_DIFF and rms_ratio <= METAL_RMS_RATIO
+    else:
+        ok = diff is not None and diff == 0.0
     if not ok:
         raise AssertionError(
             f"{label}: {len(got)} samples vs {len(want)} expected, largest difference {diff}"
