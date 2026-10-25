@@ -34,7 +34,8 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 | `KittenML/kitten-tts-nano-0.8` | 15M | 56 MB |
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
-(116, 71 and 19 MB).
+(116, 71 and 19 MB). On ARM CPUs they are also faster; on x86_64 they run 1.3 to 1.9 times slower
+than the full-size weights.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -56,10 +57,13 @@ Options:
 | Windows ARM64 | 3.11–3.14 | built, not tested |
 | Android ARM64 | 3.13 | built, not tested |
 
-- Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later.
-- x86_64 needs a CPU with AVX2 (Intel since 2013, AMD since 2015).
+- Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later. macOS needs version 11 or newer.
+- x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015).
 - Linux ARM64 needs an ARMv8.2 CPU with dot-product instructions, such as a Raspberry Pi 5.
   A Raspberry Pi 4 is not supported.
+- Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
+  9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
+  slower again. Use the full-size models there.
 
 ## Upgrading from kitten-inference 0.1.x
 
