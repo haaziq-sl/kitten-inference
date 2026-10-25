@@ -87,7 +87,7 @@ def test_ffmpeg_decode(tmp_path):
 def test_ffmpeg_decode_falls_back_to_the_file_name(tmp_path):
     # An M4A with its index at the end cannot be read from a pipe; it is then read by name.
     src = tmp_path / "tone.wav"
-    t = np.arange(24000) / 24000.0
+    t = np.arange(20 * 24000) / 24000.0  # long enough that the index at the end is out of the pipe's reach
     with wave.open(str(src), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -98,6 +98,6 @@ def test_ffmpeg_decode_falls_back_to_the_file_name(tmp_path):
                    check=True)
     piped = subprocess.run(["ffmpeg", *_audio.ffmpeg_args()], input=m4a.read_bytes(), capture_output=True)
     pcm = _audio.decode_reference(m4a)
-    assert abs(pcm.size - 24000) <= 2048 and np.abs(pcm).max() > 0.1
-    if piped.returncode == 0 and piped.stdout:
+    assert abs(pcm.size - 20 * 24000) <= 2048 and np.abs(pcm).max() > 0.1
+    if piped.returncode == 0 and len(piped.stdout) >= 4:
         pytest.skip("this ffmpeg reads the M4A from a pipe too (fallback not exercised)")
