@@ -14,8 +14,11 @@ without WSL2 (bare metal) was not tested.
 - Voice cloning builds, but was not tested on Radeon.
 - The audio is close to, not bit for bit the same as, an NVIDIA GPU's; see
   [Output differences](consumer-gpus.md#output-differences). These steps install ROCm 7.2; our measured numbers were
-  made with ROCm 7.1 builds. A ROCm 7.2 build differs from a ROCm 7.1 build only at the level of rounding (about
-  -65 dB, same words and voice) and runs about 2% slower (real-time factor 0.092 against 0.090 on an RX 9060 XT).
+  made with ROCm 7.1 builds. A ROCm 7.2 build differs from a ROCm 7.1 build only at the level of rounding (about -60
+  to -65 dB, same words and voice) and runs about 2% slower (real-time factor 0.092 against 0.090 on an RX 9060 XT).
+  With the ROCm 7.2 runtime, the first request of each process on an RX 7900 XTX often starts its audio about 17 ms
+  later than with ROCm 7.1 (66 against 49 ms); later requests in the same process, complete files and the RX 9070 XT
+  are not affected.
 - Cards with less memory: on an RX 9060 XT 16 GB with only 12 GB free (simulated), the tool picks the low-memory
   profile; with 8 GB or 7 GB free (simulated), it fits that profile to the card, as on an 8 GB NVIDIA card. Supported,
   not optimal: the low profile batches several requests at once less, and when fitted it serves one stream and has no
@@ -78,7 +81,7 @@ export HSA_ENABLE_DXG_DETECTION=1
 ```
 
 The last command should list your Radeon and its gfx id (for example `gfx1200` and `AMD Radeon RX 9060 XT`). ROCm
-takes about 22 GB of disk (a 7 GB download) and installed in 5 to 18 minutes in our tests, depending on the connection.
+takes about 22 GB of disk (a 7 GB download) and installed in 5 to 32 minutes in our tests, depending on the connection.
 Do not install AMD's kernel driver package (`amdgpu-dkms`) in WSL2: WSL2 uses the Windows driver. Under WSL2, `amd-smi` from these packages does not see the GPU; use `rocminfo` as above.
 
 - `rocminfo` prints `HSA_STATUS_ERROR_OUT_OF_RESOURCES`: `HSA_ENABLE_DXG_DETECTION=1` is not set in this terminal;
@@ -102,7 +105,7 @@ gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. Its audio is the same as that of
 builds our numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding
 (about -60 to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7`
 from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first run downloads and
-prepares the model (a 4.4 GB download; 8 minutes in our test, most of it the download); later runs start in a few
+prepares the model (a 4.4 GB download; 1 to 8 minutes in our tests, most of it the download); later runs start in a few
 seconds. It has no voice cloning.
 
 ## 2. Get the source and build
@@ -121,7 +124,7 @@ cmake --preset hip
 cmake --build --preset hip --parallel "$(nproc)"
 ```
 
-The `hip` preset builds into `build/hip/` for gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. With 12 to 24 compile jobs this took 4 to 7 minutes and at most about 5 GB of RAM. If the build stops with "Killed" (out of memory), run the last command again with a smaller number, for example `--parallel 4` (and half that if it stops again). To build for one GPU
+The `hip` preset builds into `build/hip/` for gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. With 12 to 32 compile jobs this took 4 to 9 minutes and at most about 5 GB of RAM. If the build stops with "Killed" (out of memory), run the last command again with a smaller number, for example `--parallel 4` (and half that if it stops again). To build for one GPU
 only, which is faster, add `-DKT2N_HIP_ARCHS=gfx1100` (your GPU's id, as `rocminfo` prints it) to `cmake --preset
 hip`. ROCm must be in `/opt/rocm`; otherwise also pass `-DCMAKE_HIP_COMPILER=<rocm>/llvm/bin/clang++` and
 `-DCMAKE_PREFIX_PATH=<rocm>` (not tested). The build prints many compiler warnings, most of them `ignoring return value
@@ -180,4 +183,4 @@ free GPU memory and is skipped unless that much is free, which in practice means
 example `KT2N_TOKENIZER_JSON`) and are skipped.
 
 `cmake --preset hip-dev` needs a Python with numpy: activate `.venv-prepare` first, as above. It builds into
-`build/hip-dev`, a second full build (4 to 6 minutes).
+`build/hip-dev`, a second full build (4 to 10 minutes).
