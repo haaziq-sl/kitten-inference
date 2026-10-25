@@ -4742,7 +4742,8 @@ KT2N_API int32_t kt2n_voice_build(kt2n_engine* e, const kt2n_voice_build_params*
     if (e->cloning_off_fitted) {
       set_err(err, KT2N_ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE,
               "voice cloning is off on this GPU: the low-memory profile uses the memory the cloning model needs (about "
-              "4.4 GB more); build and save the voice on a larger GPU, then load it with kt2n_voice_load");
+              "4.4 GB more); build and save the voice on a larger GPU, then load it here (kitten-tts-native "
+              "--load-voice FILE, Python load_voice(), C API kt2n_voice_load)");
       return KT2N_ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE;
     }
     set_err(err, KT2N_ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE, "clone builds need voice_build_dir");

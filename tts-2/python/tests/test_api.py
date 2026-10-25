@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from kitten_inference.tts2 import _api, _bundle, _prepare
+from kitten_inference.tts2 import _abi, _api, _bundle, _prepare
+from kitten_inference.tts2._engine import EngineError
 
 A = "a" * 40
 B = "b" * 40
@@ -115,3 +116,19 @@ def test_blob_identity():
     assert _bundle.identity(meta) == ("c", "s")
     with pytest.raises(_bundle.BundleError):
         _bundle.blob_meta(b"RIFF....")
+
+
+@pytest.mark.parametrize("engine_message", [
+    # this engine, and the 0.2.0 engine (which named only the C call)
+    "voice cloning is off on this GPU: the low-memory profile uses the memory the cloning model needs (about 4.4 GB "
+    "more); build and save the voice on a larger GPU, then load it here (kitten-tts-native --load-voice FILE, Python "
+    "load_voice(), C API kt2n_voice_load)",
+    "voice cloning is off on this GPU: the low-memory profile uses the memory the cloning model needs (about 4.4 GB "
+    "more); build and save the voice on a larger GPU, then load it with kt2n_voice_load",
+])
+def test_cloning_off_names_the_python_call(engine_message):
+    err = _api._clone_error(EngineError(_abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE, engine_message))
+    text = str(err)
+    assert isinstance(err, RuntimeError) and "about 4.4 GB more" in text, text
+    assert "kt2n_voice_load" not in text and "--load-voice" not in text, text
+    assert text.endswith("then load it here with load_voice()"), text

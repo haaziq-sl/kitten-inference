@@ -596,7 +596,9 @@ def _prefix_ids(lib, artifact: bytes) -> int:
 
 def _clone_error(exc: EngineError, starting: bool = False) -> Exception:
     if starting or exc.status == _abi.ERR_CUSTOM_VOICE_SERVICE_UNAVAILABLE:
-        message = exc.message.replace("kt2n_voice_load", "load_voice()")
+        # The engine's own advice names every front end (and kt2n_voice_load in older engines): the line below says
+        # it for Python.
+        message = exc.message.split("; build and save the voice", 1)[0]
         return RuntimeError(f"this GPU cannot clone voices: {message}. Building a voice needs {CLONE_MEMORY}; "
                             "clone and save the voice on a GPU that has it, then load it here with load_voice()")
     if exc.status in (_abi.ERR_INVALID_AUDIO, _abi.ERR_INVALID_AUDIO_DURATION, _abi.ERR_INVALID_AUDIO_SIGNAL,
