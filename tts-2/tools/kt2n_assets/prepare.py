@@ -398,9 +398,10 @@ def main(argv=None) -> int:
                         "another build/*/bin/ of this source tree or the current directory, then PATH)")
     p.add_argument("--nemo-wheel", type=Path, help="Pinned NeMo 1.2.0 wheel (read data only; never installed)")
     p.add_argument("--weight-norm-device", choices=("numpy", "cuda", "cpu"), default="numpy",
-                   help="How to fold the decoder weight norms: numpy (default) needs no torch or GPU and gives the "
-                        "same files on every machine; cuda (torch 2.7.1+cu128 and an NVIDIA GPU) reproduces "
-                        "models prepared by earlier versions; cpu (torch) differs slightly from both")
+                   help="How to fold the decoder weight norms: numpy (default) needs no torch or GPU, gives the "
+                        "same files on every machine and the same folded weights as cuda; cuda (torch "
+                        "2.7.1+cu128 and an NVIDIA GPU) reproduces models prepared by earlier versions byte for "
+                        "byte; cpu (torch) folds slightly differently")
     a = p.parse_args(argv)
     a.out = a.out.resolve()
     config_path = a.out / "config.json"

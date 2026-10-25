@@ -77,6 +77,11 @@ def _file_sha(path: str) -> str:
     return h.hexdigest()
 
 
+def manifest_sha256(path: pathlib.Path) -> str:
+    """The manifest's digest with LF line ends: a Windows checkout (git core.autocrlf) has CRLF, same content."""
+    return _sha(path.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def read_manifest(path: pathlib.Path) -> list[dict[str, Any]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or lines[0].split("\t") != ["native_name", "group", "dtype", "shape", "transform", "sources"]:
@@ -245,7 +250,7 @@ def convert(src_path: str, out_path: str, *, manifest_path: pathlib.Path, expect
                 "tensor_count": len([k for k in header_obj if k != "__metadata__"]),
             },
             "converter": _converter(device),
-            "manifest_sha256": _sha(manifest_path.read_bytes()),
+            "manifest_sha256": manifest_sha256(manifest_path),
             "extra_groups": [{"group": g, "file": os.path.basename(f.path), "sha256": _file_sha(f.path)}
                              for g, f in extra_files],
         },

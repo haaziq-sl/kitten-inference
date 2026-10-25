@@ -177,3 +177,12 @@ def test_independent_bf16_rounding_matches_the_converter():
         ((np.arange(1, 5000, dtype=np.uint32) << np.uint32(16)) | np.uint32(0x80008000)).view(np.float32),
         np.array([0.0, -0.0, 1.0, np.finfo(np.float32).tiny, 3.4e38], np.float32)])
     assert np.array_equal(convert_s3gen.bf16_rne_reference(x), convert_s3gen.bf16_rne_bits(x).reshape(-1))
+
+
+def test_manifest_digest_ignores_windows_line_ends(tmp_path):
+    lf = convert_s3gen.MANIFEST.read_bytes().replace(b"\r\n", b"\n")
+    crlf = tmp_path / "s3gen_tensors.tsv"
+    crlf.write_bytes(lf.replace(b"\n", b"\r\n"))
+    assert convert_s3gen.manifest_sha256(crlf) == convert_s3gen.manifest_sha256(convert_s3gen.MANIFEST)
+    assert convert_s3gen.manifest_sha256(crlf) == hashlib.sha256(lf).hexdigest()
+    assert convert_s3gen.read_manifest(crlf) == convert_s3gen.read_manifest(convert_s3gen.MANIFEST)
