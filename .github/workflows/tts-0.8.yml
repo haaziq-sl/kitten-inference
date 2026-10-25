@@ -134,6 +134,8 @@ jobs:
           output-dir: wheelhouse
 
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
 
       - name: Test every wheel on the runner
         shell: bash
@@ -294,6 +296,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         if: matrix.host_pythons != ''
+        with:
+          version: "0.13.5"
 
       - name: Test the cp38 arm64 wheel (Metal, then CPU)
         if: matrix.host_pythons != ''
@@ -302,7 +306,8 @@ jobs:
           set -euo pipefail
           for py in ${{ matrix.host_pythons }}; do
             tag="cp${py/./}"
-            uv venv -q -p "$py" "venv-$tag"
+            # A managed arm64 interpreter: the runner's own Python 3.8 is x86_64.
+            uv venv -q --managed-python -p "cpython-$py-macos-aarch64-none" "venv-$tag"
             uv pip install -q -p "venv-$tag/bin/python" wheelhouse/*-"$tag"-"$tag"-*.whl
             "venv-$tag/bin/python" -c "import platform; print(platform.python_version(), platform.machine())"
             "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
@@ -421,6 +426,8 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
 
       - uses: actions/download-artifact@v7
         with:
