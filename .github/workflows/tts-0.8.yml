@@ -38,25 +38,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64 manylinux2014 CPython 3.8-3.15
-            artifact: linux-x86_64-manylinux2014
-            os: ubuntu-latest
-            arch: x86_64
-            manylinux_image: manylinux2014
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=ON
-              cmake.define.ENABLE_ARM_DOTPROD=OFF
-            cibw_build: >-
-              cp38-manylinux_x86_64
-              cp39-manylinux_x86_64
-              cp310-manylinux_x86_64
-              cp311-manylinux_x86_64
-              cp312-manylinux_x86_64
-              cp313-manylinux_x86_64
-              cp314-manylinux_x86_64
-
           - name: Linux x86_64 manylinux_2_28 CPython 3.8-3.15
             artifact: linux-x86_64-manylinux-2-28
             os: ubuntu-latest
@@ -75,44 +56,6 @@ jobs:
               cp312-manylinux_x86_64
               cp313-manylinux_x86_64
               cp314-manylinux_x86_64
-
-          - name: Linux ARM64 manylinux2014 CPython 3.8-3.15
-            artifact: linux-aarch64-manylinux2014
-            os: ubuntu-24.04-arm
-            arch: aarch64
-            manylinux_image: manylinux2014
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=OFF
-              cmake.define.ENABLE_ARM_DOTPROD=ON
-            cibw_build: >-
-              cp38-manylinux_aarch64
-              cp39-manylinux_aarch64
-              cp310-manylinux_aarch64
-              cp311-manylinux_aarch64
-              cp312-manylinux_aarch64
-              cp313-manylinux_aarch64
-              cp314-manylinux_aarch64
-
-          - name: Linux ARM64 manylinux_2_28 CPython 3.8-3.15
-            artifact: linux-aarch64-manylinux-2-28
-            os: ubuntu-24.04-arm
-            arch: aarch64
-            manylinux_image: manylinux_2_28
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=OFF
-              cmake.define.ENABLE_ARM_DOTPROD=ON
-            cibw_build: >-
-              cp38-manylinux_aarch64
-              cp39-manylinux_aarch64
-              cp310-manylinux_aarch64
-              cp311-manylinux_aarch64
-              cp312-manylinux_aarch64
-              cp313-manylinux_aarch64
-              cp314-manylinux_aarch64
 
     steps:
       - uses: actions/checkout@v5
@@ -240,32 +183,6 @@ jobs:
             host_pythons: ""
             uv_python: cpython-3.12-windows-x86_64-none
 
-          - name: Windows ARM64 CPython 3.11-3.15
-            os: windows-11-arm
-            artifact: windows-arm64
-            cibw_build: >-
-              cp311-win_arm64
-              cp312-win_arm64
-              cp313-win_arm64
-              cp314-win_arm64
-            cibw_build_315: cp315-win_arm64
-            cibw_archs_windows: ARM64
-            cibw_archs_macos: auto
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=OFF
-              cmake.define.ENABLE_ARM_DOTPROD=OFF
-            test_skip: ""
-            test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-              --cache-dir {project}/.hf-cache --expect-backend cpu &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
-              --cache-dir {project}/.hf-cache
-            host_pythons: ""
-            uv_python: cpython-3.12-windows-aarch64-none
-
           - name: macOS ARM64 CPython 3.8-3.15
             os: macos-26
             artifact: macos-arm64
@@ -298,35 +215,6 @@ jobs:
               --cache-dir {project}/.hf-cache
             host_pythons: "3.8"
             uv_python: cpython-3.12-macos-aarch64-none
-
-          - name: macOS x86_64 CPython 3.8-3.15
-            os: macos-15-intel
-            artifact: macos-x86_64
-            cibw_build: >-
-              cp38-macosx_x86_64
-              cp39-macosx_x86_64
-              cp310-macosx_x86_64
-              cp311-macosx_x86_64
-              cp312-macosx_x86_64
-              cp313-macosx_x86_64
-              cp314-macosx_x86_64
-            cibw_build_315: cp315-macosx_x86_64
-            cibw_archs_windows: auto
-            cibw_archs_macos: x86_64
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=ON
-              cmake.define.ENABLE_ARM_DOTPROD=OFF
-            test_skip: ""
-            test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-              --cache-dir {project}/.hf-cache --expect-backend cpu &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
-              --cache-dir {project}/.hf-cache
-            host_pythons: ""
-            uv_python: cpython-3.12-macos-x86_64-none
 
     steps:
       - uses: actions/checkout@v5
@@ -435,6 +323,7 @@ jobs:
           if-no-files-found: error
 
   android-wheels:
+    if: false
     # Experimental and non-blocking. Built, not tested: cibuildwheel runs Android tests only in an
     # emulator of the runner's own architecture (x86_64 here), and numpy, soundfile and
     # espeakng_loader publish no Android wheels on PyPI.
@@ -486,7 +375,58 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+
+  macos-openmp-probe:
+    # Measurement only (this branch is not for merging): the shipped macOS build has no OpenMP. Build the same
+    # source with Homebrew's libomp and time 1 thread against all cores on the same runner, plus Metal on arm64.
+    name: macOS OpenMP probe ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arm: "OFF"
+            avx2: "ON"
+          - os: macos-26
+            arm: "ON"
+            avx2: "OFF"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+      - name: Build without and with OpenMP, then time them
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.physicalcpu || true
+          mkdir -p /tmp/cibw; export TMPDIR=/tmp/cibw
+          brew install libomp
+          omp=$(brew --prefix libomp)
+          common="-C cmake.define.ENABLE_CUDA=OFF -C cmake.define.ENABLE_NATIVE_ARCH=OFF -C cmake.define.ENABLE_X86_AVX2=${{ matrix.avx2 }} -C cmake.define.ENABLE_ARM_DOTPROD=${{ matrix.arm }}"
+          MACOSX_DEPLOYMENT_TARGET=11.0 uv build --wheel -p 3.12 --out-dir dist-plain -C build-dir=build/plain \
+            -C build.verbose=true $common tts-0.8 > build-plain.log 2>&1 || { tail -60 build-plain.log; exit 1; }
+          CMAKE_ARGS="-DOpenMP_CXX_FLAGS='-Xclang -fopenmp -I$omp/include' -DOpenMP_CXX_LIB_NAMES=omp -DOpenMP_omp_LIBRARY=$omp/lib/libomp.dylib" \
+            uv build --wheel -p 3.12 --out-dir dist-omp -C build-dir=build/omp \
+            -C build.verbose=true $common tts-0.8 > build-omp.log 2>&1 || { tail -60 build-omp.log; exit 1; }
+          grep -h -i "openmp" build-plain.log build-omp.log | sort | uniq -c
+          ls -l dist-plain dist-omp
+          for v in plain omp; do
+            uv venv -q --managed-python -p 3.12 venv-$v
+            uv pip install -q -p venv-$v/bin/python dist-$v/*.whl
+          done
+          models="KittenML/kitten-tts-nano-0.8 KittenML/kitten-tts-mini-0.8 KittenML/kitten-tts-nano-0.8-int8"
+          venv-plain/bin/python tts-0.8/tests/probe_timing.py --label shipped-no-openmp $models
+          OMP_NUM_THREADS=1 venv-omp/bin/python tts-0.8/tests/probe_timing.py --label openmp-1-thread $models
+          venv-omp/bin/python tts-0.8/tests/probe_timing.py --label openmp-all-cores $models
+          if [ "$(uname -m)" = arm64 ]; then
+            venv-plain/bin/python tts-0.8/tests/probe_timing.py --backend metal --label metal $models KittenML/kitten-tts-mini-0.8-int8
+          fi
+
   oldest-linux:
+    if: false
     # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
     # pip picks the wheel, as it would for a user.
     name: Ubuntu 20.04, Python 3.8, x86_64
@@ -521,6 +461,7 @@ jobs:
           venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   lowest-deps:
+    if: false
     name: Lowest dependencies, Linux x86_64, Python ${{ matrix.python }}
     needs: linux-wheels
     runs-on: ubuntu-latest
@@ -571,6 +512,7 @@ jobs:
           venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   wheel-list:
+    if: false
     name: Wheel list and contents
     needs: [linux-wheels, desktop-wheels, android-wheels]
     if: always()
