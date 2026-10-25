@@ -25,6 +25,7 @@
 
 #if defined(_WIN32)
 #include <fcntl.h>  // _O_BINARY
+#include <windows.h>
 #include "kt2n/platform.h"
 #include "kt2n/posix_compat.h"
 #else
@@ -32,6 +33,7 @@
 #endif
 
 #include "cli_core.h"
+#include "ffmpeg_decode.h"
 #include "json.h"
 #include "kt2n/engine.h"
 #include "stats_reader.h"
@@ -110,13 +112,15 @@ void check(int status, const kt2n_error& error = {}) {
   throw std::runtime_error(message + " (status " + std::to_string(status) + ")");
 }
 
-bool can_clone() {
+bool has_capability(const char* capability) {
   std::istringstream info(kt2n_build_info());
   std::string token;
   while (info >> token)
-    if (token == KT2N_CAP_VOICE_CLONING) return true;
+    if (token == capability) return true;
   return false;
 }
+
+bool can_clone() { return has_capability(KT2N_CAP_VOICE_CLONING); }
 
 #if defined(_WIN32)
 // Windows has no SIGPIPE (a closed pipe fails the write instead).
@@ -195,12 +199,21 @@ std::string read_text(const Options& o) {
 #endif
 }
 
-kt2n_voice_id clone_voice(kt2n_engine* engine, const std::vector<char>& audio, const std::string& transcript) {
+// `pcm` (mono float32 at 24 kHz, decoded by ffmpeg) when the library takes decoded audio only, else the file's bytes.
+kt2n_voice_id clone_voice(kt2n_engine* engine, const std::vector<char>& audio, const std::vector<float>& pcm,
+                          const std::string& transcript) {
   kt2n_voice_build_params params{};
   params.struct_size = sizeof(params);
   params.flags = KT2N_VB_SAVED;
-  params.audio = audio.data();
-  params.audio_len = audio.size();
+  if (!pcm.empty()) {
+    params.flags |= KT2N_VB_DECODED_PCM;
+    params.pcm = pcm.data();
+    params.pcm_samples = pcm.size();
+    params.pcm_rate = 24000;
+  } else {
+    params.audio = audio.data();
+    params.audio_len = audio.size();
+  }
   params.reference_transcript = transcript.c_str();
   params.language = "en";
   kt2n_job_id job = 0;
@@ -316,7 +329,16 @@ int speak(const Options& o) {
 
   const std::string text = read_text(o);
   std::vector<char> reference, saved;
-  if (cloning) reference = read_limited(*o.reference_audio, size_t(10) << 20, "reference audio");
+  std::vector<float> reference_pcm;
+  if (cloning) {
+    reference = read_limited(*o.reference_audio, size_t(10) << 20, "reference audio");
+    // A library without the in-process decode (the Python wheels) takes decoded audio: decode the file with the
+    // system's ffmpeg program, as the reference pipeline does, before the engine starts.
+    if (has_capability(KT2N_CAP_VOICE_PCM_ONLY)) {
+      reference_pcm = kt2n::cli::ffmpeg_decode(*o.reference_audio, reference);
+      reference.clear();
+    }
+  }
   if (loading) saved = read_limited(*o.load_voice, size_t(64) << 20, "voice file");
   const std::string text_data = o.data.value_or(bundle.text_data);
 
@@ -346,10 +368,12 @@ int speak(const Options& o) {
                                                                      : KT2N_VOICE_CACHE_ALL;
   config.voice_cache_max_voices = o.voice_cache_voices.value_or(0);
   config.voice_cache_max_bytes = o.voice_cache_mib.value_or(0) << 20;
-  if (!o.voice_cache_given && !cloning && !loading) {
-    // This tool speaks with one built-in voice, so by default it prepares only that voice (right after create, see
-    // kt2n_voice_prepare below) instead of every built-in voice during create: with 47 voices, 2.0 s less start on an
-    // RTX 4060 Laptop, 1.6 GB less GPU memory there, and the same audio (seeded --stream false output is identical in every cache mode).
+  if (!o.voice_cache_given) {
+    // This tool speaks with one voice (a built-in one, the cloned one or the loaded one), so by default it prepares
+    // only that voice (right after create or after the voice is built or loaded, see kt2n_voice_prepare below) instead
+    // of every built-in voice during create: with 47 voices, 2.0 s less start on an RTX 4060 Laptop, 1.6 GB less GPU
+    // memory there, and the same audio (seeded --stream false output is identical in every cache mode). With every
+    // built-in voice prepared (the 115 of the current model), building a cloned voice did not fit a 24 GB RTX 4090.
     config.voice_cache_mode = KT2N_VOICE_CACHE_LRU;
     config.voice_cache_max_voices = std::clamp(o.max_streams, 1, 4096);  // the cache's limit; max_streams is checked by create
   }
@@ -421,7 +445,7 @@ int speak(const Options& o) {
   std::string voice_name;
   if (cloning) {
     voice_name = "reference";
-    voice = clone_voice(engine.get(), reference, *o.reference_transcript);
+    voice = clone_voice(engine.get(), reference, reference_pcm, *o.reference_transcript);
     if (o.save_voice) {
       save_voice(engine.get(), voice, *o.save_voice);
       std::cerr << "Saved the cloned voice to " << *o.save_voice << "\n";
@@ -640,7 +664,29 @@ int main(int argc, char** argv) {
 // The C runtime splits the command line into wide arguments with the same rules as for main(); converting them to
 // UTF-8 here keeps every character, also on Windows versions that ignore the manifest's UTF-8 code page (there the
 // narrow argv would hold best-fit replacements, which the check in run_main could not see).
+// The engine DLL is delay-loaded (cli/CMakeLists.txt): load it here, before its first use, from next to the program
+// (a build tree, an install) or from ..\lib (the Python wheel: bin\kitten-tts-native.exe, lib\kt2n_engine.dll), else
+// from the usual DLL search path, so that a missing DLL is a clear error instead of a crash at the first call.
+bool load_engine_dll() {
+  std::vector<wchar_t> exe(32768);
+  const DWORD n = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+  if (n > 0 && n < exe.size()) {
+    const fs::path dir = fs::path(std::wstring(exe.data(), n)).parent_path();
+    for (const fs::path& candidate : {dir / L"kt2n_engine.dll", dir.parent_path() / L"lib" / L"kt2n_engine.dll"}) {
+      std::error_code ec;
+      if (fs::is_regular_file(candidate, ec) &&
+          LoadLibraryExW(candidate.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) != nullptr)
+        return true;
+    }
+  }
+  if (LoadLibraryW(L"kt2n_engine.dll") != nullptr) return true;
+  std::cerr << "kitten-tts-native: cannot load kt2n_engine.dll (Windows error " << GetLastError()
+            << "); it belongs next to this program or in ..\\lib\n";
+  return false;
+}
+
 int wmain(int argc, wchar_t** wargv) {
+  if (!load_engine_dll()) return 1;
   std::vector<std::string> args;
   args.reserve(size_t(argc));
   for (int i = 0; i < argc; ++i) args.push_back(kt2n::platform::utf8_from_wide(wargv[i]));

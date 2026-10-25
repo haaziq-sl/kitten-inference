@@ -64,6 +64,23 @@
       }
     },
     {
+      "name": "wheel",
+      "inherits": "default",
+      "displayName": "Python wheel (Linux): CUDA engine with text normaliser and voice cloning from decoded audio",
+      "description": "What the kitten-inference-tts2-cu12 wheel ships (tts-2/packaging/build_wheel_linux.sh). Like default, but cloning takes decoded audio only (the command-line tool decodes the reference audio with the system's ffmpeg program, so no FFmpeg libraries are linked), no tests or examples, and a smaller library: portable GPU code (PTX) only for the newest architecture, compressed GPU code without the source-line tables for profilers, unused host code dropped and symbols stripped. The GPU code of every architecture is the same as the default build's (packaging/sass_manifest.py checks it).",
+      "cacheVariables": {
+        "KT2N_VOICE_AV": "OFF",
+        "KT2N_BUILD_EXAMPLES": "OFF",
+        "KT2N_CUDA_ARCHS": "61-real;75-real;80-real;86-real;89-real;90-real;100-real;120",
+        "KT2N_CUDA_COMPRESS_MODE": "size",
+        "KT2N_CUDA_LINEINFO": "OFF",
+        "KT2N_GC_SECTIONS": "ON",
+        "KT2N_STRIP": "ON",
+        "KT2N_UNVERSIONED_LIBRARY": "ON",
+        "CMAKE_INSTALL_LIBDIR": "lib"
+      }
+    },
+    {
       "name": "cuda-portable",
       "inherits": "default",
       "displayName": "CUDA build of the AMD code paths (validation only)",
@@ -106,6 +123,20 @@
       "cacheVariables": {
         "KT2N_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "wheel-windows",
+      "inherits": "windows",
+      "displayName": "Python wheel (Windows): CUDA engine with text normaliser and voice cloning from decoded audio (MSVC + Ninja)",
+      "description": "What the Windows kitten-inference-tts2-cu12 wheel ships (tts-2/packaging/build_wheel_windows.ps1). Like windows, plus voice cloning from decoded audio (the command-line tool decodes the reference audio with the system's ffmpeg program), the static C runtime (the DLL and programs need no Visual C++ redistributable), portable GPU code (PTX) only for the newest architecture and compressed GPU code without the source-line tables for profilers. The GPU code of every architecture is the same as the default build's (packaging/sass_manifest.py checks it). Build the text dependencies with tools/build_text_deps.py --msvc-static-runtime.",
+      "cacheVariables": {
+        "KT2N_BUILD_CLONING": "ON",
+        "KT2N_VOICE_AV": "OFF",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "KT2N_CUDA_ARCHS": "61-real;75-real;80-real;86-real;89-real;90-real;100-real;120",
+        "KT2N_CUDA_COMPRESS_MODE": "size",
+        "KT2N_CUDA_LINEINFO": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -135,6 +166,11 @@
       "configuration": "Release"
     },
     {
+      "name": "wheel",
+      "configurePreset": "wheel",
+      "configuration": "Release"
+    },
+    {
       "name": "cuda-portable",
       "configurePreset": "cuda-portable",
       "configuration": "Release"
@@ -147,6 +183,11 @@
     {
       "name": "windows-dev",
       "configurePreset": "windows-dev",
+      "configuration": "Release"
+    },
+    {
+      "name": "wheel-windows",
+      "configurePreset": "wheel-windows",
       "configuration": "Release"
     }
   ],

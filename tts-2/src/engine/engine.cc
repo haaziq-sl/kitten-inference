@@ -3241,6 +3241,9 @@ KT2N_API const char* kt2n_build_info(void) {
   return "Kitten TTS 2 native " KT2N_VERSION_STRING " " KT2N_CAP_AUDIO_OPENING_SKIP
 #if KT2N_ENGINE_WITH_VOICE
       " " KT2N_CAP_VOICE_CLONING
+#if !KT2N_VOICE_DECODE
+      " " KT2N_CAP_VOICE_PCM_ONLY
+#endif
 #endif
       ;
 }
@@ -3290,7 +3293,21 @@ constexpr uint64_t kAutoDefaultMargin = uint64_t(2) << 30;
 constexpr uint64_t kDefaultCheckBelow = uint64_t(22) << 30;
 thread_local AutoProbe* g_auto_probe = nullptr;
 
-static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
+// Load every CUDA module at context creation instead of at a kernel's first launch (decoder measurement: the first live
+// render of a process otherwise pays lazy module loading inside launch, 6.3 ms vs 1.1 ms). Execution only.
+// Takes effect only if this process has not initialised CUDA yet, so it has to run before the first CUDA call of the
+// create (any runtime call, cudaGetLastError included, initialises CUDA); an explicit CUDA_MODULE_LOADING wins.
+// KT2N_CUDA_EAGER=0 keeps the driver's lazy default. The low-memory profile loads eagerly too: lazy loading saved
+// 10 MiB per process here (one-arch build; 12,748 -> 12,738 MiB) and moves module loads into the first calls.
+static void request_eager_module_loading() {
+  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("CUDA_MODULE_LOADING", "EAGER", 0);
+#if defined(KT2N_HIP)
+  // ROCm ignores CUDA_MODULE_LOADING; its switch for loading code objects at start is HIP_ENABLE_DEFERRED_LOADING=0.
+  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("HIP_ENABLE_DEFERRED_LOADING", "0", 0);
+#endif
+}
+
+static int32_t engine_create_attempt(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
   if (!cfg || !out || cfg->struct_size < offsetof(kt2n_engine_config, voice_build_dir)) {
     set_err(err, KT2N_ERR_INVALID_ARGUMENT, "config is NULL or too small");
     return KT2N_ERR_INVALID_ARGUMENT;
@@ -3383,16 +3400,7 @@ static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** o
   // Memory profile and free-memory floor (validated above with the voice cache fields).
   const bool mem_fields = mem_block;
   const bool low_mem = mem_block && cfg->memory_profile == KT2N_MEMORY_PROFILE_LOW;
-  // Load every CUDA module at context creation instead of at a kernel's first launch (decoder measurement: the first live
-  // render of a process otherwise pays lazy module loading inside launch, 6.3 ms vs 1.1 ms). Execution only.
-  // Takes effect only if this process has not initialised CUDA yet; an explicit CUDA_MODULE_LOADING wins.
-  // KT2N_CUDA_EAGER=0 keeps the driver's lazy default. The low-memory profile loads eagerly too: lazy loading saved
-  // 10 MiB per process here (one-arch build; 12,748 -> 12,738 MiB) and moves module loads into the first calls.
-  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("CUDA_MODULE_LOADING", "EAGER", 0);
-#if defined(KT2N_HIP)
-  // ROCm ignores CUDA_MODULE_LOADING; its switch for loading code objects at start is HIP_ENABLE_DEFERRED_LOADING=0.
-  if (const char* v = std::getenv("KT2N_CUDA_EAGER"); !(v && std::atoi(v) == 0)) setenv("HIP_ENABLE_DEFERRED_LOADING", "0", 0);
-#endif
+  // (CUDA module loading: request_eager_module_loading(), called by engine_create_impl before any CUDA call.)
   size_t free_before = 0, device_total = 0;
   // The free-memory floor applies to every engine that sets min_free_device_bytes; the built-in 10% rule only to
   // engines of bounded capacity (as before).
@@ -4445,6 +4453,20 @@ static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** o
   return KT2N_OK;
 }
 
+// One create attempt on the caller's thread, starting and (when it fails) ending with no CUDA error pending on that
+// thread. The CUDA runtime keeps the last error per host thread, and a failed create can leave one there (an
+// out-of-memory cudaMalloc, e.g. "decoder: cudaMalloc(render arena)"). The next create on the same thread would read it
+// at its first kernel-launch check (cudaGetLastError) and fail with an unrelated message ("LM: kt2n_pf_model_load:
+// repack qkv failed (rc 2)"): the automatic profile's low-profile retry, or a caller retrying with other settings. A
+// failed create's error is reported through kt2n_error, so nothing is lost by clearing it.
+static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
+  request_eager_module_loading();  // before the first CUDA call: cudaGetLastError below initialises CUDA
+  (void)cudaGetLastError();
+  const int32_t rc = engine_create_attempt(cfg, out, err);
+  if (rc != KT2N_OK) (void)cudaGetLastError();
+  return rc;
+}
+
 // KT2N_MEMORY_PROFILE_AUTO: the default profile exactly as before when it fits, otherwise the low profile (which fits
 // itself to the GPU). Each attempt is an ordinary DEFAULT or LOW create of the same config:
 //   1. a LOW create with the probe set: when its fit has to shrink the sizes, the default profile cannot fit, and that
@@ -4609,7 +4631,7 @@ KT2N_API int32_t kt2n_engine_create(const kt2n_engine_config* cfg, kt2n_engine**
     (*out)->auto_profile = "default";
     return KT2N_OK;
   }
-  c.memory_profile = KT2N_MEMORY_PROFILE_LOW;
+  c.memory_profile = KT2N_MEMORY_PROFILE_LOW;  // engine_create_impl clears the failed attempt's CUDA error
   rc = engine_create_impl(&c, out, err);
   if (rc == KT2N_OK) {
     (*out)->auto_profile = "low";
@@ -4758,11 +4780,16 @@ KT2N_API int32_t kt2n_voice_build(kt2n_engine* e, const kt2n_voice_build_params*
     j->pcm.assign(p->pcm, p->pcm + p->pcm_samples);
     j->pcm_rate = p->pcm_rate;
   } else {
+#if !KT2N_VOICE_DECODE
+    set_err(err, KT2N_ERR_UNSUPPORTED, kt2n::voice::kNoDecodeMessage, "audio");
+    return KT2N_ERR_UNSUPPORTED;
+#else
     if (!p->audio || !p->audio_len) {
       set_err(err, KT2N_ERR_INVALID_AUDIO, "no audio", "file");
       return KT2N_ERR_INVALID_AUDIO;
     }
     j->audio.assign(static_cast<const uint8_t*>(p->audio), static_cast<const uint8_t*>(p->audio) + p->audio_len);
+#endif
   }
   if (p->flags & KT2N_VB_VERIFY_SPEAKER) j->consent.assign(p->consent_speaker, p->consent_speaker + 512);
   j->transcript = p->reference_transcript ? p->reference_transcript : "";

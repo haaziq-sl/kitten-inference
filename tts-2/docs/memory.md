@@ -4,7 +4,7 @@ The model comes from the latest revision on Hugging Face (115 built-in voices). 
 
 `kitten-tts-native` picks working settings by itself, so most users need nothing in this section. It is for running several streams, for the C API, and for using less GPU memory.
 
-By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one built-in voice per run, so without a `--voice-cache` option it prepares only that voice, right after the engine starts (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13 GB instead of 21 GB with the earlier 47-voice revision; the difference is larger with the 115 voices of the current revision, not measured), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
+By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one voice per run (a built-in, cloned or loaded one), so without a `--voice-cache` option it prepares only that voice, right after the engine starts or the voice is built or loaded (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13 GB instead of 21 GB with the earlier 47-voice revision; the difference is larger with the 115 voices of the current revision, not measured), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
 
 Two settings make the engine use less GPU memory: the voice cache keeps only some voices on the GPU, and the low memory profile uses smaller working buffers. They can be combined. Neither changes the audio; what changes is the time to the first audio of a voice that is not on the GPU yet. With the same text, voice, seed, model and GPU, `--stream false` output is byte for byte the same with every cache mode and both profiles, when requests run one at a time (as `kitten-tts-native` runs them).
 
@@ -23,7 +23,7 @@ Preparing a voice copies it from host memory into GPU memory, in about 9 ms (47-
 
 ## `--voice-cache all|lru|none`
 
-- `all` (the C API default; also `kitten-tts-native`'s for a cloned or loaded voice) prepares every built-in voice when the engine starts and keeps it on the GPU.
+- `all` (the C API default) prepares every built-in voice when the engine starts and keeps it on the GPU.
 - `lru` prepares no voice at startup. A voice is prepared the first time a request uses it and stays on the GPU until the cache needs room for another voice. Then the least recently used voice that no request is using is removed.
 - `none` keeps a voice on the GPU only while requests use it. In the C API, an incremental text session keeps its voice between phrases until the session ends or the cache needs the room.
 
