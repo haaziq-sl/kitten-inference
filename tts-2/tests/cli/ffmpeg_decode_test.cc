@@ -102,7 +102,15 @@ TEST(FfmpegDecode, DecodesA24kHzWavExactly) {
   for (size_t i = 0; i < pcm.size(); ++i) ASSERT_EQ(got[i], static_cast<float>(pcm[i]) / 32768.0f) << i;
 }
 
-// An M4A file with its index (moov) after the audio cannot be read from a pipe: ffmpeg then reads it by name.
+// The file name as kitten-tts-native passes it: UTF-8 (on Windows wmain converts the wide arguments to UTF-8).
+std::string utf8_name(const fs::path& path) {
+  const std::u8string s = path.u8string();
+  return std::string(s.begin(), s.end());
+}
+
+// An M4A file with its index (moov) after the audio cannot be read from a pipe: ffmpeg then reads it by name, so the
+// name goes on ffmpeg's command line. This one has spaces and characters outside any 8-bit code page, which on Windows
+// must survive the UTF-8 to UTF-16 conversion and the command-line quoting for CreateProcessW.
 TEST(FfmpegDecode, ReadsAnM4aWithItsIndexAtTheEnd) {
   if (!have_ffmpeg()) GTEST_SKIP() << "ffmpeg is not on PATH";
   const fs::path wav = temp_name(".wav"), m4a = temp_name(".m4a");
@@ -110,10 +118,23 @@ TEST(FfmpegDecode, ReadsAnM4aWithItsIndexAtTheEnd) {
   const std::string cmd = "ffmpeg -nostdin -hide_banner -loglevel error -y -i \"" + wav.string() +
                           "\" -c:a aac -b:a 96k \"" + m4a.string() + "\"";
   ASSERT_EQ(std::system(cmd.c_str()), 0) << cmd;
-  const std::vector<float> got = ffmpeg_decode(m4a.string(), read_file(m4a));
+  // Made under an ASCII name (std::system takes the ANSI code page on Windows), then renamed with the wide-character
+  // file API.
+  const fs::path named =
+      m4a.parent_path() / fs::path(u8"kt2n ffmpeg test \u00e9\u00df \u4f60\u597d \u0436 my voice.m4a");
+  fs::rename(m4a, named);
+  const std::vector<float> got = ffmpeg_decode(utf8_name(named), read_file(named));
   fs::remove(wav);
-  fs::remove(m4a);
+  fs::remove(named);
   EXPECT_GT(got.size(), size_t(24000 * 19 / 10));  // about 2 s at 24 kHz
+}
+
+// The same name for the first attempt's file (its bytes go on standard input) and a missing file for the fallback: a
+// file that ffmpeg cannot decode from the pipe and that is gone by name fails with ffmpeg's error, not a hang.
+TEST(FfmpegDecode, AnUndecodableFileWithANonAsciiNameIsAnError) {
+  if (!have_ffmpeg()) GTEST_SKIP() << "ffmpeg is not on PATH";
+  const fs::path gone = fs::temp_directory_path() / fs::path(u8"kt2n missing \u00e9 \u4f60.m4a");
+  EXPECT_THROW(ffmpeg_decode(utf8_name(gone), std::vector<char>(4096, '\0')), std::runtime_error);
 }
 
 TEST(FfmpegDecode, ABadFileIsAnError) {
