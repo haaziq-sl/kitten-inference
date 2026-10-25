@@ -10,6 +10,7 @@ Small, fast text-to-speech that runs on a CPU. Three models from 15M to 80M para
 ## Install
 
 ```bash
+python -m pip install -U pip              # pip older than 23.3 skips "[tts-0.8]" with only a warning
 pip install "kitten-inference[tts-0.8]"
 ```
 
@@ -34,8 +35,9 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 | `KittenML/kitten-tts-nano-0.8` | 15M | 56 MB |
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
-(116, 71 and 19 MB). On ARM CPUs they are also faster; on x86_64 they run 1.3 to 1.9 times slower
-than the full-size weights.
+(116, 71 and 19 MB). They are faster only on Linux ARM64 and on the CPU of Apple Silicon Macs. Elsewhere
+they are slower than the full-size weights: 1.3 to 2 times on x86_64, about 2.4 times with Metal and
+about 8 times on Windows ARM64.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -43,7 +45,11 @@ Options:
 - `speed`: 1.0 is normal, higher is faster.
 - `clean_text=True`: spells out numbers, currencies and units before speaking.
 - `tts.generate_stream(text, voice=...)`: yields the audio one sentence at a time.
-- `KittenTTS(..., backend="cpu")` or `"metal"`: Apple Silicon uses Metal by default.
+- `KittenTTS(..., backend="cpu")` or `"metal"`: Apple Silicon uses Metal by default. On the CPU,
+  models in different threads generate at the same time; Metal runs one call at a time.
+
+Audio can differ slightly between: Metal and the CPU (clip lengths within about 3.5%), and, for the int8
+models, different CPU types (within about 2%).
 
 ## Platforms
 
@@ -64,6 +70,9 @@ Options:
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
+- The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
+  CPU core, about 3 times slower than 4 cores of the same CPU (measured with the Linux build). This
+  affects macOS Intel, where the CPU is the only backend, and `backend="cpu"` on Apple Silicon.
 
 ## Upgrading from kitten-inference 0.1.x
 
