@@ -16,6 +16,10 @@ os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
 
 SAMPLE_RATE = 24000
 STYLE_DIM = 256
+# The reference ONNX path (kittenml 0.9.6) ends the ids with "…" (10) then the pad (0), and drops the last
+# 5000 samples of every chunk. Both are copied here so the two paths give the same audio length.
+END_TOKEN = 10
+TAIL_TRIM_SAMPLES = 5000
 DEFAULT_VOICE = "expr-voice-5-m"
 DEFAULT_NATIVE_VOICE = "expr-voice-2-f"
 
@@ -171,6 +175,7 @@ class KittenTTS_1_Cpp:
         phonemes = " ".join(phonemes)
         tokens = self.text_cleaner(phonemes)
         tokens.insert(0, 0)
+        tokens.append(END_TOKEN)
         tokens.append(0)
         return np.asarray(tokens, dtype=np.float32)
 
@@ -247,7 +252,8 @@ class KittenTTS_1_Cpp:
                 "style_pred": style_pred,
             }
         )
-        return np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
+        audio = np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
+        return audio[:-TAIL_TRIM_SAMPLES]
 
     def generate_to_file(
         self,

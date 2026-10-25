@@ -41,6 +41,28 @@ class ApiTests(unittest.TestCase):
         for spec in gm.BUILTIN_NATIVE_MODELS.values():
             self.assertTrue(Path(gm._builtin_arch_path(spec["arch_file"])).is_file(), spec["arch_file"])
 
+    def test_follows_the_reference_onnx_path(self):
+        # kittenml 0.9.6 (KittenTTS_1_Onnx): nano 0.8 speed priors, "…" end token, last 5000 samples dropped.
+        import phonemizer
+
+        gm = importlib.import_module("kitten_inference.tts08.get_model")
+        cm = importlib.import_module("kitten_inference.tts08.cpp_model")
+        for name in ("nano-0.8", "nano-0.8-fp32", "nano-0.8-int8"):
+            priors = gm.BUILTIN_NATIVE_MODELS[f"kittenml/kitten-tts-{name}"]["speed_priors"]
+            self.assertEqual(priors["expr-voice-4-m"], 0.9)
+            self.assertEqual(priors["expr-voice-2-f"], 0.8)
+        for name in ("micro-0.8", "mini-0.8", "nano-0.1"):
+            self.assertNotIn("speed_priors", gm.BUILTIN_NATIVE_MODELS[f"kittenml/kitten-tts-{name}"])
+        self.assertEqual((cm.END_TOKEN, cm.TAIL_TRIM_SAMPLES), (10, 5000))
+        stub = type("Stub", (), {})()
+        stub.phonemizer = phonemizer.backend.EspeakBackend(
+            language="en-us", preserve_punctuation=True, with_stress=True
+        )
+        stub.text_cleaner = cm.TextCleaner()
+        ids = cm.KittenTTS_1_Cpp._phoneme_ids(stub, "Hello there.")
+        self.assertEqual(float(ids[0]), 0.0)
+        self.assertEqual([float(x) for x in ids[-2:]], [10.0, 0.0])
+
     def test_version_matches_pyproject(self):
         if not PYPROJECT.is_file():
             self.skipTest("pyproject.toml not available")

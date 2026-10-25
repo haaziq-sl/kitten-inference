@@ -21,6 +21,18 @@ VOICE_NAMES = [
     "expr-voice-5-m",
     "expr-voice-5-f",
 ]
+# speed_priors of the reference ONNX nano 0.8 models (config.json of KittenML/kitten-tts-nano-0.8-fp32 and
+# -int8). The voice's prior multiplies the requested speed, as in kittenml 0.9.6. micro and mini have none.
+NANO_08_SPEED_PRIORS = {
+    "expr-voice-2-f": 0.8,
+    "expr-voice-2-m": 0.8,
+    "expr-voice-3-m": 0.8,
+    "expr-voice-3-f": 0.8,
+    "expr-voice-4-m": 0.9,
+    "expr-voice-4-f": 0.8,
+    "expr-voice-5-m": 0.8,
+    "expr-voice-5-f": 0.8,
+}
 DEFAULT_VOICE_ALIASES = {
     "Bella": "expr-voice-2-f",
     "Jasper": "expr-voice-2-m",
@@ -41,16 +53,19 @@ BUILTIN_NATIVE_MODELS = {
         "arch_file": "kitten_fp32_15m_arch.json",
         "weights_file": "kitten_fp32_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-nano-0.8-fp32": {
         "arch_file": "kitten_fp32_15m_arch.json",
         "weights_file": "kitten_fp32_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-nano-0.8-int8": {
         "arch_file": "kitten_int8_15m_arch.json",
         "weights_file": "kitten_int8_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-micro-0.8": {
         "arch_file": "kitten_fp32_40m_arch.json",
@@ -209,9 +224,10 @@ def _load_builtin_native_model(repo_id, spec, cache_dir=None, backend=None):
             NATIVE_WEIGHTS_REPO, spec["weights_file"], cache_dir, NATIVE_WEIGHTS_REVISION
         ),
         voice_paths=voice_paths,
+        speed_priors=spec.get("speed_priors", {}),
         voice_aliases=DEFAULT_VOICE_ALIASES,
         backend=backend,
-        style_index="token_count",
+        style_index="text_length",  # the reference ONNX path picks the style row by text length
         sample_rate=24000,
     )
 
