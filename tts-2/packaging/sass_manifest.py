@@ -3,6 +3,7 @@
 
   sass_manifest.py dump LIB --out MANIFEST [--note TEXT]
   sass_manifest.py check LIB --reference MANIFEST [--build-dir DIR --attempts N -- REBUILD COMMAND...]
+  sass_manifest.py objects BUILD_DIR [--arch sm_75]
 
 `dump` writes the SASS (the machine code of each GPU architecture) of every function in an engine library as one hash
 per function and architecture: packaging/sass-reference.txt holds the default build's, made from a build that passed
@@ -61,20 +62,24 @@ def cuobjdump() -> str:
 
 
 def fatbin_sections(data: bytes) -> bytes | None:
-    """The .nv_fatb section(s) of a Windows PE image (DLL) or COFF object; None for anything else (ELF is read by
-    cuobjdump as it is)."""
+    """The .nv_fatb section(s) of a Windows PE image (DLL) or COFF object file (also the /bigobj form, which the
+    build's CUDA objects use); None for anything else (ELF is read by cuobjdump as it is)."""
     if data[:2] == b"MZ":
         pe = struct.unpack_from("<I", data, 0x3C)[0]
         if data[pe:pe + 4] != b"PE\0\0":
             return None
         coff = pe + 4
+        nsec = struct.unpack_from("<H", data, coff + 2)[0]
+        sec = coff + 20 + struct.unpack_from("<H", data, coff + 16)[0]
     elif data[:2] == b"\x64\x86":  # an x64 COFF object file (IMAGE_FILE_MACHINE_AMD64)
-        coff = 0
+        nsec = struct.unpack_from("<H", data, 2)[0]
+        sec = 20 + struct.unpack_from("<H", data, 16)[0]
+    elif data[:4] == b"\0\0\xff\xff" and struct.unpack_from("<HH", data, 4) == (2, 0x8664):
+        # /bigobj (ANON_OBJECT_HEADER_BIGOBJ, 56 bytes): 32-bit section count at offset 44, sections right after
+        nsec = struct.unpack_from("<I", data, 44)[0]
+        sec = 56
     else:
         return None
-    nsec = struct.unpack_from("<H", data, coff + 2)[0]
-    opt = struct.unpack_from("<H", data, coff + 16)[0]
-    sec = coff + 20 + opt
     out = b""
     for i in range(nsec):
         name, vsize, _vaddr, rsize, rptr = struct.unpack_from("<8sIIII", data, sec + 40 * i)
@@ -277,6 +282,10 @@ def main() -> int:
     c.add_argument("--reference", type=Path, required=True)
     c.add_argument("--build-dir", type=Path)
     c.add_argument("--attempts", type=int, default=6)
+    ob = sub.add_parser("objects", help="list the CUDA object files of a build that hold GPU code (a self-test of the "
+                                         "rebuild step: they must be readable on this system)")
+    ob.add_argument("build_dir", type=Path)
+    ob.add_argument("--arch", default="sm_75")
     argv = sys.argv[1:]
     rebuild = argv[argv.index("--") + 1:] if "--" in argv else []  # the command that rebuilds the library
     a = p.parse_args(argv[:argv.index("--")] if "--" in argv else argv)
@@ -287,6 +296,15 @@ def main() -> int:
         write_manifest(a.out, got, a.note)
         print(f"{a.out}: {sum(len(f) for f in got.values())} functions on {len(got)} architectures")
         return 0
+    if a.cmd == "objects":
+        objs = sorted(p for p in a.build_dir.rglob("*") if p.is_file() and p.name.endswith((".cu.o", ".cu.obj")))
+        counts = {o: len(dump(o, a.arch, strict=False).get(a.arch, {})) for o in objs}
+        for o, n in counts.items():
+            if n:
+                print(f"{n:5d} {a.arch} functions  {o}")
+        total = sum(counts.values())
+        print(f"{len(objs)} CUDA object files, {sum(1 for n in counts.values() if n)} with {a.arch} code, {total} functions")
+        return 0 if total else 1
     ref = read_manifest(a.reference)
     import time
     t0 = time.time()

@@ -77,6 +77,8 @@ jobs:
         env:
           WHEEL_VERSION: ${{ inputs.version || '0.2.0' }}
         run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4 -Version $env:WHEEL_VERSION
+      - name: GPU code check self-test (the rebuild step can read the CUDA object files)
+        run: python tts-2/packaging/sass_manifest.py objects tts-2/build/wheel-windows --arch sm_75
       - name: Size check
         shell: pwsh
         run: python tts-2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
