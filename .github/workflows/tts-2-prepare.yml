@@ -7,7 +7,7 @@ name: tts-2 prepare
 
 on:
   push:
-    branches: [ws/prepare, feat/tts-0.8-and-tts-2]
+    branches: [ws/prepare, ws/integ, feat/tts-0.8-and-tts-2]
     paths:
       - "tts-2/tools/**"
       - "tts-2/tests/assets/**"

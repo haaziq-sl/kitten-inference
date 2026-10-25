@@ -76,3 +76,15 @@ def test_warns_while_0_1_is_not_yanked(guard):
     old = {"kitten-inference": {"0.1.0": [_wheel("kitten-inference", "0.1.0", yanked=True)],
                                 "0.1.1": [_wheel("kitten-inference", "0.1.1")]}}
     assert guard.earlier_not_yanked("idx", get=_pypi(old)) == ["0.1.1"]
+
+
+def test_only_the_engines(guard):
+    reqs = guard.only(guard.requirements(PYPROJECT), ["kitten_inference_tts2_cu12", "kitten-inference-tts2-rocm"])
+    assert reqs == {"kitten-inference-tts2-cu12": ">=0.2.0,<0.3", "kitten-inference-tts2-rocm": ">=0.2.0,<0.3"}
+    engines = {k: v for k, v in FULL.items() if k.startswith("kitten-inference-tts2-")}
+    assert guard.missing("idx", reqs, get=_pypi(engines)) == []
+    assert guard.missing("idx", reqs, get=_pypi({})) == ["kitten-inference-tts2-cu12: not on idx",
+                                                         "kitten-inference-tts2-rocm: not on idx"]
+    assert guard.only(reqs, []) == reqs
+    with pytest.raises(SystemExit, match="do not name kitten-inference-tts3"):
+        guard.only(reqs, ["kitten-inference-tts3"])

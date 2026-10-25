@@ -5,9 +5,12 @@ nothing (pip then fails, or falls back to the earlier kitten-inference 0.1.1).
 
     python .github/scripts/pypi_ready.py check  [--pyproject umbrella/pyproject.toml] [--index https://pypi.org]
     python .github/scripts/pypi_ready.py wait   [--timeout-minutes 120] [--every-seconds 60]
+    python .github/scripts/pypi_ready.py wait   --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
 
 check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout.
-It also warns (GitHub annotation) while the earlier kitten-inference 0.1.0 / 0.1.1 are not yanked.
+--only: just these distributions of the extras (the release order: the engine wheels before kitten-inference-tts2
+and kitten-inference-tts08, those before the umbrella). Without --only it also warns (GitHub annotation) while the
+earlier kitten-inference 0.1.0 / 0.1.1 are not yanked.
 Read-only: it only reads PyPI's JSON API.
 """
 import argparse
@@ -81,6 +84,17 @@ def fetch(index: str, name: str):
         raise
 
 
+def only(reqs: dict, names: list) -> dict:
+    """The requirements of just `names` (normalised); a name the extras do not list is an error."""
+    if not names:
+        return reqs
+    wanted = [re.sub(r"[-_.]+", "-", n).lower() for n in names]
+    unknown = [n for n in wanted if n not in reqs]
+    if unknown:
+        raise SystemExit(f"error: the extras do not name {', '.join(unknown)}")
+    return {n: reqs[n] for n in wanted}
+
+
 def missing(index: str, reqs: dict, get=fetch) -> list:
     """What is not on the index yet: one line per distribution."""
     problems = []
@@ -118,9 +132,11 @@ def main() -> int:
     p.add_argument("--index", default="https://pypi.org")
     p.add_argument("--timeout-minutes", type=float, default=120)
     p.add_argument("--every-seconds", type=float, default=60)
+    p.add_argument("--only", action="append", default=[], help="just this distribution (repeatable)")
     a = p.parse_args()
-    reqs = requirements(a.pyproject)
-    print("the umbrella's extras need:", ", ".join(f"{n}{s}" for n, s in sorted(reqs.items())))
+    reqs = only(requirements(a.pyproject), a.only)
+    print("waiting for" if a.only else "the umbrella's extras need:",
+          ", ".join(f"{n}{s}" for n, s in sorted(reqs.items())))
     deadline = time.monotonic() + a.timeout_minutes * 60
     while True:
         problems = missing(a.index, reqs)
@@ -128,14 +144,15 @@ def main() -> int:
             break
         print("not ready:", "; ".join(problems), flush=True)
         if a.mode == "check" or time.monotonic() > deadline:
-            print("::error::the umbrella must not be published before its engines: " + "; ".join(problems))
+            what = "this distribution" if a.only else "the umbrella"
+            print(f"::error::{what} must not be published before these are on PyPI: " + "; ".join(problems))
             return 1
         time.sleep(a.every_seconds)
-    old = earlier_not_yanked(a.index)
+    old = [] if a.only else earlier_not_yanked(a.index)
     if old:
         print(f"::warning::kitten-inference {', '.join(old)} not yanked: where an extra's engine has no wheel, pip "
               "installs that version instead (with only a warning). Yank them on PyPI (pinned installs still work).")
-    print("ready: every distribution the extras name is on", a.index)
+    print("ready:", "these distributions are" if a.only else "every distribution the extras name is", "on", a.index)
     return 0
 
 

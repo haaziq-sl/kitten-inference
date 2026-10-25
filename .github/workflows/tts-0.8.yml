@@ -694,22 +694,37 @@ jobs:
       needs.lowest-deps.result == 'success' &&
       needs.wheel-list.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     environment: pypi
     permissions:
       contents: read
       id-token: write
 
+    # The release order on PyPI: the engine wheels of TTS 2 first (their own workflows), then this one and
+    # kitten-inference-tts2, then the umbrella (packages.yml), which waits for all of them. A tag whose version is not
+    # this distribution's version uploads nothing here (a post release of another distribution).
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v7
         with:
           pattern: tts08-wheels-*
           path: dist
           merge-multiple: true
 
-      - run: ls -l dist
+      - name: The wheels this tag releases
+        id: files
+        run: python3 .github/scripts/release_files.py dist upload --dist kitten-inference-tts08
+
+      - name: Wait until the TTS 2 engine wheels are on PyPI
+        if: steps.files.outputs.upload == 'true'
+        run: |
+          python3 .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120 \
+            --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
 
       - name: Publish to PyPI (trusted publishing)
+        if: steps.files.outputs.upload == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
+          packages-dir: upload
           skip-existing: true

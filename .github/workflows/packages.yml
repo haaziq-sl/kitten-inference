@@ -3,11 +3,14 @@
 # every supported Python, checks what each extra installs (engine wheels are stand-ins with the real platform tags),
 # runs the unit tests, and records how Ubuntu 22.04's pip 22.0.2 treats the extras.
 # Run by hand with engine_run=<run id of "tts-2 engine wheels"> it also loads those real engine wheels through
-# kitten_inference.tts2 on Linux and Windows runners (no GPU there).
+# kitten_inference.tts2 on Linux and Windows runners (no GPU there). A v* tag in KittenML/kitten-inference also uploads
+# both distributions to PyPI (jobs publish-tts2 and publish-umbrella, RELEASING.md).
 name: packages
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
     paths:
       - "umbrella/**"
       - "tts-2/python/**"
@@ -33,8 +36,6 @@ on:
         description: 'Run id of a "tts-2 engine wheels" run in this repository: also test its real engine wheels'
         required: false
         default: ""
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -269,47 +270,72 @@ jobs:
           name: old-pip-log
           path: old-pip.log
 
-  # Releases only, from the KittenML repository (never from a fork), with PyPI trusted publishing. kitten-inference-tts2
-  # goes first; the umbrella goes only once every distribution its extras name is on PyPI (the engine wheels come
-  # from their own workflows or uploads): published first, its extras would point at nothing. The wait gives up after
-  # 2 hours; once the engines are up, re-run the failed job.
+  # Releases only: a v* tag pushed to KittenML/kitten-inference (never a fork), with PyPI trusted publishing. The order
+  # on PyPI: the engine wheels (kitten-inference-tts2-cu12, -rocm: their own workflows), then kitten-inference-tts2
+  # (and kitten-inference-tts08, its own workflow), then the umbrella, once every distribution its extras name is on
+  # PyPI: published first, its extras would point at nothing. Each wait gives up after 2 hours; once the missing
+  # distributions are up, re-run the failed job. A tag whose version is not a distribution's version uploads nothing
+  # for it (a post release of another distribution).
   publish-tts2:
-    if: github.event_name == 'release' && github.repository == 'KittenML/kitten-inference'
+    if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
     needs: [test]
-    runs-on: ubuntu-24.04
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-      - run: mkdir upload && mv dist/kitten_inference_tts2-* upload/ && ls -l upload
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: upload/
-
-  publish-umbrella:
-    if: github.event_name == 'release' && github.repository == 'KittenML/kitten-inference'
-    needs: [publish-tts2]
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     environment: pypi
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Wait until every distribution the extras name is on PyPI
-        run: python .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-      - run: mkdir upload && mv dist/kitten_inference-0* upload/ && ls -l upload
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: The files this tag releases
+        id: files
+        run: python .github/scripts/release_files.py dist upload --dist kitten-inference-tts2
+      - name: Wait until the engine wheels are on PyPI
+        if: steps.files.outputs.upload == 'true'
+        run: |
+          python .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120 \
+            --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
+      - name: Publish to PyPI (trusted publishing)
+        if: steps.files.outputs.upload == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: upload/
+          skip-existing: true
+
+  publish-umbrella:
+    if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
+    needs: [publish-tts2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: The files this tag releases
+        id: files
+        run: python .github/scripts/release_files.py dist upload --dist kitten-inference
+      - name: Wait until every distribution the extras name is on PyPI
+        if: steps.files.outputs.upload == 'true'
+        run: python .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120
+      - name: Publish to PyPI (trusted publishing)
+        if: steps.files.outputs.upload == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/
+          skip-existing: true
