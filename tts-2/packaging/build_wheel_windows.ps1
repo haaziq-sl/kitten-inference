@@ -3,7 +3,8 @@
 # Run it from a Visual Studio 2022 x64 developer environment (vcvars64; the CI job uses ilammy/msvc-dev-cmd) with
 # CUDA 12.8 (CUDA_PATH), CMake 3.28+, Ninja and Python 3 on PATH.
 # Steps: the text dependencies with the static C runtime (tools/build_text_deps.py --msvc-static-runtime),
-# `cmake --preset wheel-windows`, install into a stage folder, make_wheel.py, then a check that the DLL and programs
+# `cmake --preset wheel-windows`, the GPU code check against the default build (sass_manifest.py; it needs cuobjdump
+# from CUDA 12.8), install into a stage folder, make_wheel.py, then a check that the DLL and programs
 # import only Windows system DLLs (static C runtime, static CUDA runtime; the NVIDIA driver's nvcuda.dll is loaded at
 # run time), so they run on a clean Windows without the Visual C++ redistributable.
 param(
@@ -30,6 +31,15 @@ if (-not $env:KT2N_TEXT_DEPS) {
 $t1 = Get-Date
 Run "cmake" @("--preset", "wheel-windows")
 Run "cmake" @("--build", "--preset", "wheel-windows", "--parallel", "$Jobs")
+# The GPU code must be the default build's, function for function (packaging/sass_manifest.py): files whose code came
+# out differently are compiled again. KT2N_SASS_CHECK=0 skips this (development builds only).
+if ($env:KT2N_SASS_CHECK -ne "0") {
+  Run "python" @("packaging/sass_manifest.py", "check", "build/wheel-windows/bin/kt2n_engine.dll", "--reference",
+                 "packaging/sass-reference.txt", "--build-dir", "build/wheel-windows", "--attempts", "6", "--",
+                 "cmake", "--build", "--preset", "wheel-windows", "--parallel", "$Jobs")
+} else {
+  "WARNING: KT2N_SASS_CHECK=0: the GPU code was not compared with the default build's; do not release this wheel"
+}
 $t2 = Get-Date
 $Stage = Join-Path $Src "build/wheel-windows-stage"
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }

@@ -3,9 +3,11 @@
 # quay.io/pypa/manylinux_2_28_x86_64 (the CI job, or tts-2/packaging/build_linux_docker.sh):
 #   tts-2/packaging/build_wheel_linux.sh [OUT_DIR]        (default tts-2/dist)
 # Steps: CUDA 12.8 (install_cuda_linux.sh), the text dependencies (tools/build_text_deps.py), `cmake --preset wheel`,
-# install into a stage folder, make_wheel.py, then `auditwheel show` (the wheel must need nothing outside the
-# manylinux_2_28 policy: the CUDA runtime is static and the driver is loaded at run time). Environment:
-#   JOBS (default: the CPUs available), WHEEL_VERSION (default 0.2.0), KT2N_TEXT_DEPS (reuse a text-deps prefix).
+# the GPU code check against the default build (sass_manifest.py), install into a stage folder, make_wheel.py, then
+# `auditwheel show` (the wheel must need nothing outside the manylinux_2_28 policy: the CUDA runtime is static and the
+# driver is loaded at run time). Environment:
+#   JOBS (default: the CPUs available), WHEEL_VERSION (default 0.2.0), KT2N_TEXT_DEPS (reuse a text-deps prefix),
+#   KT2N_SASS_CHECK=0 (skip the GPU code check: never for a release).
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-$SRC/dist}
@@ -23,6 +25,14 @@ fi
 t1=$(date +%s)
 cmake --preset wheel
 cmake --build --preset wheel --parallel "$JOBS"
+# The GPU code must be the default build's, function for function (packaging/sass_manifest.py): files whose code came
+# out differently are compiled again. KT2N_SASS_CHECK=0 skips this (development builds with other architectures only).
+if [ "${KT2N_SASS_CHECK:-1}" != 0 ]; then
+  "$PY" packaging/sass_manifest.py check build/wheel/lib/libkt2n_engine.so --reference packaging/sass-reference.txt \
+    --build-dir build/wheel --attempts 6 -- cmake --build --preset wheel --parallel "$JOBS"
+else
+  echo "WARNING: KT2N_SASS_CHECK=0: the GPU code was not compared with the default build's; do not release this wheel"
+fi
 t2=$(date +%s)
 rm -rf build/wheel-stage
 cmake --install build/wheel --prefix build/wheel-stage > /dev/null
