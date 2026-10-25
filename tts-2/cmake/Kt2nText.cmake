@@ -61,6 +61,9 @@ if(KT2N_BUILD_TEXT)
   target_link_libraries(kt2n_prepare_text_data PRIVATE "${_kt2n_fst_lib}" ${CMAKE_DL_LIBS} Threads::Threads)
   if(WIN32)
     target_compile_definitions(kt2n_prepare_text_data PRIVATE FST_NO_DYNAMIC_LINKING)
+    # UTF-8 arguments and file names: it opens its two paths with the narrow C runtime calls, which otherwise read
+    # them in the ANSI code page, so a path outside it (C:\Users\Łukasz under cp1252) could not be opened.
+    target_sources(kt2n_prepare_text_data PRIVATE tools/kt2n_prepare_text_data.manifest)
   endif()
   install(TARGETS kt2n_prepare_text_data RUNTIME DESTINATION bin)
 endif()

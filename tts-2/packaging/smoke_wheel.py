@@ -9,9 +9,13 @@
 import argparse
 import ctypes
 import os
+import shutil
+import struct
 import subprocess
 import sys
+import tempfile
 import wave
+from pathlib import Path
 
 p = argparse.ArgumentParser()
 p.add_argument("--assets")
@@ -37,6 +41,21 @@ version = subprocess.run([str(m.CLI), "--version"], capture_output=True, text=Tr
 assert m.BUILD_INFO in version, version
 tool = subprocess.run([str(m.TEXT_DATA_TOOL)], capture_output=True, text=True)
 assert "usage: kt2n_prepare_text_data" in tool.stderr, (tool.returncode, tool.stderr[-300:])
+# The text-data tool reads and writes paths outside the ANSI code page (on Windows through its UTF-8 code page
+# manifest): a one-state graph converted from and into a folder whose name is not ASCII.
+if os.name == "nt":
+    for exe in (m.CLI, m.TEXT_DATA_TOOL):
+        assert b"activeCodePage" in exe.read_bytes(), f"no UTF-8 code page manifest in {exe.name}"
+    print(f"system ANSI code page {ctypes.windll.kernel32.GetACP()}; both programs carry the UTF-8 manifest")
+folder = Path(tempfile.mkdtemp()) / "\u0141ukasz \u7530\u4e2d"
+folder.mkdir()
+(folder / "in.fst").write_bytes(b"KITTEN1\0" + struct.pack("<IIIIIf", 0, 1, 0, 0, 0, 0.0))
+tool = subprocess.run([str(m.TEXT_DATA_TOOL), str(folder / "in.fst"), str(folder / "out.fst")], capture_output=True,
+                      text=True, encoding="utf-8", errors="replace")
+assert tool.returncode == 0, (tool.returncode, tool.stderr[-300:])
+assert (folder / "out.fst").stat().st_size > 0
+shutil.rmtree(folder.parent)
+print("text-data tool OK with a non-ASCII folder name")
 print(f"layout OK: {m.LIB.name} {m.LIB.stat().st_size} bytes; {version.splitlines()[0]}; CAPS {m.CAPS}")
 
 if a.assets:
