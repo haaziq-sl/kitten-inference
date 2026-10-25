@@ -6,7 +6,9 @@
 #include <cstring>
 
 #include "consent_phrase.h"
+#if KT2N_VOICE_DECODE
 #include "decode.h"
+#endif
 
 namespace kt2n::voice {
 namespace {
@@ -233,9 +235,14 @@ VoiceBuildOutcome VoiceService::build_uncached(const VoiceBuildRequest& req, con
       return fail_with(200, field, "The uploaded file contains no decodable audio.");
     decoded.assign(req.pcm, req.pcm + req.pcm_samples);
   } else {
+#if KT2N_VOICE_DECODE
     std::string err;
     if (!decode_audio(req.audio, req.audio_len, 30.1, decoded, &err)) return fail_with(200, field, message_for(200, 0));
     if (decoded.empty()) return fail_with(200, field, "The uploaded file contains no decodable audio.");
+#else
+    // Built without the in-process decode (KT2N_VOICE_AV=OFF); kt2n_voice_build refuses encoded audio before this.
+    return fail_with(200, field, kNoDecodeMessage);
+#endif
   }
   if (recheck && (req.flags & kVbInline)) {
     const AudioVerdict v = check_decoded(decoded.data(), decoded.size());

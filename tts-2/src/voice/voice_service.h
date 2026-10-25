@@ -25,7 +25,18 @@
 #include "voice_blob.h"
 #include "voice_build.h"
 
+// KT2N_VOICE_DECODE: 1 (the default) when the in-process FFmpeg decode is built (decode.h); 0 for a cloning build that
+// takes decoded PCM only (KT2N_VOICE_AV=OFF, src/voice/CMakeLists.txt).
+#ifndef KT2N_VOICE_DECODE
+#define KT2N_VOICE_DECODE 1
+#endif
+
 namespace kt2n::voice {
+
+// The error for encoded reference audio given to an engine built without the in-process decode.
+inline constexpr const char* kNoDecodeMessage =
+    "this engine library was built without in-process audio decoding: pass the reference audio as decoded mono "
+    "float PCM at 24 kHz (KT2N_VB_DECODED_PCM), for example decoded with the ffmpeg program";
 
 enum VoiceBuildFlags : uint32_t {  // engine.h kt2n_voice_build_flags
   kVbInline = 1u << 0,

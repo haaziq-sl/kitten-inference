@@ -9,9 +9,12 @@ string(TOUPPER "${KT2N_VOICE_AV}" _kt2n_voice_av)
 if(NOT _kt2n_voice_av MATCHES "^(AUTO|ON|OFF)$")
   message(FATAL_ERROR "KT2N_VOICE_AV must be AUTO, ON or OFF")
 endif()
-if(KT2N_BUILD_CLONING AND (NOT KT2N_HAVE_CUDA OR _kt2n_voice_av STREQUAL "OFF"))
-  message(FATAL_ERROR "KT2N_BUILD_CLONING requires CUDA and KT2N_VOICE_AV=ON or AUTO")
+if(KT2N_BUILD_CLONING AND NOT KT2N_HAVE_CUDA)
+  message(FATAL_ERROR "KT2N_BUILD_CLONING requires CUDA")
 endif()
+# KT2N_BUILD_CLONING with KT2N_VOICE_AV=OFF builds cloning without the in-process decode: the engine then takes the
+# reference audio only as decoded PCM (KT2N_VB_DECODED_PCM), and the command-line tool decodes it with the system's
+# ffmpeg program (the wheel presets). Encoded audio passed to such an engine fails with KT2N_ERR_UNSUPPORTED.
 
 add_library(kt2n_voice_policy INTERFACE)
 target_include_directories(kt2n_voice_policy INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -99,4 +102,12 @@ if(NOT _kt2n_voice_av STREQUAL "OFF")
   else()
     message(STATUS "kt2n voice: in-process FFmpeg decode OFF (headers or libraries not found)")
   endif()
+elseif(KT2N_HAVE_CUDA AND KT2N_BUILD_CLONING)
+  # Cloning from decoded PCM only (KT2N_VOICE_AV=OFF): no FFmpeg libraries are linked.
+  add_library(kt2n_voice_service STATIC voice_service.cc)
+  target_link_libraries(kt2n_voice_service PUBLIC kt2n_voice kt2n_voice_policy kt2n_voice_blob kt2n_voice_consent)
+  target_compile_definitions(kt2n_voice_service PUBLIC KT2N_VOICE_DECODE=0)
+  target_include_directories(kt2n_voice_service PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  set_target_properties(kt2n_voice_service PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  message(STATUS "kt2n voice: cloning from decoded PCM only (in-process FFmpeg decode OFF)")
 endif()

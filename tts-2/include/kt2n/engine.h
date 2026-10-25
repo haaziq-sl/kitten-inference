@@ -361,6 +361,10 @@ KT2N_API const char* kt2n_build_info(void);
  * KT2N_CAP_AUDIO_OPENING_SKIP: every AUDIO event carries kt2n_event.opening_skipped_tokens. */
 #define KT2N_CAP_AUDIO_OPENING_SKIP "cap:audio.opening_skipped_tokens"
 #define KT2N_CAP_VOICE_CLONING "cap:voice.cloning"
+/* KT2N_CAP_VOICE_PCM_ONLY: a cloning build without in-process audio decoding (KT2N_VOICE_AV=OFF): kt2n_voice_build
+ * takes the reference audio only as decoded PCM (KT2N_VB_DECODED_PCM) and refuses encoded bytes with
+ * KT2N_ERR_UNSUPPORTED. */
+#define KT2N_CAP_VOICE_PCM_ONLY "cap:voice.decoded_pcm_only"
 
 /* Loads every file, allocates both arenas, builds the voice prefixes, captures
  * the graphs and warms up. Blocks (seconds). */

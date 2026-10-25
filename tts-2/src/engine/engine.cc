@@ -3241,6 +3241,9 @@ KT2N_API const char* kt2n_build_info(void) {
   return "Kitten TTS 2 native " KT2N_VERSION_STRING " " KT2N_CAP_AUDIO_OPENING_SKIP
 #if KT2N_ENGINE_WITH_VOICE
       " " KT2N_CAP_VOICE_CLONING
+#if !KT2N_VOICE_DECODE
+      " " KT2N_CAP_VOICE_PCM_ONLY
+#endif
 #endif
       ;
 }
@@ -4758,11 +4761,16 @@ KT2N_API int32_t kt2n_voice_build(kt2n_engine* e, const kt2n_voice_build_params*
     j->pcm.assign(p->pcm, p->pcm + p->pcm_samples);
     j->pcm_rate = p->pcm_rate;
   } else {
+#if !KT2N_VOICE_DECODE
+    set_err(err, KT2N_ERR_UNSUPPORTED, kt2n::voice::kNoDecodeMessage, "audio");
+    return KT2N_ERR_UNSUPPORTED;
+#else
     if (!p->audio || !p->audio_len) {
       set_err(err, KT2N_ERR_INVALID_AUDIO, "no audio", "file");
       return KT2N_ERR_INVALID_AUDIO;
     }
     j->audio.assign(static_cast<const uint8_t*>(p->audio), static_cast<const uint8_t*>(p->audio) + p->audio_len);
+#endif
   }
   if (p->flags & KT2N_VB_VERIFY_SPEAKER) j->consent.assign(p->consent_speaker, p->consent_speaker + 512);
   j->transcript = p->reference_transcript ? p->reference_transcript : "";
