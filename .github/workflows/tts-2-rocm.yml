@@ -11,6 +11,11 @@ on:
   pull_request:
     paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Distribution version, e.g. 0.2.0.post1 for a packaging fix (empty: the engine version)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -34,6 +39,7 @@ jobs:
       - name: Build the wheel
         env:
           JOBS: '4'
+          WHEEL_VERSION: ${{ github.event.inputs.version }}
         run: tts-2/packaging/build_wheel_rocm.sh wheelhouse
       - name: Size and contents
         run: |
@@ -84,9 +90,11 @@ jobs:
           venv/bin/python -m pip show -f kitten-inference-tts2-rocm | head -n 20
       - name: Check the package
         run: |
-          venv/bin/python - << 'PY'
-          import os, kitten_inference._tts2_rocm as m
+          venv/bin/python - wheelhouse/*.whl << 'PY'
+          import os, sys, kitten_inference._tts2_rocm as m
           assert m.BACKEND == "rocm" and m.ABI == 2 and m.CAPS == (), (m.BACKEND, m.ABI, m.CAPS)
+          wheel_version = os.path.basename(sys.argv[1]).split("-")[1]
+          assert m.VERSION == wheel_version, (m.VERSION, wheel_version)
           for p in (m.LIB, m.CLI, m.TEXT_DATA_TOOL):
               assert p.is_file(), p
           for p in (m.CLI, m.TEXT_DATA_TOOL):

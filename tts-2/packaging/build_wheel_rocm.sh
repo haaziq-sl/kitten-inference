@@ -15,6 +15,8 @@
 #   KT2N_ROCM_REPO       ROCm package repository (default: AMD's RHEL 8 repository for ROCm 7.1)
 #   MANYLINUX_IMAGE      build container (default: the pinned manylinux_2_28 image below)
 #   SOURCE_DATE_EPOCH    file times inside the wheel (default: the last commit's time)
+#   WHEEL_VERSION        the distribution's version (default: the engine's, from CMakeLists.txt); a packaging fix of
+#                        the same engine is that version plus .postN, e.g. WHEEL_VERSION=0.2.0.post1
 #
 # The wheel links the system ROCm runtime (libamdhip64.so.7), which is excluded from auditwheel's repair: users need
 # ROCm 7.x installed (tts-2/docs/amd-radeon.md). The ROCm build has no voice cloning.
@@ -32,6 +34,15 @@ PKG=kitten_inference/_tts2_rocm
 
 log() { echo "[build_wheel_rocm $(date -u +%H:%M:%S)] $*"; }
 
+# The engine's version (CMake's project VERSION, numbers only) and the distribution's: the same, or a post release of it.
+ENGINE_VERSION=$(sed -n 's/^  VERSION \([0-9.]*\)$/\1/p' "$SRC/CMakeLists.txt" | head -n 1)
+[ -n "$ENGINE_VERSION" ] || { echo "no project VERSION found in $SRC/CMakeLists.txt" >&2; exit 2; }
+VERSION=${WHEEL_VERSION:-$ENGINE_VERSION}
+if ! [[ "$VERSION" =~ ^${ENGINE_VERSION//./\\.}(\.post[0-9]+)?$ ]]; then
+  echo "WHEEL_VERSION=$VERSION: must be the engine's version $ENGINE_VERSION or $ENGINE_VERSION.postN" >&2
+  exit 2
+fi
+
 # ---- outside the container: start it ---------------------------------------------------------------------------
 if [ "${KT2N_IN_CONTAINER:-0}" != 1 ]; then
   command -v docker > /dev/null || { echo "docker not found: run this inside a manylinux_2_28 container with KT2N_IN_CONTAINER=1" >&2; exit 2; }
@@ -43,7 +54,8 @@ if [ "${KT2N_IN_CONTAINER:-0}" != 1 ]; then
   log "container $MANYLINUX_IMAGE; source $SRC; output $OUT"
   exec docker run --rm -v "$REPO:/io" -v "$OUT:/out" -w /io \
     -e KT2N_IN_CONTAINER=1 -e "KT2N_HIP_ARCHS=$KT2N_HIP_ARCHS" -e "KT2N_ROCM_REPO=$KT2N_ROCM_REPO" \
-    -e "JOBS=${JOBS:-}" -e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+    -e "JOBS=${JOBS:-}" -e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" -e "WHEEL_VERSION=$VERSION" \
+    -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
     "$MANYLINUX_IMAGE" bash "/io/${SRC#"$REPO"/}/packaging/build_wheel_rocm.sh" /out
 fi
 
@@ -126,6 +138,15 @@ cp "$STAGE/bin/kitten-tts-native" "$STAGE/bin/kt2n_prepare_text_data" "$TREE/$PK
 patchelf --replace-needed "$SONAME" libkt2n_engine.so "$TREE/$PKG/bin/kitten-tts-native"
 cp "$SRC/LICENSE" "$SRC/NOTICE" "$TREE/$PKG/licenses/"
 cp "$SRC/licenses/"*.txt "$TREE/$PKG/licenses/"
+# ROCm code compiled into the library (NOTICE, "AMD ROCm"): the licence texts in licenses/rocm/ must be the ones the
+# installed ROCm packages ship, so that a ROCm update with a changed licence stops the build here.
+mkdir -p "$TREE/$PKG/licenses/rocm"
+for pair in rocRAND.txt:rocrand/LICENSE.md HIP.txt:hip/LICENSE.md ROCm-Device-Libs.txt:ROCm-Device-Libs/LICENSE.TXT; do
+  ours=$SRC/licenses/rocm/${pair%%:*}
+  theirs=$ROCM/share/doc/${pair#*:}
+  cmp -s "$ours" "$theirs" || { echo "$ours differs from the installed ROCm's $theirs (or one is missing): update it and NOTICE" >&2; exit 1; }
+  cp "$ours" "$TREE/$PKG/licenses/rocm/"
+done
 
 # The engine's kt2n_build_info() text and ABI version, read from the built library (loading it needs only the ROCm
 # runtime library, not a GPU).
@@ -137,8 +158,7 @@ lib.kt2n_abi_version.restype = ctypes.c_uint32
 print(lib.kt2n_abi_version(), lib.kt2n_build_info().decode())
 PY
 )
-VERSION=$(sed -n 's/^  VERSION \([0-9.]*\)$/\1/p' "$SRC/CMakeLists.txt" | head -n 1)
-log "engine $VERSION, ABI $ABI, build info: $BUILD_INFO"
+log "engine $ENGINE_VERSION, wheel $VERSION, ABI $ABI, build info: $BUILD_INFO"
 [ "$ABI" = 2 ] || { echo "unexpected engine ABI $ABI (the package contract is ABI 2)" >&2; exit 1; }
 case "$BUILD_INFO" in *cap:voice.cloning*) echo "this build includes voice cloning; the ROCm wheel must not" >&2; exit 1;; esac
 "$PY" - "$TREE/$PKG/__init__.py" "$VERSION" "$ABI" "$BUILD_INFO" "$KT2N_HIP_ARCHS" << 'PY'
@@ -174,7 +194,7 @@ Name: $DIST
 Version: $VERSION
 Summary: Kitten TTS 2 native engine for AMD Radeon GPUs (ROCm), used by kitten-inference-tts2
 Home-page: https://github.com/KittenML/kitten-inference
-License: Apache-2.0 (the engine); bundled components are listed in kitten_inference/_tts2_rocm/licenses/NOTICE
+License: Apache-2.0 (the engine); third-party code compiled in, including AMD ROCm code (MIT, NCSA), is listed in kitten_inference/_tts2_rocm/licenses/NOTICE
 Classifier: License :: OSI Approved :: Apache Software License
 Classifier: Operating System :: POSIX :: Linux
 Classifier: Environment :: GPU
@@ -223,8 +243,14 @@ log "auditwheel repair (libamdhip64.so.7 excluded: the system ROCm provides it)"
 auditwheel repair --plat manylinux_2_28_x86_64 --only-plat --exclude libamdhip64.so.7 -w "$WORK/repaired" "$RAW"/*.whl > "$WORK/repair.log" 2>&1 \
   || { cat "$WORK/repair.log"; exit 1; }
 WHL=$(ls "$WORK/repaired"/*.whl)
-auditwheel show "$WHL" | tee "$WORK/auditwheel-show.txt"
-grep -q 'manylinux_2_28_x86_64' "$WORK/auditwheel-show.txt" || { echo "auditwheel did not accept manylinux_2_28" >&2; exit 1; }
+# For the record only: auditwheel show follows libamdhip64.so.7 into the system ROCm (show has no --exclude), so it
+# reports linux_x86_64. The glibc / libstdc++ floor is enforced by repair --plat above and by the symbols check below.
+auditwheel show "$WHL" > "$WORK/auditwheel-show.txt" 2>&1 || true
+CHECK=$SRC/packaging/check_wheel_rocm.py
+"$PY" "$CHECK" tag "$WHL" py3-none-manylinux_2_28_x86_64 | tee "$WORK/checks.txt"
+if "$PY" "$CHECK" tag "$RAW"/*.whl py3-none-manylinux_2_28_x86_64 > /dev/null 2>&1; then
+  echo "the tag check accepted the untagged wheel (it cannot fail)" >&2; exit 1
+fi
 # Nothing may be grafted into the wheel: it carries exactly the three binaries.
 if "$PY" -m zipfile -l "$WHL" | grep -q '\.libs/'; then echo "auditwheel grafted libraries into the wheel" >&2; exit 1; fi
 
@@ -232,14 +258,18 @@ if "$PY" -m zipfile -l "$WHL" | grep -q '\.libs/'; then echo "auditwheel grafted
 rm -rf "$WORK/venv"
 "$PY" -m venv "$WORK/venv"
 "$WORK/venv/bin/python" -m pip install -q --no-index --no-deps "$WHL"
-"$WORK/venv/bin/python" - << 'PY'
+"$WORK/venv/bin/python" - "$VERSION" << 'PY'
+import sys
 import kitten_inference._tts2_rocm as m
 for p in (m.LIB, m.CLI, m.TEXT_DATA_TOOL):
     assert p.is_file(), p
 assert m.BACKEND == "rocm" and m.ABI == 2 and m.CAPS == (), (m.BACKEND, m.ABI, m.CAPS)
+assert m.VERSION == sys.argv[1], (m.VERSION, sys.argv[1])
 print("import OK:", m.VERSION, m.BUILD_INFO)
 PY
 CLI=$("$WORK/venv/bin/python" -c 'import kitten_inference._tts2_rocm as m; print(m.CLI)')
+"$PY" "$CHECK" symbols "$CLI" "$(dirname "$CLI")/kt2n_prepare_text_data" "$(dirname "$CLI")/../lib/libkt2n_engine.so" \
+  | tee -a "$WORK/checks.txt"
 "$CLI" --help > "$WORK/cli-help.txt" 2>&1 || { tail -n 5 "$WORK/cli-help.txt"; echo "kitten-tts-native --help failed" >&2; exit 1; }
 ldd "$CLI" | sed 's/ (0x[0-9a-f]*)//' > "$WORK/ldd-cli.txt"
 ldd "$(dirname "$CLI")/../lib/libkt2n_engine.so" | sed 's/ (0x[0-9a-f]*)//' > "$WORK/ldd-lib.txt"
@@ -256,7 +286,8 @@ cp "$WHL" "$OUT/"
   echo "build_info $BUILD_INFO"
   echo "lib_sha256 $(sha256sum "$TREE/$PKG/lib/libkt2n_engine.so" | cut -d' ' -f1)"
   echo "lib_size_bytes $(stat -c %s "$TREE/$PKG/lib/libkt2n_engine.so")"
-  echo "--- auditwheel show"; cat "$WORK/auditwheel-show.txt"
+  echo "--- checks"; cat "$WORK/checks.txt"
+  echo "--- auditwheel show (reports linux_x86_64 because of the system ROCm; see the script)"; cat "$WORK/auditwheel-show.txt"
   echo "--- ldd lib"; cat "$WORK/ldd-lib.txt"
   echo "--- contents"; "$PY" -m zipfile -l "$WHL"
 } > "$OUT/build-rocm-wheel.txt"
