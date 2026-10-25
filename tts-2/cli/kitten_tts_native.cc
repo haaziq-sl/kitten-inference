@@ -374,6 +374,11 @@ int speak(const Options& o) {
     // RTX 4060 Laptop, 1.6 GB less GPU memory there, and the same audio (seeded --stream false output is identical in every cache mode).
     config.voice_cache_mode = KT2N_VOICE_CACHE_LRU;
     config.voice_cache_max_voices = std::clamp(o.max_streams, 1, 4096);  // the cache's limit; max_streams is checked by create
+  } else if (!o.voice_cache_given) {
+    // Cloning or a saved voice: the run speaks only with that voice, so no built-in voice is prepared on the GPU.
+    // With every built-in voice prepared (the 115 of the current model), building a voice did not fit a 24 GB RTX 4090
+    // ("out of memory" in both profiles); without them it needs 15.6 GB there, and the audio is the same.
+    config.voice_cache_mode = KT2N_VOICE_CACHE_NONE;
   }
   config.memory_profile = o.memory_profile == MemoryProfile::kLow       ? KT2N_MEMORY_PROFILE_LOW
                           : o.memory_profile == MemoryProfile::kDefault ? KT2N_MEMORY_PROFILE_DEFAULT
