@@ -1,0 +1,191 @@
+name: tts-2 prepare
+
+# The torch-free model preparation must give byte-identical files on every OS and CPU family. Each job folds the
+# pinned decoder checkpoint with numpy (no torch installed) and the results are compared with each other and with
+# the expected digests below, made on Linux x86-64. The data of the numpy s3gen.kt2n equals the torch 2.7.1+cu128
+# fold (all 82 folded tensors), which is what earlier versions prepared.
+
+on:
+  push:
+    branches: [ws/prepare, feat/tts-0.8-and-tts-2]
+    paths:
+      - "tts-2/tools/**"
+      - "tts-2/tests/assets/**"
+      - "tts-2/requirements-*.txt"
+      - ".github/workflows/tts-2-prepare.yml"
+  pull_request:
+    paths:
+      - "tts-2/tools/**"
+      - "tts-2/tests/assets/**"
+      - "tts-2/requirements-*.txt"
+      - ".github/workflows/tts-2-prepare.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MODEL_REVISION: c93cb7c271baa51d9ae8204d5277988906f235a2
+  S3GEN_REVISION: 1e4698ca7cbb41ff030c4185f0927a3b42d76924
+  EXPECTED_S3GEN_KT2N: 8f87db057124802785517281a05be45c9cabfd6ef198402c7999652aff1f5b3f
+  EXPECTED_MODEL_KT2N: a53a45f65896f069c5800b892a3e003b3926db94ca9cc8d83745b5e7a303b8d8
+  EXPECTED_VOICES_KT2N: cba910380efcb84acd17267221995884efb41676194d1d18381aceda0a61dbc8
+  EXPECTED_CLONE_CONSTS: 24544a06aae7b9cdd01c87c62ae91a8b6fc7734b4c3623c2682b3263db22b062
+  EXPECTED_CLONE_PYANNOTE: 8bb07451b6e29a4740d98d32e1f7d98c446833178bb4cb8bb0bf6c3b2d62cd53
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  PYTHONUTF8: "1"
+
+jobs:
+  convert:
+    name: ${{ matrix.os }} numpy ${{ matrix.numpy }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022, macos-14]
+        numpy: [latest]
+        include:
+          - os: ubuntu-24.04
+            numpy: "1.26.4"
+          - os: windows-2022
+            numpy: "1.26.4"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the preparation requirements (no torch)
+        run: |
+          python -m pip install -r tts-2/requirements-prepare.txt pytest
+          if [ "${{ matrix.numpy }}" != latest ]; then python -m pip install "numpy==${{ matrix.numpy }}"; fi
+          python - <<'PY'
+          import importlib.util, platform, sys, numpy
+          assert importlib.util.find_spec("torch") is None, "torch must not be installed"
+          print(platform.platform(), platform.machine(), platform.processor(), "python", sys.version.split()[0],
+                "numpy", numpy.__version__)
+          numpy.show_runtime()
+          PY
+      - name: Unit tests (tests/assets)
+        working-directory: tts-2
+        run: python -m pytest -q -p no:cacheprovider tests/assets
+      - name: Download the pinned decoder checkpoint and model files
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import hf_hub_download, snapshot_download
+          src = hf_hub_download("ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors",
+                                revision=os.environ["S3GEN_REVISION"], token=False)
+          model = snapshot_download("KittenML/kitten-tts-2", revision=os.environ["MODEL_REVISION"], token=False,
+                                    allow_patterns=["config.json", "lm/config.json", "lm/model.safetensors",
+                                                    "lm/tokenizer.json", "cpp/default/voices.json",
+                                                    "voices/voices.json", "voices/*.npz", "speaker/model.safetensors"])
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"S3GEN_SRC={src}\nMODEL_DIR={model}\n")
+          PY
+      - name: Convert the decoder (numpy weight-norm fold) and verify it without torch
+        working-directory: tts-2/tools
+        run: |
+          python -m kt2n_assets.convert_s3gen "$S3GEN_SRC" "$RUNNER_TEMP/s3gen.kt2n" --device numpy \
+            --report "$RUNNER_TEMP/s3gen.convert.json" > /dev/null
+          python -m kt2n_assets.convert_s3gen --verify "$RUNNER_TEMP/s3gen.kt2n" "$S3GEN_SRC" \
+            --report "$RUNNER_TEMP/s3gen.verify.json" > /dev/null
+      - name: Convert the speech model and the voices
+        working-directory: tts-2/tools
+        run: |
+          python - <<'PY'
+          import json, os, tempfile
+          from pathlib import Path
+          from kt2n_assets import convert, prepare
+          from kt2n_assets.safetensors_raw import sha256_file
+          model, out = Path(os.environ["MODEL_DIR"]), Path(os.environ["RUNNER_TEMP"])
+          config = json.loads((model / "config.json").read_text(encoding="utf-8"))
+          with tempfile.TemporaryDirectory() as scratch:
+              runtime = Path(scratch) / "runtime_config.json"
+              runtime.write_text(json.dumps({"type": config["type"], "token_map": config["token_map"],
+                                             "generation": config.get("generation", {})}), encoding="utf-8", newline="\n")
+              convert.convert(model / config["lm_dir"], out / "model.kt2n", runtime_config=str(runtime),
+                              side_files=prepare.LM_SIDE_FILES, log=lambda message: None)
+          prepare.prepare_voices(model / config["cpp"]["decoders"]["default"]["voices"]["file"],
+                                 model / config["lm_dir"] / "tokenizer.json", config, out / "voices.kt2n",
+                                 sha256_file(out / "model.kt2n"), sha256_file(out / "s3gen.kt2n"), model_dir=model)
+          PY
+      - name: Cloning files from the model repository (no torch, no login)
+        working-directory: tts-2/tools
+        run: |
+          python - <<'PY'
+          import os, sys, tempfile
+          from pathlib import Path
+          from kt2n_assets.clone_assets import prepare_clone_files, public_clone_exports
+          model, out = Path(os.environ["MODEL_DIR"]), Path(os.environ["RUNNER_TEMP"])
+          with tempfile.TemporaryDirectory() as scratch:
+              exports = Path(scratch) / "exports"
+              public_clone_exports(model / "speaker" / "model.safetensors", Path(os.environ["S3GEN_SRC"]), exports)
+              prepare_clone_files(Path(os.environ["S3GEN_SRC"]), exports / "voicebuild_consts.safetensors",
+                                  exports / "voicebuild_pyannote.safetensors", out / "cloning")
+          (out / "cloning" / "s3gen.safetensors").unlink()  # a copy of the pinned checkpoint; not needed here
+          assert not any(m.split(".")[0] in ("torch", "torchaudio", "librosa", "asteroid_filterbanks") for m in sys.modules)
+          PY
+      - name: Digests
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          out = os.environ["RUNNER_TEMP"]
+          def sha(name):
+              h = hashlib.sha256()
+              with open(os.path.join(out, name), "rb") as f:
+                  for block in iter(lambda: f.read(1 << 24), b""):
+                      h.update(block)
+              return h.hexdigest()
+          verify = json.load(open(os.path.join(out, "s3gen.verify.json")))
+          names = ("s3gen.kt2n", "model.kt2n", "voices.kt2n", "cloning/voicebuild_consts.safetensors",
+                   "cloning/voicebuild_pyannote.safetensors")
+          result = {"os": "${{ matrix.os }}", "numpy": "${{ matrix.numpy }}", "verify_ok": verify["ok"],
+                    **{name: sha(name) for name in names}}
+          print(json.dumps(result, indent=1))
+          os.makedirs("digests", exist_ok=True)
+          with open("digests/digest.json", "w") as f:
+              json.dump(result, f)
+          assert verify["ok"], verify["problems"]
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.os }}-numpy-${{ matrix.numpy }}
+          path: digests/digest.json
+
+  compare:
+    needs: convert
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+      - name: All runners must give the same files, equal to the expected digests
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, json, os, sys
+          rows = [json.load(open(p)) for p in sorted(glob.glob("digests/*/digest.json"))]
+          expected = {"s3gen.kt2n": os.environ["EXPECTED_S3GEN_KT2N"], "model.kt2n": os.environ["EXPECTED_MODEL_KT2N"],
+                      "voices.kt2n": os.environ["EXPECTED_VOICES_KT2N"],
+                      "cloning/voicebuild_consts.safetensors": os.environ["EXPECTED_CLONE_CONSTS"],
+                      "cloning/voicebuild_pyannote.safetensors": os.environ["EXPECTED_CLONE_PYANNOTE"]}
+          files = tuple(expected)
+          lines = ["| runner | numpy | " + " | ".join(files) + " |", "|---|---|" + "---|" * len(files)]
+          for r in rows:
+              lines.append(f"| {r['os']} | {r['numpy']} | " + " | ".join(r[f][:16] for f in files) + " |")
+          lines.append("| expected | | " + " | ".join(expected[f][:16] for f in files) + " |")
+          summary = "\n".join(lines)
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary + "\n")
+          ok = len(rows) == 6
+          for f in files:
+              values = {r[f] for r in rows}
+              ok &= values == {expected[f]}
+          sys.exit(0 if ok else f"digests differ or a runner is missing ({len(rows)} of 6 reported)")
+          PY
