@@ -30,6 +30,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--find-links", action="append", type=Path, required=True)
     p.add_argument("--version", default="0.2.0")
+    p.add_argument("--upgrade-pip", action="store_true", help="first install the pip found in --find-links")
     a = p.parse_args()
     links = [arg for d in a.find_links for arg in ("--find-links", str(d.resolve()))]
     failed = 0
@@ -37,6 +38,11 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run([sys.executable, "-m", "venv", tmp], check=True)
             py = str(Path(tmp) / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+            if a.upgrade_pip:  # the pip in the wheelhouse (current), not the one the venv was created with
+                subprocess.run([py, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--no-index",
+                                *links, "-U", "pip"], check=True)
+            pip_version = subprocess.run([py, "-m", "pip", "--version"], capture_output=True,
+                                         text=True).stdout.split()[1]
             spec = f"kitten-inference{extra}=={a.version}"
             run = subprocess.run([py, "-m", "pip", "install", "--disable-pip-version-check", "--no-index", *links,
                                   spec], capture_output=True, text=True)
@@ -45,7 +51,7 @@ def main() -> int:
             ours = {n for n in names if n.startswith("kitten-inference")}
             ok = run.returncode == 0 and ours == expected
             warnings = [l for l in run.stdout.splitlines() + run.stderr.splitlines() if "WARNING" in l]
-            print(f"{'ok  ' if ok else 'FAIL'} pip install \"{spec}\" -> {sorted(ours)}"
+            print(f"{'ok  ' if ok else 'FAIL'} pip {pip_version}: pip install \"{spec}\" -> {sorted(ours)}"
                   + (f"  [{'; '.join(warnings)}]" if warnings else ""))
             if not ok:
                 failed += 1

@@ -101,9 +101,9 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check -U pip
           python -m pip download --disable-pip-version-check --dest deps "numpy>=1.24" "huggingface-hub>=0.25,<2" \
-            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest
-      - name: What each extra installs (local folders only)
-        run: python umbrella/tests/check_extras.py --find-links dist --find-links stubs --find-links deps
+            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest pip
+      - name: What each extra installs with current pip (local folders only)
+        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps
       - name: Install kitten-inference[tts-2] for the unit tests
         shell: bash
         run: |
@@ -120,7 +120,7 @@ jobs:
           KT2N_REQUIRE_ABI_TEST: "1"
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/$PY" -m pytest -q -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
+          "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
             "$GITHUB_WORKSPACE/tts-2/python/tests"
 
   old-pip:
@@ -140,7 +140,7 @@ jobs:
           path: stubs
       - name: System pip
         run: |
-          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip > /dev/null
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip python3-venv > /dev/null
           python3 --version && python3 -m pip --version
       - name: Install each spelling with pip 22.0.2
         shell: bash
@@ -159,6 +159,17 @@ jobs:
             python3 -m pip uninstall -y -q kitten-inference kitten-inference-tts08 kitten-inference-tts2 \
               kitten-inference-tts2-cu12 kitten-inference-tts2-rocm 2>/dev/null || true
             echo "::endgroup::"
+          done
+      - name: Which pip versions accept the dotted spelling [tts-0.8]
+        shell: bash
+        run: |
+          for v in 22.0.2 22.3.1 23.0.1 23.1.2 23.2.1 23.3 23.3.2 24.0 25.3; do
+            rm -rf /tmp/v && python3 -m venv /tmp/v && /tmp/v/bin/python -m pip install -q --disable-pip-version-check "pip==$v"
+            out=$(/tmp/v/bin/python -m pip install --disable-pip-version-check --no-index --find-links dist \
+                  --find-links stubs "kitten-inference[tts-0.8]==0.2.0" 2>&1)
+            got=$(/tmp/v/bin/python -m pip list --disable-pip-version-check 2>/dev/null | grep -ci '^kitten-inference-tts08')
+            echo "pip $v: [tts-0.8] installs kitten-inference-tts08: $([ "$got" = 1 ] && echo yes || echo no)$(echo "$out" | grep -o "WARNING: .*extra.*" | sed 's/^/ -- /')" \
+              | tee -a old-pip.log
           done
       - uses: actions/upload-artifact@v4
         with:

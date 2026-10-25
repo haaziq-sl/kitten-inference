@@ -210,5 +210,5 @@ def test_ffmpeg_missing_message(tts, reference, monkeypatch):
         _skip("this engine has no voice cloning")
     from kitten_inference.tts2 import FFmpegNotFound
     monkeypatch.setattr(shutil, "which", lambda name: None)
-    with pytest.raises(FFmpegNotFound, match="apt install ffmpeg"):
+    with pytest.raises(FFmpegNotFound, match="ffmpeg was not found"):
         tts.clone_voice(reference[0], reference[1])

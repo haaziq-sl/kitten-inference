@@ -54,11 +54,15 @@ def test_metadata_extras():
         pytest.skip("kitten-inference is not installed")
     assert dist.version == "0.2.0"
     assert set(dist.metadata.get_all("Provides-Extra")) == set(EXTRAS)
+    def canonical(spec):  # "name<0.3,>=0.2.0" -> ("name", {"<0.3", ">=0.2.0"})
+        spec = spec.replace(" ", "")
+        cut = min(i for i, c in enumerate(spec) if c in "<>=!~")
+        return spec[:cut], frozenset(spec[cut:].split(","))
     found = {}
     for req in dist.requires or []:
         spec, _, marker = req.partition(";")
         extra = marker.split("==")[1].strip().strip("'\"")
-        found.setdefault(extra, set()).add(spec.replace(" ", ""))
-    assert found == EXTRAS
+        found.setdefault(extra, set()).add(canonical(spec))
+    assert found == {extra: {canonical(s) for s in specs} for extra, specs in EXTRAS.items()}
     files = {str(f).replace("\\", "/") for f in dist.files or []}
     assert {f for f in files if f.startswith("kitten_inference/")} == {"kitten_inference/__init__.py"}

@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -71,7 +72,7 @@ def _ref_file(root: Path, repo: str, revision: str) -> Path:
     return root / "refs" / safe
 
 
-def resolve_revision(repo: str, revision: Optional[str], root: Path) -> str:
+def resolve_revision(repo: str, revision: Optional[str], root: Path, log: Callable[[str], None] = None) -> str:
     """The commit sha of ``revision`` (default main). A 40-hex sha needs no network. Otherwise Hugging Face is asked;
     without a connection the sha recorded by the last successful preparation of that revision is used."""
     rev = revision or "main"
@@ -90,7 +91,7 @@ def resolve_revision(repo: str, revision: Optional[str], root: Path) -> str:
         if ref.is_file():
             sha = ref.read_text(encoding="utf-8").strip()
             if _SHA.fullmatch(sha) and (root / sha / "config.json").is_file():
-                _log(f"cannot reach Hugging Face ({type(exc).__name__}); using the prepared {repo}@{rev} "
+                (log or _log)(f"cannot reach Hugging Face ({type(exc).__name__}); using the prepared {repo}@{rev} "
                      f"from {root / sha}")
                 return sha
         raise PrepareError(f"cannot find {repo} revision {rev!r} on Hugging Face: {exc}") from exc
@@ -102,7 +103,7 @@ def _record_ref(root: Path, repo: str, revision: Optional[str], sha: str) -> Non
         return
     ref = _ref_file(root, repo, rev)
     ref.parent.mkdir(parents=True, exist_ok=True)
-    tmp = ref.with_name(ref.name + f".{os.getpid()}.tmp")
+    tmp = ref.with_name(f"{ref.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(sha + "\n", encoding="utf-8")
     os.replace(tmp, ref)
 
@@ -180,7 +181,7 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
            with_cloning: bool = False, repo: str = MODEL_REPO, log: Callable[[str], None] = _log) -> Path:
     """The prepared model directory for ``revision`` (default: the latest, main), preparing it first if needed."""
     root = cache_root(cache_dir)
-    sha = resolve_revision(repo, revision, root)
+    sha = resolve_revision(repo, revision, root, log)
     final = root / sha
     if is_prepared(final, with_cloning):
         _record_ref(root, repo, revision, sha)

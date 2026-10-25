@@ -149,7 +149,7 @@ def test_failure_message(env):
 
 def test_cloning_added_to_a_prepared_model(env):
     d = env.run()
-    (d / "native" / "cloning").mkdir()
+    (d / "native" / "cloning").mkdir(parents=True)
     (d / "native" / "cloning" / "stale.safetensors").write_bytes(b"x")  # a stopped earlier attempt
     env.lines.clear()
     assert env.run(with_cloning=True) == d

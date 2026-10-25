@@ -12,14 +12,19 @@ import numpy as np
 
 SAMPLE_RATE = 24000
 REFERENCE_LIMIT = 10 << 20  # bytes; the engine and kitten-tts-native accept at most 10 MiB of reference audio
-# The reference pipeline's decode (and the engine's in-process FFmpeg decode mirrors it): first audio stream, no
-# metadata, mono, 24 kHz, at most 30.1 s, float32 little-endian.
-FFMPEG_ARGS = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-i", "pipe:0",
+# The reference pipeline's decode, as kitten-tts-native runs it (tts-2/cli/ffmpeg_decode.h; the engine's in-process
+# FFmpeg decode mirrors it too): first audio stream, no metadata, mono, 24 kHz, at most 30.1 s, float32 little-endian.
+FFMPEG_ARGS = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-i", "{input}",
                "-map_metadata", "-1", "-vn", "-sn", "-dn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-t", "30.100",
                "-f", "f32le", "pipe:1"]
-FFMPEG_MISSING = ("voice cloning reads the recording with FFmpeg, but the ffmpeg command was not found. Install it "
-                  "(Ubuntu/Debian: sudo apt install ffmpeg; Windows: winget install ffmpeg, then open a new "
-                  "terminal) and try again")
+FFMPEG_MISSING = ("ffmpeg was not found: voice cloning uses it to read the reference audio. Install it with: " +
+                  ("winget install --id Gyan.FFmpeg -e (then open a new terminal)" if os.name == "nt"
+                   else "sudo apt-get install -y ffmpeg"))
+
+
+def ffmpeg_args(path: os.PathLike) -> list:
+    """The ffmpeg arguments for ``path`` (absolute, so a name starting with '-' is never read as an option)."""
+    return [os.path.abspath(path) if a == "{input}" else a for a in FFMPEG_ARGS]
 
 
 class AudioError(ValueError):
@@ -48,11 +53,10 @@ def decode_reference(path: os.PathLike, ffmpeg: Optional[str] = None) -> np.ndar
         raise AudioError(f"the reference audio is empty: {path}")
     if size > REFERENCE_LIMIT:
         raise AudioError(f"the reference audio must be at most 10 MiB: {path} ({size} bytes)")
-    data = path.read_bytes()
     exe = ffmpeg or find_ffmpeg()
     try:
-        run = subprocess.run([exe, *FFMPEG_ARGS], input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             check=False)
+        run = subprocess.run([exe, *ffmpeg_args(path)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, check=False)
     except OSError as exc:
         raise FFmpegNotFound(f"{FFMPEG_MISSING} ({exc})") from None
     pcm = np.frombuffer(run.stdout[: len(run.stdout) // 4 * 4], dtype="<f4").astype(np.float32)

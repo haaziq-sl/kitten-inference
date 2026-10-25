@@ -57,7 +57,7 @@ def test_voice_list(model):
 def test_size_and_hash_errors(model):
     (model / "native/s3gen.kt2n").write_bytes(b"s4")  # same size, other bytes
     b = _bundle.load(model)
-    with pytest.raises(_bundle.BundleError, match="SHA-256 mismatch: .*s3gen.kt2n"):
+    with pytest.raises(_bundle.BundleError, match=r"SHA-256 mismatch\): .*s3gen.kt2n"):
         _bundle.Verifier(b).result()
     (model / "native/s3gen.kt2n").write_bytes(b"s")
     with pytest.raises(_bundle.BundleError, match="wrong size"):

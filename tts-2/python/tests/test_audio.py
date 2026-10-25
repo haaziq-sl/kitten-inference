@@ -1,4 +1,5 @@
 """WAV writing, PCM conversion and the ffmpeg reference decode used by clone_voice()."""
+import os
 import shutil
 import subprocess
 import wave
@@ -36,7 +37,7 @@ def test_ffmpeg_missing(monkeypatch, tmp_path):
     ref.write_bytes(b"RIFF")
     with pytest.raises(_audio.FFmpegNotFound) as e:
         _audio.decode_reference(ref)
-    assert "sudo apt install ffmpeg" in str(e.value) and "winget install ffmpeg" in str(e.value)
+    assert ("winget install --id Gyan.FFmpeg -e" if os.name == "nt" else "sudo apt-get install -y ffmpeg") in str(e.value)
 
 
 def test_reference_limits(tmp_path):
@@ -53,9 +54,9 @@ def test_reference_limits(tmp_path):
         _audio.decode_reference(big)
 
 
-def test_ffmpeg_arguments_match_the_reference_decode():
-    a = _audio.FFMPEG_ARGS
-    assert a[a.index("-i") + 1] == "pipe:0" and a[-1] == "pipe:1" and "-nostdin" in a
+def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
+    a = _audio.ffmpeg_args(tmp_path / "-ref.wav")
+    assert a[a.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.wav") and a[-1] == "pipe:1" and "-nostdin" in a
     assert a[a.index("-ac") + 1] == "1" and a[a.index("-ar") + 1] == "24000"
     assert a[a.index("-t") + 1] == "30.100" and a[a.index("-f") + 1] == "f32le"
 
