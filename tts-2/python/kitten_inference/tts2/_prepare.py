@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -26,7 +27,14 @@ DEFAULT_CACHE = Path.home() / ".cache" / "kitten-inference" / "tts2"
 _SHA = re.compile(r"[0-9a-f]{40}")
 # The child process that runs prepare.main(argv) (kitten_inference.tts2._assets.prepare, the bundled copy of
 # tts-2/tools/kt2n_assets): its output goes to a log file, and the memory the conversion uses is returned afterwards.
-_CHILD = "import sys; from kitten_inference.tts2._assets.prepare import main; sys.exit(main(sys.argv[1:]))"
+# `python -c` puts the current folder first on sys.path (only -P, Python 3.11+, turns that off), so a json.py or a
+# kitten_inference/ folder where the user runs kitten-tts2 would be imported instead of the real modules: the child
+# drops that entry before its first import (os and sys are already loaded at startup).
+_CHILD = ("import os, sys; sys.path[:] = [p for i, p in enumerate(sys.path) if i or p not in ('', '.', os.getcwd())]; "
+          "from kitten_inference.tts2._assets.prepare import main; sys.exit(main(sys.argv[1:]))")
+# Windows: a folder only this user (and SYSTEM and Administrators) can open, inherited by everything inside it. The
+# same security descriptor as os.mkdir(path, 0o700) on Python 3.13.
+_PRIVATE_SDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
 
 
 class PrepareError(RuntimeError):
@@ -71,17 +79,130 @@ def _fallback_root() -> Path:
     return base / "kitten-inference" / f"tts2-{user}"
 
 
+def _private_mkdir(path: Path) -> None:
+    """Creates the folder ``path`` (its parent exists) so that only this user can read or change it: on Windows with a
+    protected access list for SYSTEM, Administrators and the folder's owner, which everything inside inherits;
+    elsewhere with mode 0o700. FileExistsError when something is already there."""
+    if sys.platform != "win32":
+        os.mkdir(path, 0o700)
+        return
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                    ("bInheritHandle", wintypes.BOOL)]
+
+    convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
+    convert.restype = wintypes.BOOL
+    create = kernel32.CreateDirectoryW
+    create.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(SecurityAttributes)]
+    create.restype = wintypes.BOOL
+    free = kernel32.LocalFree
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = ctypes.c_void_p
+    sd = ctypes.c_void_p()
+    if not convert(_PRIVATE_SDDL, 1, ctypes.byref(sd), None):  # SDDL_REVISION_1
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        sa = SecurityAttributes(ctypes.sizeof(SecurityAttributes), sd, False)
+        if not create(str(path), ctypes.byref(sa)):
+            code = ctypes.get_last_error()
+            if code == 183:  # ERROR_ALREADY_EXISTS
+                raise FileExistsError(errno.EEXIST, "the folder already exists", str(path))
+            raise ctypes.WinError(code)
+    finally:
+        free(sd)
+
+
+def _owned_by_me(path: Path) -> bool:
+    """Whether this user owns ``path`` (on Windows: its owner is this process's user, or the owner the process gives
+    new files, which is Administrators in an elevated window). OSError when it cannot be read."""
+    if sys.platform != "win32":
+        return path.stat().st_uid == os.getuid()
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    free = kernel32.LocalFree
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = ctypes.c_void_p
+    to_text = advapi32.ConvertSidToStringSidW
+    to_text.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    to_text.restype = wintypes.BOOL
+
+    def sid_text(psid) -> str:
+        out = ctypes.c_void_p()
+        if not to_text(psid, ctypes.byref(out)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return ctypes.wstring_at(out.value)
+        finally:
+            free(out)
+
+    get = advapi32.GetNamedSecurityInfoW
+    get.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD] + [ctypes.POINTER(ctypes.c_void_p)] * 5
+    get.restype = wintypes.DWORD
+    owner, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    code = get(str(path), 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(sd))  # SE_FILE_OBJECT, OWNER_...
+    if code != 0:
+        raise ctypes.WinError(code)
+    try:
+        owner_sid = sid_text(owner)
+    finally:
+        free(sd)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    open_token = advapi32.OpenProcessToken
+    open_token.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    open_token.restype = wintypes.BOOL
+    info = advapi32.GetTokenInformation
+    info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    info.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    token = wintypes.HANDLE()
+    if not open_token(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        mine = set()
+        for token_class in (1, 4):  # TokenUser, TokenOwner: both start with the SID
+            size = wintypes.DWORD(0)
+            info(token, token_class, None, 0, ctypes.byref(size))
+            buf = ctypes.create_string_buffer(max(size.value, 64))
+            if not info(token, token_class, buf, len(buf), ctypes.byref(size)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            mine.add(sid_text(ctypes.c_void_p.from_buffer(buf).value))
+    finally:
+        kernel32.CloseHandle(token)
+    return owner_sid in mine
+
+
+def _make_root(root: Path) -> None:
+    """Creates the model folder if it is missing. On Windows only this user can change it (a folder made under C:\\
+    would otherwise let every signed-in user replace the model files)."""
+    if root.is_dir():
+        return
+    root.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        with contextlib.suppress(FileExistsError):
+            _private_mkdir(root)
+    else:
+        root.mkdir(exist_ok=True)
+
+
 def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[str], None]] = None) -> Path:
     """Where prepared models are kept: ``cache_dir``, or ~/.cache/kitten-inference/tts2.
 
     On Windows with a non-UTF-8 code page (the usual case), the engine opens only ASCII paths. A path with other
     characters is then replaced by its 8.3 short form when that is ASCII; else the default folder moves to an ASCII
     folder under %PROGRAMDATA% (with a note), and a given cache_dir is refused at once, before any download."""
-    root = Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE
+    # Absolute once, here: the engine is started again later (load_voice, clone_voice) with these paths, also after
+    # the program changed its working folder.
+    root = Path(cache_dir).expanduser().absolute() if cache_dir is not None else DEFAULT_CACHE
     if _ascii(str(root)) or _narrow_paths_are_utf8():
         return root
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        _make_root(root)
     except OSError:
         pass
     short = _short_path(root)
@@ -91,8 +212,19 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
         fallback = _fallback_root()
         if _ascii(str(fallback)):
             try:
-                if not fallback.is_dir():  # say it once, when the folder is made
-                    fallback.mkdir(parents=True, exist_ok=True)
+                made = False
+                if not fallback.is_dir():
+                    # %PROGRAMDATA% lets every user add folders, and this one's name can be worked out from the user
+                    # folder's path: make it private, and use an existing one only when this user owns it.
+                    fallback.parent.mkdir(parents=True, exist_ok=True)
+                    with contextlib.suppress(FileExistsError):
+                        _private_mkdir(fallback)
+                        made = True
+                if not _owned_by_me(fallback):
+                    raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user; pass a "
+                                       "new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
+                                       "kitten-tts2 --cache-dir C:\\kitten-tts2), which is then made for you only")
+                if made:  # say it once, when the folder is made
                     (log or _log)(f"the path of your user folder has characters the engine cannot open on this "
                                   f"Windows setup; models are kept in {fallback} instead (cache_dir= chooses another "
                                   "folder)")
@@ -101,8 +233,9 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
                 pass
     raise PrepareError(f"the model folder {root} has characters outside ASCII, which the engine cannot open on Windows "
                        "with this system's code page. Use an ASCII folder: KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
-                       "kitten-tts2 --cache-dir C:\\kitten-tts2 (or turn on \"Use Unicode UTF-8 for worldwide language "
-                       "support\" in the Region settings)")
+                       "kitten-tts2 --cache-dir C:\\kitten-tts2, a new folder, which is then made so that only you can "
+                       "change it (or turn on \"Use Unicode UTF-8 for worldwide language support\" in the Region "
+                       "settings)")
 
 
 def _download_cache(cache_dir: Optional[os.PathLike]) -> Optional[Path]:
@@ -254,11 +387,42 @@ def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Path:
         raise PrepareError(f"downloading {repo}/{name} failed: {exc}") from exc
 
 
+def _remove_stale_partials(root: Path, keep: str) -> None:
+    """Removes the .partial-<sha> folders of other revisions that no process is preparing (their lock is free): a
+    stopped preparation of a revision that is no longer the latest would otherwise stay (up to about 2 GB)."""
+    from filelock import FileLock, Timeout
+    for partial in root.glob(".partial-*"):
+        other = partial.name[len(".partial-"):]
+        if other == keep or not _SHA.fullmatch(other) or not partial.is_dir():
+            continue
+        lock = FileLock(str(root / f".{other}.lock"))
+        try:
+            lock.acquire(timeout=0)
+        except Timeout:
+            continue
+        try:
+            shutil.rmtree(partial, ignore_errors=True)
+        finally:
+            lock.release()
+
+
+def _previous(root: Path, repo: str, sha: str) -> Optional[str]:
+    """The commit that main resolved to at the last successful preparation, when it is not ``sha`` and is prepared."""
+    try:
+        old = _ref_file(root, repo, "main").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return old if _SHA.fullmatch(old) and old != sha and is_prepared(root / old) else None
+
+
 def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: Optional[os.PathLike] = None,
            with_cloning: bool = False, repo: str = MODEL_REPO, log: Callable[[str], None] = _log,
            before_download: Optional[Callable[[], None]] = None) -> Path:
     """The prepared model directory for ``revision`` (default: the latest, main), preparing it first if needed.
-    ``before_download`` runs once before anything is downloaded (the GPU check: fail before minutes of work)."""
+    ``before_download`` runs once before anything is downloaded (the GPU check: fail before minutes of work).
+
+    Without ``revision``, when a newer main cannot be downloaded or prepared (no disk space, a download error, a
+    model this version cannot convert), the revision prepared last time is used instead, with a warning."""
     root = cache_root(cache_dir, log)
     sha = resolve_revision(repo, revision, root, log)
     final = root / sha
@@ -267,7 +431,28 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
         return final
     if before_download is not None:
         before_download()
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        _prepare(root, final, sha, text_data_tool=text_data_tool, cache_dir=cache_dir, with_cloning=with_cloning,
+                 repo=repo, log=log)
+    except (PrepareError, OSError) as exc:
+        previous = None if revision is not None else _previous(root, repo, sha)
+        if previous is None:
+            raise
+        if not is_prepared(root / previous, with_cloning):
+            raise PrepareError(f"{exc} (the earlier revision {previous} is prepared without voice cloning: "
+                               f"revision=\"{previous}\" or kitten-tts2 --revision {previous} uses it)") from exc
+        log(f"warning: the new {repo} revision {sha[:12]} could not be prepared ({exc}); using the revision prepared "
+            f"before, {previous[:12]}. The next start tries again; revision=\"{previous}\" (kitten-tts2 --revision "
+            f"{previous}) keeps this one")
+        return root / previous
+    _record_ref(root, repo, revision, sha)
+    return final
+
+
+def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_dir: Optional[os.PathLike],
+             with_cloning: bool, repo: str, log: Callable[[str], None]) -> None:
+    """Downloads and prepares ``sha`` into ``final`` under the revision's lock (see ensure)."""
+    _make_root(root)
     with _locked(root / f".{sha}.lock"):
         if not is_prepared(final, with_cloning):
             prepare = _assets()
@@ -284,6 +469,7 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 downloaded = time.monotonic()
                 partial = root / f".partial-{sha}"
                 shutil.rmtree(partial, ignore_errors=True)
+                _remove_stale_partials(root, sha)
                 log(f"[2/3] preparing the model for this machine{' with voice cloning' if with_cloning else ''} "
                     "(a few minutes)")
                 argv = ["--model-dir", str(snapshot), "--out", str(partial), "--text-data-tool", str(text_data_tool),
@@ -303,8 +489,11 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
                 downloaded = time.monotonic()
                 # config.json is the commit point: without its cloning entry, files in native/cloning are a
-                # stopped earlier attempt.
+                # stopped earlier attempt, and so are the staging folders (.clone-prepare-*, up to 1.1 GB each) of
+                # an attempt that was killed before it could remove its own.
                 shutil.rmtree(final / "native" / "cloning", ignore_errors=True)
+                for staging in (final / "native").glob(".clone-prepare-*"):
+                    shutil.rmtree(staging, ignore_errors=True)
                 log("[2/3] preparing the voice cloning files")
                 argv = ["--model-dir", str(snapshot), "--out", str(final), "--cloning-only", *common]
                 _run_prepare(argv, root / f"prepare-cloning-{sha[:12]}.log")
@@ -313,5 +502,3 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
             done = time.monotonic()
             log(f"[3/3] model ready in {done - started:.0f} s (downloads {downloaded - started:.0f} s, preparation "
                 f"{done - downloaded:.0f} s): {final}")
-    _record_ref(root, repo, revision, sha)
-    return final

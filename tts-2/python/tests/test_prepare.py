@@ -157,6 +157,48 @@ def test_interrupted_run_leaves_nothing_and_resumes(env):
     assert not (d / "native" / "model.kt2n").exists()  # nothing of the interrupted attempt survives
 
 
+def test_stopped_preparation_of_an_older_revision_is_removed(env):
+    old = env.cache / f".partial-{OTHER}"  # a stopped attempt at a revision that is no longer main
+    (old / "native").mkdir(parents=True)
+    (old / "native" / "model.kt2n").write_bytes(b"partial")
+    busy = env.cache / f".partial-{'2' * 40}"  # another process is preparing that one: left alone
+    busy.mkdir()
+    from filelock import FileLock
+    with FileLock(str(env.cache / f".{'2' * 40}.lock")):
+        env.run()
+    assert not old.exists() and busy.exists()
+
+
+def test_a_new_main_that_cannot_be_prepared_falls_back(env):
+    env.run()
+    env.hub.sha = OTHER
+    env.prep.fail_with = OSError(28, "No space left on device")
+    env.lines.clear()
+    assert env.run() == env.cache / SHA
+    assert any(l.startswith("warning: the new KittenML/kitten-tts-2 revision 000000000000 could not be prepared")
+               and "No space left on device" in l and f'revision="{SHA}"' in l for l in env.lines), env.lines
+    assert _prepare._ref_file(env.cache, "KittenML/kitten-tts-2", "main").read_text().strip() == SHA
+    with pytest.raises(_prepare.PrepareError, match="No space left"):  # an explicit revision: no fallback
+        env.run(revision=OTHER)
+    with pytest.raises(_prepare.PrepareError, match=f'prepared without voice cloning: revision="{SHA}"'):
+        env.run(with_cloning=True)
+    env.prep.fail_with = None
+    assert env.run() == env.cache / OTHER  # tried again at the next start
+
+
+def test_no_fallback_without_an_earlier_revision(env):
+    env.prep.fail_with = ValueError("token map changed")
+    with pytest.raises(_prepare.PrepareError, match="token map changed"):
+        env.run()
+
+
+def test_relative_cache_dir_is_made_absolute(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    root = _prepare.cache_root("models")
+    assert root == tmp_path / "models" and root.is_absolute()
+    assert _prepare._download_cache("models") == tmp_path / "models" / "downloads"
+
+
 def test_failure_message(env):
     env.prep.fail_with = ValueError("full decoder source checksum mismatch")
     with pytest.raises(_prepare.PrepareError, match="checksum mismatch.*full log:"):
@@ -168,12 +210,16 @@ def test_cloning_added_to_a_prepared_model(env):
     d = env.run()
     (d / "native" / "cloning").mkdir(parents=True)
     (d / "native" / "cloning" / "stale.safetensors").write_bytes(b"x")  # a stopped earlier attempt
+    staging = d / "native" / ".clone-prepare-k1ll3d" / "cloning"  # the staging folder of a killed attempt
+    staging.mkdir(parents=True)
+    (staging / "s3gen.safetensors").write_bytes(b"x" * 1000)
     env.lines.clear()
     assert env.run(with_cloning=True) == d
     argv = env.prep.runs[-1]
     assert "--cloning-only" in argv and argv[argv.index("--out") + 1] == str(d)
     assert _prepare.is_prepared(d, with_cloning=True)
     assert not (d / "native" / "cloning" / "stale.safetensors").exists()
+    assert not list((d / "native").glob(".clone-prepare-*"))
     assert "speaker/model.safetensors" in [c for c in env.hub.calls if c[0] == "snapshot"][-1][3]
     assert [l[:5] for l in env.lines] == ["[1/3]", "[2/3]", "[3/3]"]
 
@@ -289,6 +335,18 @@ def test_non_ascii_default_cache_without_a_short_name_moves(monkeypatch, tmp_pat
     assert _prepare.cache_root(log=notes.append) == root and len(notes) == 1  # said once
 
 
+def test_fallback_folder_is_private_and_must_be_this_users(monkeypatch, tmp_path):
+    # The folder's name can be worked out by any user of the machine: it is made for this user only, and one that
+    # someone else made first is refused.
+    _Windows(monkeypatch, tmp_path, lambda path: path)
+    root = _prepare.cache_root(log=lambda m: None)
+    if os.name != "nt":
+        assert root.stat().st_mode & 0o777 == 0o700
+    monkeypatch.setattr(_prepare, "_owned_by_me", lambda path: False)
+    with pytest.raises(_prepare.PrepareError, match="belongs to another user; pass a new ASCII folder as cache_dir"):
+        _prepare.cache_root(log=lambda m: None)
+
+
 def test_non_ascii_cache_dir_is_refused_before_any_download(monkeypatch, tmp_path, env):
     _Windows(monkeypatch, tmp_path, lambda path: None)
     with pytest.raises(_prepare.PrepareError, match='ASCII folder: KittenTTS2.cache_dir="C:/kitten-tts2"'):
@@ -321,6 +379,40 @@ def test_windows_real_non_ascii_folders(tmp_path, monkeypatch):
         moved = root.parent.name == "kitten-inference" and root.name.startswith("tts2-")
         assert moved or os.path.samefile(root, home / ".cache" / "kitten-inference" / "tts2"), root
         print(f"{name!r}: {root} ({'moved' if moved else 'short path'})")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="platform: Windows only")
+def test_windows_private_folder(tmp_path):
+    """The fallback folder's access list on a real Windows file system: no access for other users, inherited by
+    what is made inside, and owned by this user."""
+    import subprocess
+    folder = tmp_path / "private"
+    _prepare._private_mkdir(folder)
+    (folder / "sub").mkdir()
+    (folder / "sub" / "file.bin").write_bytes(b"x")
+    assert _prepare._owned_by_me(folder) and _prepare._owned_by_me(folder / "sub" / "file.bin")
+    for path in (folder, folder / "sub", folder / "sub" / "file.bin"):
+        acl = subprocess.run(["icacls", str(path)], capture_output=True, text=True, check=True).stdout
+        print(acl)
+        for other in ("BUILTIN\\Users", "Authenticated Users", "Everyone", "CREATOR OWNER"):
+            assert other not in acl, (path, acl)
+    with pytest.raises(FileExistsError):
+        _prepare._private_mkdir(folder)
+    assert not _prepare._owned_by_me(Path(os.environ.get("SystemRoot", "C:\\Windows")))  # owned by TrustedInstaller
+
+
+def test_child_ignores_modules_in_the_current_folder(tmp_path, monkeypatch):
+    # python -c puts the current folder first on sys.path: a json.py or kitten_inference/ there must not be imported.
+    here = tmp_path / "downloads"
+    (here / "kitten_inference").mkdir(parents=True)
+    (here / "kitten_inference" / "__init__.py").write_text("raise SystemExit('planted package imported')\n")
+    for name in ("json", "argparse", "hashlib", "numpy"):
+        (here / f"{name}.py").write_text(f"raise SystemExit('planted {name}.py imported')\n")
+    monkeypatch.chdir(here)
+    log = tmp_path / "prepare.log"
+    _prepare._run_prepare(["--help"], log)
+    text = log.read_text(encoding="utf-8")
+    assert "planted" not in text and "usage" in text.lower(), text
 
 
 def test_a_concurrent_ref_update_is_not_an_error(env, monkeypatch):
