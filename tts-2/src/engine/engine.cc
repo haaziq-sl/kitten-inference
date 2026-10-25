@@ -4613,6 +4613,9 @@ KT2N_API int32_t kt2n_engine_create(const kt2n_engine_config* cfg, kt2n_engine**
     return KT2N_OK;
   }
   c.memory_profile = KT2N_MEMORY_PROFILE_LOW;
+  // The failed default-profile create leaves its last CUDA error (out of memory) to be read: clear it, or the low
+  // profile's first kernel launch check reads it and fails ("repack qkv failed (rc 2)").
+  (void)cudaGetLastError();
   rc = engine_create_impl(&c, out, err);
   if (rc == KT2N_OK) {
     (*out)->auto_profile = "low";
