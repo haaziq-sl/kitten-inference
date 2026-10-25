@@ -6,30 +6,64 @@ Original KittenML material is licensed under the Apache License, Version 2.0
 
 Third-party code included in this package
 -----------------------------------------
-engine/src/utils/stb_image.h and engine/src/utils/stb_image_resize2.h
-(stb, https://github.com/nothings/stb) are compiled into the engine. Their
-author offers them under the MIT License or as public domain; they are used
-here under the MIT License:
+Every wheel:
 
-  Copyright (c) 2017 Sean Barrett
+- stb: engine/src/utils/stb_image.h and engine/src/utils/stb_image_resize2.h
+  (https://github.com/nothings/stb) are compiled into the engine. Their
+  author offers them under the MIT License or as public domain; they are used
+  here under the MIT License:
 
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files (the "Software"), to deal
-  in the Software without restriction, including without limitation the rights
-  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-  copies of the Software, and to permit persons to whom the Software is
-  furnished to do so, subject to the following conditions:
+    Copyright (c) 2017 Sean Barrett
 
-  The above copyright notice and this permission notice shall be included in
-  all copies or substantial portions of the Software.
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-  SOFTWARE.
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+- pybind11 (https://github.com/pybind/pybind11), compiled into the engine
+  extension kitten_inference/tts08/_engine. BSD-3-Clause, Copyright (c) 2016
+  Wenzel Jakob; the full notice and licence are in licenses/pybind11.txt.
+
+Linux wheels (in kitten_inference_tts08.libs/):
+
+- libgomp-*.so.*: libgomp, the GNU OpenMP runtime library from GCC, copied
+  unchanged (apart from its file name and dynamic-section entries set by
+  auditwheel) from the build image: AlmaLinux 8 libgomp 8.5.0 in the
+  manylinux_2_28 wheels, CentOS 7 libgomp 4.8.5 in the manylinux2014 wheels.
+  Copyright (C) Free Software Foundation, Inc. Licensed under the GNU General
+  Public License, version 3 or later, with the GCC Runtime Library Exception,
+  version 3.1: licenses/GPL-3.0.txt and licenses/GCC-exception-3.1.txt.
+  Source code: the gcc source packages of those releases
+  (https://vault.almalinux.org/8.10/BaseOS/Source/ and
+  https://vault.centos.org/7.9.2009/os/Source/), and https://gcc.gnu.org.
+
+Windows wheels (in kitten_inference_tts08.libs/):
+
+- msvcp140-*.dll and vcomp140-*.dll (and vcruntime140_1-*.dll in the CPython
+  3.8 wheels): the Microsoft Visual C++ runtime and OpenMP runtime libraries,
+  copied by delvewheel from the redistributable folder (VC\Redist) of the
+  Visual Studio that built the engine, and distributed under its licence
+  terms for distributable code
+  (https://learn.microsoft.com/visualstudio/releases/2026/redistribution).
+  Copyright (c) Microsoft Corporation.
+
+Android wheel (in kitten_inference_tts08.libs/):
+
+- libc++_shared-*.so: the LLVM C++ standard library (libc++) from the Android
+  NDK. Apache License 2.0 with LLVM Exceptions: licenses/libc++.txt.
 
 Not included
 ------------

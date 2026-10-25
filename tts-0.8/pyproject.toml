@@ -11,7 +11,7 @@ version = "0.2.0"
 description = "Kitten TTS 0.8 (15M, 40M and 80M models) on a native C++ engine"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE", "NOTICE", "licenses/*.txt"]
 authors = [{ name = "KittenML" }]
 requires-python = ">=3.8"
 # Lower bounds are the oldest versions tested (CI job "lowest dependencies").
