@@ -38,7 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64 manylinux2014 CPython 3.8-3.14
+          - name: Linux x86_64 manylinux2014 CPython 3.8-3.15
             artifact: linux-x86_64-manylinux2014
             os: ubuntu-latest
             arch: x86_64
@@ -57,7 +57,7 @@ jobs:
               cp313-manylinux_x86_64
               cp314-manylinux_x86_64
 
-          - name: Linux x86_64 manylinux_2_28 CPython 3.8-3.14
+          - name: Linux x86_64 manylinux_2_28 CPython 3.8-3.15
             artifact: linux-x86_64-manylinux-2-28
             os: ubuntu-latest
             arch: x86_64
@@ -76,7 +76,7 @@ jobs:
               cp313-manylinux_x86_64
               cp314-manylinux_x86_64
 
-          - name: Linux ARM64 manylinux2014 CPython 3.8-3.14
+          - name: Linux ARM64 manylinux2014 CPython 3.8-3.15
             artifact: linux-aarch64-manylinux2014
             os: ubuntu-24.04-arm
             arch: aarch64
@@ -95,7 +95,7 @@ jobs:
               cp313-manylinux_aarch64
               cp314-manylinux_aarch64
 
-          - name: Linux ARM64 manylinux_2_28 CPython 3.8-3.14
+          - name: Linux ARM64 manylinux_2_28 CPython 3.8-3.15
             artifact: linux-aarch64-manylinux-2-28
             os: ubuntu-24.04-arm
             arch: aarch64
@@ -133,6 +133,20 @@ jobs:
           package-dir: tts-0.8
           output-dir: wheelhouse
 
+      # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same image, flags and tests.
+      - name: Build the CPython 3.15 wheel
+        uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: cp315-manylinux_${{ matrix.arch }}
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_MANYLINUX_AARCH64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.13.5"
@@ -141,7 +155,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for py in 3.8 3.9 3.10 3.11 3.12 3.13 3.14; do
+          for py in 3.8 3.9 3.10 3.11 3.12 3.13 3.14 3.15; do
             tag="cp${py/./}"
             echo "::group::Python $py"
             uv venv -q -p "$py" "venv-$tag"
@@ -168,7 +182,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows x86_64 CPython 3.8-3.14
+          - name: Windows x86_64 CPython 3.8-3.15
             os: windows-2025-vs2026
             artifact: windows-x86_64
             cibw_build: >-
@@ -179,6 +193,7 @@ jobs:
               cp312-win_amd64
               cp313-win_amd64
               cp314-win_amd64
+            cibw_build_315: cp315-win_amd64
             cibw_archs_windows: AMD64
             cibw_archs_macos: auto
             cmake_config_settings: >-
@@ -193,7 +208,7 @@ jobs:
               --cache-dir {project}/.hf-cache --expect-backend cpu
             host_pythons: ""
 
-          - name: Windows ARM64 CPython 3.11-3.14
+          - name: Windows ARM64 CPython 3.11-3.15
             os: windows-11-arm
             artifact: windows-arm64
             cibw_build: >-
@@ -201,6 +216,7 @@ jobs:
               cp312-win_arm64
               cp313-win_arm64
               cp314-win_arm64
+            cibw_build_315: cp315-win_arm64
             cibw_archs_windows: ARM64
             cibw_archs_macos: auto
             cmake_config_settings: >-
@@ -215,7 +231,7 @@ jobs:
               --cache-dir {project}/.hf-cache --expect-backend cpu
             host_pythons: ""
 
-          - name: macOS ARM64 CPython 3.8-3.14
+          - name: macOS ARM64 CPython 3.8-3.15
             os: macos-26
             artifact: macos-arm64
             cibw_build: >-
@@ -226,6 +242,7 @@ jobs:
               cp312-macosx_arm64
               cp313-macosx_arm64
               cp314-macosx_arm64
+            cibw_build_315: cp315-macosx_arm64
             cibw_archs_windows: auto
             cibw_archs_macos: arm64
             cmake_config_settings: >-
@@ -244,7 +261,7 @@ jobs:
               --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal
             host_pythons: "3.8"
 
-          - name: macOS x86_64 CPython 3.8-3.14
+          - name: macOS x86_64 CPython 3.8-3.15
             os: macos-15-intel
             artifact: macos-x86_64
             cibw_build: >-
@@ -255,6 +272,7 @@ jobs:
               cp312-macosx_x86_64
               cp313-macosx_x86_64
               cp314-macosx_x86_64
+            cibw_build_315: cp315-macosx_x86_64
             cibw_archs_windows: auto
             cibw_archs_macos: x86_64
             cmake_config_settings: >-
@@ -278,6 +296,8 @@ jobs:
         if: runner.os == 'macOS'
         run: mkdir -p /tmp/cibw && echo "TMPDIR=/tmp/cibw" >> "$GITHUB_ENV"
 
+      # Windows: bundle the MSVC C++ and OpenMP runtimes (msvcp140, vcomp140), which Python does not ship.
+      # kitten_inference is a namespace package, so delvewheel must not create its __init__.py.
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
@@ -287,8 +307,27 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_BEFORE_BUILD_WINDOWS: pip install "delvewheel>=1.10"
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair --namespace-pkg kitten_inference -w {dest_dir} {wheel}
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_TEST_SKIP: ${{ matrix.test_skip }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same flags, repair and tests.
+      - name: Build and test the CPython 3.15 wheel
+        uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build_315 }}
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
+          CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_BEFORE_BUILD_WINDOWS: pip install "delvewheel>=1.10"
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+          CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
           package-dir: tts-0.8
@@ -493,6 +532,11 @@ jobs:
                   bad.append(f"{w.name}: no model_defs")
               if "macosx" in w.name and "kitten_inference/tts08/metal_kernels.metallib" not in names:
                   bad.append(f"{w.name}: no metallib")
+              if "-win_" in w.name:
+                  libs = [n.lower() for n in names if n.startswith("kitten_inference_tts08.libs/")]
+                  for dll in ("msvcp140", "vcomp140"):
+                      if not any(n.split("/")[-1].startswith(dll) for n in libs):
+                          bad.append(f"{w.name}: {dll} not bundled")
               print(f"| {w.name} | {w.stat().st_size} | {hashlib.sha256(w.read_bytes()).hexdigest()} |")
           print("\n" + ("\n".join(bad) if bad else "contents ok"))
           sys.exit(1 if bad else 0)

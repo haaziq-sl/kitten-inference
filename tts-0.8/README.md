@@ -49,12 +49,12 @@ Options:
 
 | Platform | Python | |
 |---|---|---|
-| Linux x86_64 | 3.8–3.14 | tested |
-| Linux ARM64 | 3.8–3.14 | tested |
-| Windows x64 | 3.8–3.14 | tested |
-| macOS Apple Silicon | 3.8–3.14 | tested |
-| macOS Intel | 3.8–3.14 | built, not tested |
-| Windows ARM64 | 3.11–3.14 | built, not tested |
+| Linux x86_64 | 3.8–3.15 | tested |
+| Linux ARM64 | 3.8–3.15 | tested |
+| Windows x64 | 3.8–3.15 | tested |
+| macOS Apple Silicon | 3.8–3.15 | tested |
+| macOS Intel | 3.8–3.15 | built; passes an automated audio check, not tested by hand |
+| Windows ARM64 | 3.11–3.15 | built; passes an automated audio check, not tested by hand |
 | Android ARM64 | 3.13 | built, not tested |
 
 - Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later. macOS needs version 11 or newer.
