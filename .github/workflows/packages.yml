@@ -1,0 +1,181 @@
+# The two pure-Python distributions: kitten-inference (umbrella, extras only) and kitten-inference-tts2 (Python API
+# and kitten-tts2 command). Builds both wheels, installs them from a local folder on Linux, Windows and macOS for
+# every supported Python, checks what each extra installs (engine wheels are stand-ins here), runs the unit tests,
+# and records how Ubuntu 22.04's pip 22.0.2 treats the extras.
+name: packages
+
+on:
+  push:
+    paths:
+      - "umbrella/**"
+      - "tts-2/python/**"
+      - "tts-2/tools/kt2n_assets/**"
+      - "tts-2/include/kt2n/engine.h"
+      - "tts-2/NOTICE"
+      - "tts-2/licenses/**"
+      - ".github/workflows/packages.yml"
+  pull_request:
+    paths:
+      - "umbrella/**"
+      - "tts-2/python/**"
+      - "tts-2/tools/kt2n_assets/**"
+      - "tts-2/include/kt2n/engine.h"
+      - "tts-2/NOTICE"
+      - "tts-2/licenses/**"
+      - ".github/workflows/packages.yml"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check build==1.3.0 twine==6.2.0
+      - name: Build sdists and wheels (each wheel is built from its sdist)
+        run: |
+          python -m build umbrella --outdir dist
+          python -m build tts-2/python --outdir dist
+          ls -l dist
+      - name: Check the archives
+        run: |
+          python -m twine check --strict dist/*
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          umbrella = zipfile.ZipFile(glob.glob("dist/kitten_inference-0.2.0-py3-none-any.whl")[0]).namelist()
+          tts2 = zipfile.ZipFile(glob.glob("dist/kitten_inference_tts2-0.2.0-py3-none-any.whl")[0]).namelist()
+          assert [n for n in umbrella if not n.startswith("kitten_inference-0.2.0.dist-info/")] == \
+              ["kitten_inference/__init__.py"], umbrella
+          assert "kitten_inference/__init__.py" not in tts2
+          assert not [n for n in tts2 if "__pycache__" in n or n.endswith(".pyc")]
+          for need in ("kitten_inference/tts2/__init__.py", "kitten_inference/tts2/_assets/prepare.py",
+                       "kitten_inference/tts2/_assets/s3gen_tensors.tsv", "kitten_inference/tts2/NOTICE",
+                       "kitten_inference/tts2/licenses/Apache-2.0.txt"):
+              assert need in tts2, need
+          sdist = tarfile.open(glob.glob("dist/kitten_inference_tts2-0.2.0.tar.gz")[0]).getnames()
+          assert any(n.endswith("kitten_inference/tts2/_assets/prepare.py") for n in sdist)
+          print(len(umbrella), "files in the umbrella wheel,", len(tts2), "in the tts2 wheel")
+          PY
+      - name: Stand-in engine wheels
+        run: python umbrella/tests/make_stub_wheels.py stubs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stubs
+          path: stubs/
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: stubs
+          path: stubs
+      - name: Dependencies wheelhouse (kitten-inference-tts2's own dependencies, from PyPI)
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check -U pip
+          python -m pip download --disable-pip-version-check --dest deps "numpy>=1.24" "huggingface-hub>=0.25,<2" \
+            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest
+      - name: What each extra installs (local folders only)
+        run: python umbrella/tests/check_extras.py --find-links dist --find-links stubs --find-links deps
+      - name: Install kitten-inference[tts-2] for the unit tests
+        shell: bash
+        run: |
+          python -m venv venv
+          if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          $PY -m pip install --disable-pip-version-check --no-index --find-links dist --find-links stubs \
+            --find-links deps "kitten-inference[tts-2]==0.2.0" pytest
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Unit tests (installed packages; tests/gpu is skipped)
+        shell: bash
+        env:
+          KT2N_REQUIRE_ABI_TEST: "1"
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/$PY" -m pytest -q -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
+            "$GITHUB_WORKSPACE/tts-2/python/tests"
+
+  old-pip:
+    # Ubuntu 22.04's own pip (22.0.2): does "kitten-inference[tts-0.8]" install the engine?
+    needs: build
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: stubs
+          path: stubs
+      - name: System pip
+        run: |
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip > /dev/null
+          python3 --version && python3 -m pip --version
+      - name: Install each spelling with pip 22.0.2
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m pip download -q --dest deps "numpy>=1.24" "huggingface-hub>=0.25,<2" "tokenizers>=0.22,<0.23" \
+            "filelock>=3.12"
+          for spec in "kitten-inference[tts-0.8]==0.2.0" "kitten-inference[tts-0-8]==0.2.0" \
+                      "kitten-inference[tts-2]==0.2.0" "kitten-inference[tts-2-rocm]==0.2.0"; do
+            echo "::group::$spec"
+            echo "$ python3 -m pip install --no-index --find-links dist --find-links stubs --find-links deps \"$spec\""
+            python3 -m pip install --no-index --find-links dist --find-links stubs --find-links deps "$spec" 2>&1 \
+              | tee -a old-pip.log
+            echo "installed: $(python3 -m pip list 2>/dev/null | grep -i '^kitten' | tr -s ' ' | tr '\n' ';')" \
+              | tee -a old-pip.log
+            python3 -m pip uninstall -y -q kitten-inference kitten-inference-tts08 kitten-inference-tts2 \
+              kitten-inference-tts2-cu12 kitten-inference-tts2-rocm 2>/dev/null || true
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: old-pip-log
+          path: old-pip.log
+
+  publish:
+    # Releases only, from the KittenML repository (never from a fork), with PyPI trusted publishing.
+    if: github.event_name == 'release' && github.repository == 'KittenML/kitten-inference'
+    needs: [test]
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
