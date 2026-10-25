@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -38,6 +38,8 @@ Source = "https://github.com/KittenML/kitten-inference/tree/main/tts-2"
 Issues = "https://github.com/KittenML/kitten-inference/issues"
 
 [tool.hatch.build.targets.wheel]
+# Core metadata 2.4 (with the PEP 639 licence fields), which PyPI and twine 6.x accept; newer hatchling writes 2.5.
+core-metadata-version = "2.4"
 # kitten_inference/__init__.py belongs to the umbrella distribution (kitten-inference): only tts2/ ships here.
 only-include = ["kitten_inference/tts2"]
 exclude = ["__pycache__", "*.pyc"]
@@ -46,6 +48,7 @@ exclude = ["__pycache__", "*.pyc"]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 include = ["kitten_inference/tts2", "tests", "hatch_build.py", "README.md", "LICENSE"]
 exclude = ["__pycache__", "*.pyc"]
 

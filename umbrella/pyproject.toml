@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -31,7 +31,10 @@ Source = "https://github.com/KittenML/kitten-inference"
 Issues = "https://github.com/KittenML/kitten-inference/issues"
 
 [tool.hatch.build.targets.wheel]
+# Core metadata 2.4 (with the PEP 639 licence fields), which PyPI and twine 6.x accept; newer hatchling writes 2.5.
+core-metadata-version = "2.4"
 packages = ["kitten_inference"]
 
 [tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 include = ["kitten_inference", "tests", "README.md", "LICENSE"]
