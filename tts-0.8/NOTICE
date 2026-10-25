@@ -1,0 +1,41 @@
+Kitten TTS 0.8 inference engine (kitten-inference-tts08)
+Copyright 2026 KittenML
+
+Original KittenML material is licensed under the Apache License, Version 2.0
+(LICENSE).
+
+Third-party code included in this package
+-----------------------------------------
+engine/src/utils/stb_image.h and engine/src/utils/stb_image_resize2.h
+(stb, https://github.com/nothings/stb) are compiled into the engine. Their
+author offers them under the MIT License or as public domain; they are used
+here under the MIT License:
+
+  Copyright (c) 2017 Sean Barrett
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Not included
+------------
+- Model weights. On first use the package downloads them from Hugging Face
+  (KittenML/meownn-models, revision 5e9bca0cc3a4e2a617f604b1333d5f34536c1eed);
+  they are subject to the terms on their Hugging Face page.
+- Runtime dependencies, which pip installs separately under their own
+  licenses. Among them, phonemizer and the espeak-ng library shipped by
+  espeakng_loader are GPL-3.0.
