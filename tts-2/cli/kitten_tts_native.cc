@@ -481,9 +481,13 @@ int speak(const Options& o) {
     request.format = o.format == "wav" && (!o.stream || to_stdout) ? KT2N_FORMAT_WAV : KT2N_FORMAT_PCM;
     request.output = o.stream ? KT2N_OUTPUT_STREAM : KT2N_OUTPUT_COMPLETE;
     if (o.no_normalize) request.flags |= KT2N_REQ_NORMALIZE_OFF;
+    std::string request_id;  // kept until the submit below has read it
     if (o.seed) {
       request.seed = *o.seed;
       request.flags |= KT2N_REQ_SEED;
+    } else {
+      request_id = kt2n::cli::new_request_id();  // its own sampling seeds (see new_request_id)
+      request.request_id = request_id.c_str();
     }
     if (o.preset) {
       request.sampler.present |= KT2N_SAMPLER_HAS_MODE;

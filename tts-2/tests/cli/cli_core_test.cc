@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -532,6 +533,19 @@ TEST(CliReport, Headers) {
   kt2n::cli::RunReport r;
   r.engine.present = true;  // metrics but no headers: output is null
   EXPECT_TRUE(kt2n::json::parse(kt2n::cli::build_report(r)).at_pointer("/engine/output")->is_null());
+}
+
+TEST(CliRequestId, UniqueAndWellFormed) {
+  // Requests without --seed take their sampling seeds from the request id: every request gets its own.
+  std::set<std::string> ids;
+  for (int i = 0; i < 1000; ++i) {
+    const std::string id = kt2n::cli::new_request_id();
+    ASSERT_EQ(id.size(), 36u) << id;
+    EXPECT_EQ(id.rfind("cli_", 0), 0u) << id;
+    EXPECT_EQ(id.find_first_not_of("0123456789abcdef", 4), std::string::npos) << id;
+    ids.insert(id);
+  }
+  EXPECT_EQ(ids.size(), 1000u);
 }
 
 TEST(CliReport, WavHeader) {

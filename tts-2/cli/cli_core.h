@@ -205,4 +205,9 @@ void read_metrics(const std::string& fields_json, EngineCounters& counters);
 // The canonical 44-byte PCM16 mono 24 kHz WAV header for `data_bytes` bytes.
 std::string wav_header(uint32_t data_bytes);
 
+// A new id for one request without --seed: "cli_" and 32 random hex digits. Without a seed the engine derives the
+// sampling seeds from the request id (kt2n_request_params.request_id), so each request needs its own id or every run
+// (and every --repeat) would sound the same. The Python API does the same ("req_" and a random UUID).
+std::string new_request_id();
+
 }  // namespace kt2n::cli

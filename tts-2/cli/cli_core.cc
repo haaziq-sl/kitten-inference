@@ -4,11 +4,14 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <random>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -370,6 +373,7 @@ std::string help_text() {
          "\n"
          "Sampling:\n"
          "  --seed N                fixed sampling seed; repeated --stream false runs give the same audio\n"
+         "                          (without it, every run and every --repeat samples anew)\n"
          "  --preset stable|expressive\n"
          "  --temperature F --top-p F --min-p F --top-k N --max-tokens N\n"
          "  --no-normalize          speak the text as given (skip number, date and symbol expansion)\n"
@@ -605,6 +609,23 @@ void read_metrics(const std::string& fields_json, EngineCounters& counters) {
   take("audio_tokens", counters.audio_tokens);
   take("lm_steps", counters.lm_steps);
   counters.present = true;
+}
+
+std::string new_request_id() {
+  static std::atomic<uint64_t> counter{0};
+  uint64_t a = 0, b = 0;
+  try {
+    std::random_device rd;
+    a = (uint64_t(rd()) << 32) ^ rd();
+    b = (uint64_t(rd()) << 32) ^ rd();
+  } catch (const std::exception&) {  // no random source: the clock and the counter below still make ids unique
+  }
+  a ^= static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+  b ^= (counter.fetch_add(1) + 1) * 0x9E3779B97F4A7C15ull;
+  char id[40];
+  std::snprintf(id, sizeof id, "cli_%016llx%016llx", static_cast<unsigned long long>(a),
+                static_cast<unsigned long long>(b));
+  return id;
 }
 
 std::string wav_header(uint32_t data_bytes) {
