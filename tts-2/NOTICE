@@ -121,13 +121,38 @@ are retained in licenses/PCG64.txt and licenses/SeedSequence.txt.
 
 NVIDIA CUDA runtime
 -------------------
-The NVIDIA CUDA Toolkit is installed separately for builds. The native build
-links CUDA::cudart_static and uses CMAKE_CUDA_RUNTIME_LIBRARY=Static, so its
+The NVIDIA CUDA Toolkit is installed separately for builds. The CUDA build
+(the default build and the kitten-inference-tts2-cu12 package) links
+CUDA::cudart_static and uses CMAKE_CUDA_RUNTIME_LIBRARY=Static, so its
 shared library contains NVIDIA CUDA runtime code. That code retains
 NVIDIA's terms; it is not Apache-2.0 material. CUDA 12.8's EULA lists
 libcudart_static.a among redistributable components, subject to its distribution
 requirements. Review those terms before distributing binaries:
 https://docs.nvidia.com/cuda/archive/12.8.0/eula/index.html
+The ROCm (HIP) build contains no NVIDIA code; see the next section.
+
+
+AMD ROCm (HIP build)
+--------------------
+ROCm is installed separately for builds. The HIP build (cmake --preset hip,
+and the kitten-inference-tts2-rocm package) compiles code from these ROCm
+components into its shared library:
+- rocRAND, https://github.com/ROCm/rocRAND: the Philox4x32-10 generator
+  (rocrand_init, rocrand4), used through include/kt2n/gpu_rand.h in GPU code.
+  MIT, Copyright (C) Advanced Micro Devices, Inc.; see
+  licenses/rocm/rocRAND.txt.
+- HIP, https://github.com/ROCm/hip and https://github.com/ROCm/clr: inline
+  functions from the HIP headers. MIT, Copyright (C) Advanced Micro Devices,
+  Inc.; see licenses/rocm/HIP.txt.
+- ROCm Device Libraries (amd/device-libs in
+  https://github.com/ROCm/llvm-project): the GPU math and runtime functions
+  that the HIP compiler links into every GPU code object. University of
+  Illinois/NCSA Open Source License, Copyright (c) 2014-2016, Advanced Micro
+  Devices, Inc.; see licenses/rocm/ROCm-Device-Libs.txt.
+These texts are the ones the ROCm 7.1 packages ship (the version the
+kitten-inference-tts2-rocm package is built with). The ROCm runtime itself
+(libamdhip64.so.7 and the libraries it loads) is not included: the HIP build
+uses the ROCm 7.x installed on the system.
 
 
 FFmpeg libraries
