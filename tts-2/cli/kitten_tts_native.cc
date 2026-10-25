@@ -335,7 +335,7 @@ int speak(const Options& o) {
     // A library without the in-process decode (the Python wheels) takes decoded audio: decode the file with the
     // system's ffmpeg program, as the reference pipeline does, before the engine starts.
     if (has_capability(KT2N_CAP_VOICE_PCM_ONLY)) {
-      reference_pcm = kt2n::cli::ffmpeg_decode(*o.reference_audio);
+      reference_pcm = kt2n::cli::ffmpeg_decode(*o.reference_audio, reference);
       reference.clear();
     }
   }
