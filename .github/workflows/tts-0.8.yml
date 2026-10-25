@@ -166,6 +166,17 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Oversubscribed threads (33 OpenMP threads on the runner's few cores), fp32 and int8
+        shell: bash
+        run: |
+          set -euo pipefail
+          nproc
+          for i in 1 2 3; do
+            OMP_NUM_THREADS=33 venv-cp312/bin/python tts-0.8/tests/audio_smoke.py --mode release \
+              --out-dir "audio-smoke/omp33-$i" --cache-dir .hf-cache --expect-backend cpu > /dev/null
+            echo "run $i ok"
+          done
+
       - run: ls -l wheelhouse
 
       - uses: actions/upload-artifact@v6
