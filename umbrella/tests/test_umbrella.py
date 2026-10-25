@@ -65,4 +65,5 @@ def test_metadata_extras():
         found.setdefault(extra, set()).add(canonical(spec))
     assert found == {extra: {canonical(s) for s in specs} for extra, specs in EXTRAS.items()}
     files = {str(f).replace("\\", "/") for f in dist.files or []}
-    assert {f for f in files if f.startswith("kitten_inference/")} == {"kitten_inference/__init__.py"}
+    assert {f for f in files if f.startswith("kitten_inference/") and "__pycache__" not in f} == \
+        {"kitten_inference/__init__.py"}
