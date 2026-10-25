@@ -208,7 +208,7 @@ build/default/bin/kitten-tts-native --assets models/kitten-tts-2 \
   --text "Using the saved voice." --output saved.wav
 ```
 
-Building a cloned voice needs about 23 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 13 GB (the audio is the same). A saved voice works only with the same prepared model, and loading it needs neither the cloning files nor Hugging Face access. `--voice-cache none` lets it load on 4 GB cards too: with a loaded voice and no `--voice-cache` option, the tool also prepares all built-in voices, which does not fit there.
+Building a cloned voice needs about 23 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 13 GB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. `--voice-cache none` lets it load on 4 GB cards too: with a loaded voice and no `--voice-cache` option, the tool also prepares all built-in voices, which does not fit there.
 
 ## Using less GPU memory
 
