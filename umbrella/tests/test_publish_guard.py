@@ -1,0 +1,78 @@
+"""The release check that keeps the umbrella off PyPI until every engine its extras name is there
+(.github/scripts/pypi_ready.py), against fake PyPI JSON answers."""
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "pypi_ready.py"
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
+@pytest.fixture(scope="module")
+def guard():
+    if not SCRIPT.is_file():
+        pytest.skip("not a source checkout (.github/scripts is not here)")
+    spec = importlib.util.spec_from_file_location("pypi_ready", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _wheel(name, version, plat="any", yanked=False):
+    return {"filename": f"{name.replace('-', '_')}-{version}-py3-none-{plat}.whl", "packagetype": "bdist_wheel",
+            "yanked": yanked}
+
+
+def _pypi(releases):
+    return lambda index, name: None if name not in releases else {"releases": releases[name]}
+
+
+FULL = {
+    "kitten-inference-tts08": {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64")]},
+    "kitten-inference-tts2": {"0.2.0": [_wheel("kitten-inference-tts2", "0.2.0")]},
+    "kitten-inference-tts2-cu12": {"0.2.0": [_wheel("kitten-inference-tts2-cu12", "0.2.0", "manylinux_2_28_x86_64"),
+                                             _wheel("kitten-inference-tts2-cu12", "0.2.0", "win_amd64")]},
+    "kitten-inference-tts2-rocm": {"0.2.0": [_wheel("kitten-inference-tts2-rocm", "0.2.0", "manylinux_2_28_x86_64")]},
+}
+
+
+def test_reads_the_umbrella_extras(guard):
+    reqs = guard.requirements(PYPROJECT)
+    assert reqs == {name: ">=0.2.0,<0.3" for name in FULL}
+
+
+def test_ready_when_every_engine_is_there(guard):
+    assert guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(FULL)) == []
+
+
+def test_not_ready_before_the_engines(guard):
+    partial = {k: v for k, v in FULL.items() if k in ("kitten-inference-tts2", "kitten-inference-tts08")}
+    problems = guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(partial))
+    assert problems == ["kitten-inference-tts2-cu12: not on idx", "kitten-inference-tts2-rocm: not on idx"]
+
+
+def test_missing_platform_and_wrong_versions(guard):
+    releases = dict(FULL)
+    releases["kitten-inference-tts2-cu12"] = {"0.2.0": [_wheel("kitten-inference-tts2-cu12", "0.2.0",
+                                                               "manylinux_2_28_x86_64")]}
+    releases["kitten-inference-tts2-rocm"] = {"0.3.0": [_wheel("kitten-inference-tts2-rocm", "0.3.0",
+                                                               "manylinux_2_28_x86_64")],
+                                              "0.2.0": [_wheel("kitten-inference-tts2-rocm", "0.2.0",
+                                                               "manylinux_2_28_x86_64", yanked=True)]}
+    problems = guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(releases))
+    assert problems == ["kitten-inference-tts2-cu12 0.2.0: no wheel for win_amd64",
+                        "kitten-inference-tts2-rocm: no release >=0.2.0,<0.3 with wheels"]
+
+
+def test_versions(guard):
+    ok = [("0.2.0", True), ("0.2.0.post1", True), ("0.2.5", True), ("0.3.0", False), ("0.1.1", False),
+          ("0.2.1rc1", False)]
+    for version, want in ok:
+        assert guard.satisfies(version, ">=0.2.0,<0.3") is want, version
+
+
+def test_warns_while_0_1_is_not_yanked(guard):
+    old = {"kitten-inference": {"0.1.0": [_wheel("kitten-inference", "0.1.0", yanked=True)],
+                                "0.1.1": [_wheel("kitten-inference", "0.1.1")]}}
+    assert guard.earlier_not_yanked("idx", get=_pypi(old)) == ["0.1.1"]

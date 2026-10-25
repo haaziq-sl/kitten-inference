@@ -1,7 +1,9 @@
 # The two pure-Python distributions: kitten-inference (umbrella, extras only) and kitten-inference-tts2 (Python API
 # and kitten-tts2 command). Builds both wheels, installs them from a local folder on Linux, Windows and macOS for
-# every supported Python, checks what each extra installs (engine wheels are stand-ins here), runs the unit tests,
-# and records how Ubuntu 22.04's pip 22.0.2 treats the extras.
+# every supported Python, checks what each extra installs (engine wheels are stand-ins with the real platform tags),
+# runs the unit tests, and records how Ubuntu 22.04's pip 22.0.2 treats the extras.
+# Run by hand with engine_run=<run id of "tts-2 engine wheels"> it also loads those real engine wheels through
+# kitten_inference.tts2 on Linux and Windows runners (no GPU there).
 name: packages
 
 on:
@@ -14,6 +16,7 @@ on:
       - "tts-2/NOTICE"
       - "tts-2/licenses/**"
       - ".github/workflows/packages.yml"
+      - ".github/scripts/**"
   pull_request:
     paths:
       - "umbrella/**"
@@ -23,7 +26,13 @@ on:
       - "tts-2/NOTICE"
       - "tts-2/licenses/**"
       - ".github/workflows/packages.yml"
+      - ".github/scripts/**"
   workflow_dispatch:
+    inputs:
+      engine_run:
+        description: 'Run id of a "tts-2 engine wheels" run in this repository: also test its real engine wheels'
+        required: false
+        default: ""
   release:
     types: [published]
 
@@ -63,8 +72,10 @@ jobs:
           assert any(n.endswith("kitten_inference/tts2/_assets/prepare.py") for n in sdist)
           print(len(umbrella), "files in the umbrella wheel,", len(tts2), "in the tts2 wheel")
           PY
-      - name: Stand-in engine wheels
-        run: python umbrella/tests/make_stub_wheels.py stubs
+      - name: What the release check says about PyPI today (information only; it gates the umbrella's upload)
+        run: python .github/scripts/pypi_ready.py check --pyproject umbrella/pyproject.toml || true
+      - name: Stand-in engine wheels (real platform tags) and the earlier kitten-inference 0.1.x
+        run: python umbrella/tests/make_stub_wheels.py stubs --old stubs-old
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -73,6 +84,10 @@ jobs:
         with:
           name: stubs
           path: stubs/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stubs-old
+          path: stubs-old/
 
   test:
     needs: build
@@ -96,11 +111,26 @@ jobs:
         with:
           name: stubs
           path: stubs
+      - uses: actions/download-artifact@v4
+        with:
+          name: stubs-old
+          path: stubs-old
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
-      - name: ffmpeg for the reference-audio decode tests (Linux)
+      # ffmpeg on every OS: the clone_voice decode tests (stdin pipe and by-name fallback) must run everywhere.
+      - name: ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+      - name: ffmpeg (Windows, the Gyan build that the error message suggests)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: choco install ffmpeg -y --no-progress > /dev/null && ffmpeg -version | head -1
+      - name: ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install ffmpeg > /dev/null && ffmpeg -version | head -1
       - name: Dependencies wheelhouse (kitten-inference-tts2's own dependencies, from PyPI)
         shell: bash
         run: |
@@ -112,8 +142,8 @@ jobs:
           rm -f deps/kitten_inference_tts2-*.whl
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
-      - name: What each extra installs with current pip (local folders only)
-        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps
+      - name: What each extra installs with current pip (local folders and a local index with 0.1.x, as on PyPI)
+        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps --old stubs-old
       - name: Install kitten-inference[tts-2] for the unit tests
         shell: bash
         run: |
@@ -122,14 +152,66 @@ jobs:
           echo "PY=$PY" >> "$GITHUB_ENV"
           $PY -m pip install --disable-pip-version-check --no-index --find-links dist --find-links stubs \
             --find-links deps "kitten-inference[tts-2]==0.2.0" pytest
-      - name: Unit tests (installed packages; tests/gpu is skipped)
+      - name: Unit tests (installed packages; tests/gpu is skipped, no other test may skip)
         shell: bash
         env:
           KT2N_REQUIRE_ABI_TEST: "1"
+          KT2N_REQUIRE_FFMPEG: "1"
+          KT2N_STRICT_SKIPS: "1"
+          KT2N_EXPECT_NO_NVIDIA_DRIVER: "1"
         run: |
           cd "$RUNNER_TEMP"
           "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
             "$GITHUB_WORKSPACE/tts-2/python/tests"
+
+  engine-wheels:
+    # By hand only (workflow_dispatch with engine_run): the real engine wheels of that run, installed with the two
+    # pure wheels and loaded through kitten_inference.tts2. The runners have no GPU.
+    if: github.event_name == 'workflow_dispatch' && inputs.engine_run != ''
+    needs: build
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: tts2-cu12-linux
+          - os: windows-2022
+            artifact: tts2-cu12-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: engine
+          run-id: ${{ inputs.engine_run }}
+          github-token: ${{ github.token }}
+      - name: Install the umbrella, kitten-inference-tts2 and the real engine wheel
+        shell: bash
+        run: |
+          ls -lR engine | head -20
+          python -m venv venv
+          if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          $PY -m pip install --disable-pip-version-check -q -U pip
+          $PY -m pip install --disable-pip-version-check dist/kitten_inference-0.2.0-py3-none-any.whl \
+            dist/kitten_inference_tts2-0.2.0-py3-none-any.whl $(find engine -name 'kitten_inference_tts2_cu12-*.whl')
+          sha256sum $(find engine -name '*.whl')
+      - name: Load the engine through kitten_inference.tts2 (no GPU)
+        shell: bash
+        run: |
+          if [ -d venv/Scripts ]; then export PATH="$PWD/venv/Scripts:$PATH"; else export PATH="$PWD/venv/bin:$PATH"; fi
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$PY" "$GITHUB_WORKSPACE/.github/scripts/engine_smoke.py"
 
   old-pip:
     # Ubuntu 22.04's own pip (22.0.2): does "kitten-inference[tts-0.8]" install the engine?
@@ -185,8 +267,11 @@ jobs:
           name: old-pip-log
           path: old-pip.log
 
-  publish:
-    # Releases only, from the KittenML repository (never from a fork), with PyPI trusted publishing.
+  # Releases only, from the KittenML repository (never from a fork), with PyPI trusted publishing. kitten-inference-tts2
+  # goes first; the umbrella goes only once every distribution its extras name is on PyPI (the engine wheels come
+  # from their own workflows or uploads): published first, its extras would point at nothing. The wait gives up after
+  # 2 hours; once the engines are up, re-run the failed job.
+  publish-tts2:
     if: github.event_name == 'release' && github.repository == 'KittenML/kitten-inference'
     needs: [test]
     runs-on: ubuntu-24.04
@@ -198,4 +283,31 @@ jobs:
         with:
           name: dist
           path: dist
+      - run: mkdir upload && mv dist/kitten_inference_tts2-* upload/ && ls -l upload
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/
+
+  publish-umbrella:
+    if: github.event_name == 'release' && github.repository == 'KittenML/kitten-inference'
+    needs: [publish-tts2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Wait until every distribution the extras name is on PyPI
+        run: python .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: mkdir upload && mv dist/kitten_inference-0* upload/ && ls -l upload
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/
