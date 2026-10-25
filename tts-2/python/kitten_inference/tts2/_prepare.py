@@ -8,11 +8,11 @@ downloads and resumes unfinished ones, and the pinned decoder, grammar and data 
 from __future__ import annotations
 
 import contextlib
-import io
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -21,12 +21,10 @@ from typing import Callable, List, Optional
 
 MODEL_REPO = "KittenML/kitten-tts-2"
 DEFAULT_CACHE = Path.home() / ".cache" / "kitten-inference" / "tts2"
-# What prepare reads from the model repository (the same list prepare.py downloads itself without --model-dir).
-MODEL_FILES = ["config.json", "lm/config.json", "lm/model.safetensors", "lm/tokenizer.json", "cpp/default/voices.json",
-               "voices/voices.json", "voices/*.npz"]
-# Voice cloning also reads the speaker-embedding network from the same snapshot.
-CLONING_FILES = ["speaker/*"]
 _SHA = re.compile(r"[0-9a-f]{40}")
+# The child process that runs prepare.main(argv) (kitten_inference.tts2._assets.prepare, the bundled copy of
+# tts-2/tools/kt2n_assets): its output goes to a log file, and the memory the conversion uses is returned afterwards.
+_CHILD = "import sys; from kitten_inference.tts2._assets.prepare import main; sys.exit(main(sys.argv[1:]))"
 
 
 class PrepareError(RuntimeError):
@@ -47,24 +45,9 @@ def _download_cache(cache_dir: Optional[os.PathLike]) -> Optional[Path]:
 
 
 def _assets():
-    from ._assets import prepare  # the copy of tts-2/tools/kt2n_assets made at build time
+    """The bundled prepare module, for its constants (what to download). Importing it does not import torch."""
+    from ._assets import prepare
     return prepare
-
-
-def _model_files(prepare) -> List[str]:
-    return list(getattr(prepare, "MODEL_ALLOW_PATTERNS", MODEL_FILES))
-
-
-def _cloning_files(prepare) -> List[str]:
-    return list(getattr(prepare, "CLONING_ALLOW_PATTERNS", CLONING_FILES))
-
-
-def _prepare_supports(prepare, flag: str) -> bool:
-    try:
-        source = Path(prepare.__file__).read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return f'"{flag}"' in source
 
 
 def _ref_file(root: Path, repo: str, revision: str) -> Path:
@@ -72,7 +55,8 @@ def _ref_file(root: Path, repo: str, revision: str) -> Path:
     return root / "refs" / safe
 
 
-def resolve_revision(repo: str, revision: Optional[str], root: Path, log: Callable[[str], None] = None) -> str:
+def resolve_revision(repo: str, revision: Optional[str], root: Path,
+                     log: Optional[Callable[[str], None]] = None) -> str:
     """The commit sha of ``revision`` (default main). A 40-hex sha needs no network. Otherwise Hugging Face is asked;
     without a connection the sha recorded by the last successful preparation of that revision is used."""
     rev = revision or "main"
@@ -92,7 +76,7 @@ def resolve_revision(repo: str, revision: Optional[str], root: Path, log: Callab
             sha = ref.read_text(encoding="utf-8").strip()
             if _SHA.fullmatch(sha) and (root / sha / "config.json").is_file():
                 (log or _log)(f"cannot reach Hugging Face ({type(exc).__name__}); using the prepared {repo}@{rev} "
-                     f"from {root / sha}")
+                              f"from {root / sha}")
                 return sha
         raise PrepareError(f"cannot find {repo} revision {rev!r} on Hugging Face: {exc}") from exc
 
@@ -138,34 +122,23 @@ def _locked(path: Path):
         lock.release()
 
 
-def _run_prepare(prepare, argv: List[str], log_path: Path) -> None:
-    """prepare.main(argv) in this process; its own printout goes to log_path (and is shown on failure)."""
-    out = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            code = prepare.main(argv)
-    except SystemExit as exc:
-        code = exc.code
-        if isinstance(code, str):
-            out.write(code + "\n")
-            code = 1
-    except KeyboardInterrupt:
-        raise
-    except Exception as exc:
-        _write(log_path, out.getvalue())
-        raise PrepareError(f"preparing the model failed: {exc} (log: {log_path})") from exc
-    _write(log_path, out.getvalue())
-    if code not in (0, None):
-        tail = "\n".join(out.getvalue().strip().splitlines()[-5:])
-        raise PrepareError(f"preparing the model failed (exit {code}): {tail} (log: {log_path})")
-
-
-def _write(path: Path, text: str) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
+def _run_prepare(argv: List[str], log_path: Path) -> None:
+    """Runs prepare.main(argv) in a child Python process; its output goes to log_path (the tail is shown on failure).
+    Ctrl-C stops the child too (same console)."""
+    import kitten_inference.tts2 as package
+    site = str(Path(package.__file__).resolve().parents[2])  # the folder that holds kitten_inference/tts2
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([site, *filter(None, [os.environ.get("PYTHONPATH")])]))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "wb") as log:
+        code = subprocess.run([sys.executable, "-c", _CHILD, *argv], stdin=subprocess.DEVNULL, stdout=log,
+                              stderr=subprocess.STDOUT, env=env).returncode
+    if code != 0:
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        except OSError:
+            lines = []
+        tail = "; ".join(line.strip() for line in lines[-3:]) or f"exit status {code}"
+        raise PrepareError(f"preparing the model failed: {tail} (full log: {log_path})")
 
 
 def _snapshot(repo: str, sha: str, patterns: List[str], cache_dir: Optional[os.PathLike]) -> Path:
@@ -177,14 +150,11 @@ def _snapshot(repo: str, sha: str, patterns: List[str], cache_dir: Optional[os.P
         raise PrepareError(f"downloading {repo} at {sha[:12]} failed: {exc}") from exc
 
 
-def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Optional[Path]:
-    """The pinned decoder weights (ResembleAI/chatterbox-turbo), downloaded here so that every large download shows
-    its progress in stage 1; prepare checks their SHA-256. None when this prepare does not name them."""
-    repo, name = getattr(prepare, "ACOUSTIC_REPO", None), getattr(prepare, "ACOUSTIC_FILE", None)
-    revision = getattr(getattr(prepare, "convert_s3gen", None), "PINNED_REVISION", None)
-    if not (repo and name and revision):
-        return None
+def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Path:
+    """The pinned decoder weights, downloaded here so that every large download shows its progress in stage 1
+    (prepare checks their SHA-256 again)."""
     from huggingface_hub import hf_hub_download
+    repo, name, revision = prepare.ACOUSTIC_REPO, prepare.ACOUSTIC_FILE, prepare.convert_s3gen.PINNED_REVISION
     try:
         return Path(hf_hub_download(repo, name, revision=revision, cache_dir=_download_cache(cache_dir), token=False))
     except Exception as exc:
@@ -204,29 +174,25 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
     with _locked(root / f".{sha}.lock"):
         if not is_prepared(final, with_cloning):
             prepare = _assets()
-            tool = Path(text_data_tool)
-            tool_flag = "--text-data-tool" if _prepare_supports(prepare, "--text-data-tool") else "--text-converter"
-            common = ["--repo", repo, "--revision", sha]
+            common = ["--repo", repo, "--revision", sha, "--weight-norm-device", "numpy"]  # numpy: no torch
             if cache_dir is not None:
                 common += ["--cache-dir", str(_download_cache(cache_dir))]
-            if _prepare_supports(prepare, "numpy"):
-                common += ["--weight-norm-device", "numpy"]
             started = time.monotonic()
             if not is_prepared(final):
-                patterns = _model_files(prepare) + (_cloning_files(prepare) if with_cloning else [])
+                patterns = list(prepare.MODEL_ALLOW_PATTERNS) + (list(prepare.CLONING_ALLOW_PATTERNS)
+                                                                 if with_cloning else [])
                 log(f"[1/3] downloading {repo} at {sha[:12]} and the decoder weights (first use only)")
                 snapshot = _snapshot(repo, sha, patterns, cache_dir)
-                acoustic = _acoustic(prepare, cache_dir)
-                if acoustic is not None:
-                    common += ["--acoustic-source", str(acoustic)]
+                common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
                 partial = root / f".partial-{sha}"
                 shutil.rmtree(partial, ignore_errors=True)
                 log(f"[2/3] preparing the model for this machine{' with voice cloning' if with_cloning else ''} "
-                    "(about a minute)")
-                argv = ["--model-dir", str(snapshot), "--out", str(partial), tool_flag, str(tool), *common]
+                    "(a few minutes)")
+                argv = ["--model-dir", str(snapshot), "--out", str(partial), "--text-data-tool", str(text_data_tool),
+                        *common]
                 if with_cloning:
                     argv.append("--with-cloning")
-                _run_prepare(prepare, argv, root / f"prepare-{sha[:12]}.log")
+                _run_prepare(argv, root / f"prepare-{sha[:12]}.log")
                 if not is_prepared(partial, with_cloning):
                     raise PrepareError(f"preparation finished without a complete model in {partial}")
                 if final.exists():  # an unprepared leftover (no config.json): replace it
@@ -234,16 +200,15 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
                 os.replace(partial, final)
             else:
                 log(f"[1/3] downloading the voice cloning files of {repo} at {sha[:12]} (first use only)")
-                snapshot = _snapshot(repo, sha, _model_files(prepare) + _cloning_files(prepare), cache_dir)
-                acoustic = _acoustic(prepare, cache_dir)
-                if acoustic is not None:
-                    common += ["--acoustic-source", str(acoustic)]
+                snapshot = _snapshot(repo, sha, list(prepare.MODEL_ALLOW_PATTERNS)
+                                     + list(prepare.CLONING_ALLOW_PATTERNS), cache_dir)
+                common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
                 # config.json is the commit point: without its cloning entry, files in native/cloning are a
                 # stopped earlier attempt.
                 shutil.rmtree(final / "native" / "cloning", ignore_errors=True)
                 log("[2/3] preparing the voice cloning files")
                 argv = ["--model-dir", str(snapshot), "--out", str(final), "--cloning-only", *common]
-                _run_prepare(prepare, argv, root / f"prepare-cloning-{sha[:12]}.log")
+                _run_prepare(argv, root / f"prepare-cloning-{sha[:12]}.log")
                 if not is_prepared(final, True):
                     raise PrepareError(f"preparation finished without the cloning files in {final}")
             log(f"[3/3] model ready in {time.monotonic() - started:.0f} s: {final}")

@@ -212,3 +212,41 @@ def test_ffmpeg_missing_message(tts, reference, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     with pytest.raises(FFmpegNotFound, match="ffmpeg was not found"):
         tts.clone_voice(reference[0], reference[1])
+
+
+@pytest.mark.skipif(os.environ.get("KT2N_TEST_CLONING") != "1", reason="set KT2N_TEST_CLONING=1 (16 GB+ GPU)")
+def test_two_custom_voices(tts, reference, tmp_path):
+    """The engine keeps one custom voice: switching evicts the previous one, except while a stream still uses it."""
+    if not tts.can_clone:
+        _skip("this engine has no voice cloning")
+    mp3, transcript = reference
+    v1 = tts.clone_voice(mp3, transcript)
+    other = next(v for v in tts.list_voices() if v != "Bruno")
+    wav = tts.save_wav(tmp_path / "ref2.wav", tts.generate(transcript, voice=other, seed=12))
+    v2 = tts.clone_voice(wav, transcript)
+    assert v1 != v2
+    a1 = tts.generate("First voice.", voice=v1, seed=4)
+    s = tts.stream(TEXT * 3, voice=v2)
+    next(s)  # v2 is in use by a suspended stream
+    with pytest.raises(RuntimeError, match="still in use"):
+        tts.generate("First voice.", voice=v1, seed=4)
+    s.close()
+    assert np.array_equal(tts.generate("First voice.", voice=v1, seed=4), a1)  # reloaded: same audio
+    _sane(tts.generate("Second voice.", voice=v2, seed=4), "Second voice.")
+
+
+def test_zz_close_while_streaming(tts):
+    """close() from another thread while a stream waits for audio: the stream ends with an error, nothing crashes.
+    Runs last: it closes the shared engine."""
+    import threading
+    it = tts.stream(TEXT * 6, voice="Bruno")
+    next(it)
+    closer = threading.Thread(target=tts.close)
+    closer.start()
+    with pytest.raises(RuntimeError, match="closed"):
+        for _ in it:
+            pass
+    closer.join(30)
+    assert not closer.is_alive()
+    with pytest.raises(RuntimeError, match="closed"):
+        tts.generate("x", voice="Bruno")

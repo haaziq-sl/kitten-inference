@@ -87,7 +87,7 @@ def request_params(text: str, voice_id: int, *, stream: bool, seed: Optional[int
             raise ValueError(f"seed must be an integer from 0 to 2**64-1; got {seed!r}")
         p.flags |= _abi.REQ_SEED
         p.seed = seed
-    if not options.get("normalize", True):
+    if options.get("normalize") is False:  # None (like the sampling options) means the default: normalise
         p.flags |= _abi.REQ_NORMALIZE_OFF
     if preset is not None:
         p.sampler.mode = _enum(preset, PRESETS, "preset")
@@ -213,13 +213,15 @@ class KittenTTS2:
         try:
             self._engine = self._create(config, bundle)
             self._mode = mode
-        except BaseException:
-            if previous is not None:  # keep a working engine: start the previous one again, then report
-                try:
-                    self._engine = self._create(self._config(previous, self._bundle), self._bundle)
-                    self._mode = previous
-                except Exception:
-                    pass
+        except BaseException as exc:
+            if previous is None or not isinstance(exc, Exception):  # Ctrl-C: stop here, the object is closed
+                raise
+            try:  # keep a working engine: start the previous one again, then report
+                self._engine = self._create(self._config(previous, self._bundle), self._bundle)
+                self._mode = previous
+            except Exception as again:
+                raise RuntimeError(f"{exc}; the engine for {_MODE_NAMES[previous]} could not be started again "
+                                   f"either ({again}), so this KittenTTS2 is closed: create a new one") from exc
             raise
 
     def _create(self, config: _abi.EngineConfig, bundle: _bundle.Bundle) -> Engine:
@@ -235,6 +237,8 @@ class KittenTTS2:
                 engine.destroy()
             raise _bundle.BundleError(f"{exc}. Delete {self.model_dir} and run again to prepare it anew") from None
         except BaseException:
+            if engine is not None:  # e.g. Ctrl-C while the checks finish: do not keep an engine nobody owns
+                engine.destroy()
             try:
                 verifier.result()
             except _bundle.BundleError as exc:  # a damaged file explains a failed start best
@@ -299,9 +303,7 @@ class KittenTTS2:
             engine = self._ensure_mode(CUSTOM)
             vid = self._custom_ids.get(voice.key)
             if vid is None:
-                for old in list(self._custom_ids.values()):  # room for one custom voice: drop the previous one
-                    engine.voice_evict(old)
-                self._custom_ids.clear()
+                self._drop_custom_voices(engine)  # room for one custom voice: drop the previous one
                 try:
                     vid = engine.voice_load(voice.artifact)
                 except EngineError as exc:
@@ -329,6 +331,15 @@ class KittenTTS2:
             self._voice_ids[voice] = vid
         return vid
 
+    def _drop_custom_voices(self, engine: Engine) -> None:
+        """Evicts the loaded custom voice (the engine has room for one), unless a running request still uses it."""
+        for key, vid in list(self._custom_ids.items()):
+            if engine.voice_info(vid).refs > 0:
+                raise RuntimeError("the previous cloned or loaded voice is still in use by a running stream(); "
+                                   "finish or close it before using another one")
+            engine.voice_evict(vid)
+            del self._custom_ids[key]
+
     def load_voice(self, path: Union[str, os.PathLike]) -> Voice:
         """Reads a voice saved by save_voice() (or kitten-tts2 --save-voice) and loads it into the engine."""
         path = Path(path)
@@ -350,7 +361,7 @@ class KittenTTS2:
         if not isinstance(voice, Voice):
             raise TypeError("save_voice() takes a Voice from clone_voice() or load_voice()")
         path = Path(path)
-        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{threading.get_ident()}")
         try:
             tmp.write_bytes(voice.artifact)
             os.replace(tmp, path)
@@ -376,9 +387,7 @@ class KittenTTS2:
                 engine = self._ensure_mode(CLONING)
             except EngineError as exc:  # the engine with the cloning model did not fit (the previous one is back)
                 raise _clone_error(exc, starting=True) from None
-            for old in list(self._custom_ids.values()):
-                engine.voice_evict(old)
-            self._custom_ids.clear()
+            self._drop_custom_voices(engine)
             params = _abi.VoiceBuildParams()
             params.struct_size = ctypes.sizeof(_abi.VoiceBuildParams)
             params.flags = _abi.VB_SAVED | _abi.VB_DECODED_PCM
@@ -466,6 +475,8 @@ class KittenTTS2:
                     yield ev.data
                 elif ev.kind == _abi.EVENT_DONE:
                     done = True
+                    if ev.status == _abi.ERR_CANCELLED and engine.closing:
+                        raise RuntimeError("this KittenTTS2 was closed while the request was running")
                     if ev.status != _abi.OK:
                         raise _request_error(ev.error or EngineError(ev.status))
         finally:

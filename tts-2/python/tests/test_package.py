@@ -46,31 +46,34 @@ def test_wheel_does_not_own_the_namespace_init():
     assert "kitten_inference/tts2/NOTICE" in files
 
 
-def _absolute_imports():
-    # tools/kt2n_assets is also run from tools/ (prepare_assets.py), where absolute kt2n_assets imports work; as
-    # kitten_inference.tts2._assets they must be relative. Tracked in notes: the prepare code owns this.
-    from importlib import resources
-    root = resources.files("kitten_inference.tts2._assets")
-    return [p.name for p in root.iterdir() if p.name.endswith(".py") and "from kt2n_assets" in p.read_text()]
-
-
-@pytest.mark.xfail(bool(_absolute_imports()), reason="absolute kt2n_assets imports in the bundled preparation code",
-                   strict=False)
 def test_bundled_prepare_imports_without_torch():
     code = ("import sys; import kitten_inference.tts2._assets.prepare as p; "
-            "import kitten_inference.tts2._assets.convert_s3gen, kitten_inference.tts2._assets.voices; "
+            "import kitten_inference.tts2._assets.convert_s3gen, kitten_inference.tts2._assets.voices, "
+            "kitten_inference.tts2._assets.clone_assets; "
             "assert callable(p.main); print('torch' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "False"
 
 
+def test_bundled_prepare_has_the_contract_flags():
+    # kitten_inference.tts2._prepare passes these to prepare.main (CONTRACT: prepare entry point).
+    code = "import sys; from kitten_inference.tts2._assets.prepare import main; sys.exit(main(['--help']))"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    for flag in ("--model-dir", "--out", "--text-data-tool", "--weight-norm-device", "--with-cloning",
+                 "--cloning-only", "--acoustic-source", "--cache-dir", "--revision"):
+        assert flag in out.stdout, flag
+    assert "numpy" in out.stdout
+    from kitten_inference.tts2._assets import prepare
+    assert prepare.MODEL_ALLOW_PATTERNS and prepare.CLONING_ALLOW_PATTERNS
+    assert prepare.ACOUSTIC_REPO and prepare.ACOUSTIC_FILE and prepare.convert_s3gen.PINNED_REVISION
+
+
 def test_bundled_prepare_data_files():
     from importlib import resources
     root = resources.files("kitten_inference.tts2._assets")
     for name in ("s3gen_tensors.tsv", "clone_consts_reference.json", "clone_sincnet_reference.json"):
-        if name == "clone_sincnet_reference.json" and not root.joinpath("clone_assets.py").read_text().count(name):
-            continue  # added by the torch-free cloning preparation
         assert root.joinpath(name).is_file(), name
 
 

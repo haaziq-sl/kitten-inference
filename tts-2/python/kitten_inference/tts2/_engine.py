@@ -71,9 +71,11 @@ class Engine:
         self._handle = handle
         self._queues: Dict[int, Deque[Event]] = {}
         self._abandoned: Set[int] = set()
-        self._lock = threading.Lock()       # queues, abandoned set
-        self._pump_lock = threading.Lock()  # one kt2n_poll at a time
+        self._lock = threading.Lock()        # queues, abandoned set
+        self._pump_lock = threading.Lock()   # one kt2n_poll at a time; destroy waits for it
+        self._call_lock = threading.RLock()  # every other engine call; destroy waits for it
         self._events = (_abi.Event * POLL_BATCH)()
+        self.closing = False  # destroy() has begun: requests end as cancelled
 
     # -- lifetime ---------------------------------------------------------------------------------------------
     @property
@@ -87,69 +89,83 @@ class Engine:
             return any(i not in self._abandoned for i in self._queues)
 
     def destroy(self) -> None:
-        handle, self._handle = self._handle, None
-        if handle is not None:
-            self.lib.kt2n_engine_destroy(handle)
+        """Cancels what is running and frees the engine. A thread still waiting for its events gets RuntimeError
+        ("the engine is closed"); no engine call can overlap kt2n_engine_destroy (engine.h's lifetime rule)."""
+        with self._lock:
+            if self._handle is None:
+                return
+            self.closing = True
+            running = list(self._queues)
+        for ident in running:
+            self.cancel(ident)
+        with self._pump_lock, self._call_lock:
+            handle, self._handle = self._handle, None
+            if handle is not None:
+                self.lib.kt2n_engine_destroy(handle)
 
     # -- calls ------------------------------------------------------------------------------------------------
     def check(self, status: int, err: Optional[_abi.Error] = None) -> None:
         if status != _abi.OK:
             raise error_from(self.lib, status, err)
 
+    def _call(self, name: str, *args) -> int:
+        """lib.<name>(engine, *args), never concurrently with destroy."""
+        with self._call_lock:
+            return getattr(self.lib, name)(self.handle, *args)
+
     def stats_json(self) -> str:
         need = ctypes.c_size_t(0)
-        status = self.lib.kt2n_stats_json(self.handle, None, 0, ctypes.byref(need))
+        status = self._call("kt2n_stats_json", None, 0, ctypes.byref(need))
         if status not in (_abi.OK, _abi.ERR_TOO_SMALL):
             self.check(status)
         buf = ctypes.create_string_buffer(max(int(need.value), 1) + 1)
-        self.check(self.lib.kt2n_stats_json(self.handle, buf, len(buf), ctypes.byref(need)))
+        self.check(self._call("kt2n_stats_json", buf, len(buf), ctypes.byref(need)))
         return buf.value.decode("utf-8", "replace")
 
     def low_memory_limits(self) -> _abi.LowMemoryLimits:
         out = _abi.LowMemoryLimits(struct_size=ctypes.sizeof(_abi.LowMemoryLimits))
-        self.check(self.lib.kt2n_engine_low_memory_limits(self.handle, ctypes.byref(out)))
+        self.check(self._call("kt2n_engine_low_memory_limits", ctypes.byref(out)))
         return out
 
     def voice_lookup(self, name: str) -> int:
         out = ctypes.c_uint64(0)
         err = _abi.Error()
-        self.check(self.lib.kt2n_voice_lookup(self.handle, name.encode("utf-8"), ctypes.byref(out), ctypes.byref(err)),
+        self.check(self._call("kt2n_voice_lookup", name.encode("utf-8"), ctypes.byref(out), ctypes.byref(err)),
                    err)
         return int(out.value)
 
     def voice_info(self, voice: int) -> _abi.VoiceInfo:
         out = _abi.VoiceInfo(struct_size=ctypes.sizeof(_abi.VoiceInfo))
-        self.check(self.lib.kt2n_voice_info_get(self.handle, voice, ctypes.byref(out)))
+        self.check(self._call("kt2n_voice_info_get", voice, ctypes.byref(out)))
         return out
 
     def voice_prepare(self, voice: int) -> int:
         """Best effort, like kitten-tts-native: a failure here is reported by the request that uses the voice."""
-        return int(self.lib.kt2n_voice_prepare(self.handle, voice, None))
+        return int(self._call("kt2n_voice_prepare", voice, None))
 
     def voice_load(self, artifact: bytes) -> int:
         out = ctypes.c_uint64(0)
         err = _abi.Error()
-        self.check(self.lib.kt2n_voice_load(self.handle, artifact, len(artifact), ctypes.byref(out),
-                                            ctypes.byref(err)), err)
+        self.check(self._call("kt2n_voice_load", artifact, len(artifact), ctypes.byref(out), ctypes.byref(err)), err)
         return int(out.value)
 
     def voice_export(self, voice: int) -> bytes:
         need = ctypes.c_size_t(0)
-        status = self.lib.kt2n_voice_export(self.handle, voice, None, 0, ctypes.byref(need))
+        status = self._call("kt2n_voice_export", voice, None, 0, ctypes.byref(need))
         if status not in (_abi.OK, _abi.ERR_TOO_SMALL):
             self.check(status)
         buf = ctypes.create_string_buffer(int(need.value))
-        self.check(self.lib.kt2n_voice_export(self.handle, voice, buf, len(buf), ctypes.byref(need)))
+        self.check(self._call("kt2n_voice_export", voice, buf, len(buf), ctypes.byref(need)))
         return buf.raw[: int(need.value)]
 
     def voice_evict(self, voice: int) -> None:
-        self.check(self.lib.kt2n_voice_evict(self.handle, voice))
+        self.check(self._call("kt2n_voice_evict", voice))
 
     def submit(self, params: _abi.RequestParams) -> int:
         out = ctypes.c_uint64(0)
         err = _abi.Error()
         with self._lock:  # the queue exists before the first event can be routed
-            self.check(self.lib.kt2n_submit(self.handle, ctypes.byref(params), ctypes.byref(out), ctypes.byref(err)),
+            self.check(self._call("kt2n_submit", ctypes.byref(params), ctypes.byref(out), ctypes.byref(err)),
                        err)
             self._queues[int(out.value)] = collections.deque()
         return int(out.value)
@@ -158,14 +174,14 @@ class Engine:
         out = ctypes.c_uint64(0)
         err = _abi.Error()
         with self._lock:
-            self.check(self.lib.kt2n_voice_build(self.handle, ctypes.byref(params), ctypes.byref(out),
-                                                 ctypes.byref(err)), err)
+            self.check(self._call("kt2n_voice_build", ctypes.byref(params), ctypes.byref(out), ctypes.byref(err)), err)
             self._queues[int(out.value)] = collections.deque()
         return int(out.value)
 
     def cancel(self, ident: int) -> None:
-        if self._handle is not None:
-            self.lib.kt2n_cancel(self._handle, ident, _abi.CANCEL_REQUEST)
+        with self._call_lock:
+            if self._handle is not None:
+                self.lib.kt2n_cancel(self._handle, ident, _abi.CANCEL_REQUEST)
 
     def abandon(self, ident: int) -> None:
         """Cancels ``ident`` and stops waiting for it: its events are dropped and its id released on its terminal
@@ -184,8 +200,9 @@ class Engine:
             self.cancel(ident)
 
     def _release(self, ident: int) -> None:
-        if self._handle is not None:
-            self.lib.kt2n_release(self._handle, ident)
+        with self._call_lock:
+            if self._handle is not None:
+                self.lib.kt2n_release(self._handle, ident)
 
     # -- events -----------------------------------------------------------------------------------------------
     def _copy(self, ev: _abi.Event) -> Event:
@@ -201,15 +218,16 @@ class Engine:
     def pump(self, timeout_ms: int = POLL_TIMEOUT_MS) -> None:
         """Polls once (waiting at most timeout_ms) and routes what arrived."""
         with self._pump_lock:
+            handle = self.handle  # RuntimeError once destroyed
             count = ctypes.c_int32(0)
-            self.check(self.lib.kt2n_poll(self.handle, self._events, POLL_BATCH, timeout_ms, ctypes.byref(count)))
+            self.check(self.lib.kt2n_poll(handle, self._events, POLL_BATCH, timeout_ms, ctypes.byref(count)))
             n = int(count.value)
             if n <= 0:
                 return
             try:
                 copied = [self._copy(self._events[i]) for i in range(n)]
             finally:
-                self.lib.kt2n_events_release(self.handle, self._events, n)
+                self.lib.kt2n_events_release(handle, self._events, n)
         release = []
         with self._lock:
             for ev in copied:

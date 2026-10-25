@@ -96,13 +96,17 @@ jobs:
         with:
           name: stubs
           path: stubs
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
       - name: Dependencies wheelhouse (kitten-inference-tts2's own dependencies, from PyPI)
         shell: bash
         run: |
           python -m pip install --disable-pip-version-check -U pip
-          # pip wheel: anything without a wheel for this Python is built here, and the log says so.
-          python -m pip wheel --disable-pip-version-check --wheel-dir deps "numpy>=1.24" "huggingface-hub>=0.25,<2" \
-            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest pip 2>&1 | tee deps.log
+          # The dependencies come from the built wheel's metadata. pip wheel: anything without a wheel for this
+          # Python is built here, and the log says so.
+          python -m pip wheel --disable-pip-version-check --wheel-dir deps dist/kitten_inference_tts2-0.2.0-py3-none-any.whl \
+            pytest pip 2>&1 | tee deps.log
+          rm -f deps/kitten_inference_tts2-*.whl
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders only)
@@ -115,8 +119,6 @@ jobs:
           echo "PY=$PY" >> "$GITHUB_ENV"
           $PY -m pip install --disable-pip-version-check --no-index --find-links dist --find-links stubs \
             --find-links deps "kitten-inference[tts-2]==0.2.0" pytest
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
       - name: Unit tests (installed packages; tests/gpu is skipped)
         shell: bash
         env:
@@ -149,8 +151,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 -m pip download -q --dest deps "numpy>=1.24" "huggingface-hub>=0.25,<2" "tokenizers>=0.22,<0.23" \
-            "filelock>=3.12"
+          python3 -m pip download -q --dest deps dist/kitten_inference_tts2-0.2.0-py3-none-any.whl
+          rm -f deps/kitten_inference_tts2-*.whl
           for spec in "kitten-inference[tts-0.8]==0.2.0" "kitten-inference[tts-0-8]==0.2.0" \
                       "kitten-inference[tts-2]==0.2.0" "kitten-inference[tts-2-rocm]==0.2.0"; do
             echo "::group::$spec"

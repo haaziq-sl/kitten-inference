@@ -1,5 +1,6 @@
 """First-use preparation: revision resolution, lock, atomic rename, resume after an interrupted run, progress."""
 import json
+import os
 import threading
 import types
 from pathlib import Path
@@ -46,12 +47,23 @@ class FakeHub:
 
 
 class FakePrepare:
-    """Stands in for kitten_inference.tts2._assets.prepare (the real one is tested end to end on a GPU box)."""
-    __file__ = __file__  # _prepare_supports() reads the source: this test file mentions both new flags
+    """Stands in for kitten_inference.tts2._assets.prepare and its child process (the real ones run end to end in
+    tests/gpu)."""
+    MODEL_ALLOW_PATTERNS = ["config.json", "lm/model.safetensors", "voices/*.npz"]
+    CLONING_ALLOW_PATTERNS = ["speaker/model.safetensors"]
+    ACOUSTIC_REPO, ACOUSTIC_FILE = "ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors"
+    convert_s3gen = types.SimpleNamespace(PINNED_REVISION="1e4698ca7cbb41ff030c4185f0927a3b42d76924")
 
     def __init__(self):
         self.runs = []
         self.fail_with = None
+
+    def run(self, argv, log_path):  # replaces _prepare._run_prepare
+        log_path.write_text("Next: kitten-tts-native --assets ...\n")
+        try:
+            self.main(argv)
+        except (ValueError, OSError) as exc:
+            raise _prepare.PrepareError(f"preparing the model failed: {exc} (full log: {log_path})")
 
     def main(self, argv):
         self.runs.append(list(argv))
@@ -69,12 +81,8 @@ class FakePrepare:
             config = {"type": "KITTEN2", "native": {"version": 1}}
             if "--with-cloning" in argv:
                 config["native"]["cloning"] = {"version": 1}
-        print("Next: kitten-tts-native --assets ...")  # prepare's own summary goes to the log, not the terminal
         (out / "config.json").write_text(json.dumps(config))
         return 0
-
-
-# The flags _prepare_supports() looks for in the real prepare.py: "--text-data-tool" "numpy"
 
 
 @pytest.fixture
@@ -82,6 +90,7 @@ def env(monkeypatch, tmp_path):
     hub = FakeHub(monkeypatch, tmp_path)
     prep = FakePrepare()
     monkeypatch.setattr(_prepare, "_assets", lambda: prep)
+    monkeypatch.setattr(_prepare, "_run_prepare", prep.run)
     lines = []
     run = lambda **kw: _prepare.ensure(text_data_tool=tmp_path / "tool", cache_dir=tmp_path / "cache",
                                        log=lines.append, **kw)
@@ -102,7 +111,7 @@ def test_first_use_prepares_once(env, capsys):
     assert "Next:" not in capsys.readouterr().out
     assert (env.cache / f"prepare-{SHA[:12]}.log").read_text().startswith("Next:")
     snapshot = [c for c in env.hub.calls if c[0] == "snapshot"][0]
-    assert snapshot[2] == SHA and "lm/model.safetensors" in snapshot[3] and "speaker/*" not in snapshot[3]
+    assert snapshot[2] == SHA and snapshot[3] == tuple(FakePrepare.MODEL_ALLOW_PATTERNS)
     assert snapshot[5] is False  # no token is ever sent
     env.lines.clear()
     assert env.run() == d and len(env.prep.runs) == 1 and env.lines == []
@@ -150,7 +159,7 @@ def test_interrupted_run_leaves_nothing_and_resumes(env):
 
 def test_failure_message(env):
     env.prep.fail_with = ValueError("full decoder source checksum mismatch")
-    with pytest.raises(_prepare.PrepareError, match="checksum mismatch.*log:"):
+    with pytest.raises(_prepare.PrepareError, match="checksum mismatch.*full log:"):
         env.run()
     assert not (env.cache / SHA).exists()
 
@@ -165,7 +174,7 @@ def test_cloning_added_to_a_prepared_model(env):
     assert "--cloning-only" in argv and argv[argv.index("--out") + 1] == str(d)
     assert _prepare.is_prepared(d, with_cloning=True)
     assert not (d / "native" / "cloning" / "stale.safetensors").exists()
-    assert "speaker/*" in [c for c in env.hub.calls if c[0] == "snapshot"][-1][3]
+    assert "speaker/model.safetensors" in [c for c in env.hub.calls if c[0] == "snapshot"][-1][3]
     assert [l[:5] for l in env.lines] == ["[1/3]", "[2/3]", "[3/3]"]
 
 
@@ -191,25 +200,29 @@ def test_concurrent_processes_prepare_once(env):
     assert not errors and len(env.prep.runs) == 1
 
 
-def test_old_prepare_flags(env, monkeypatch, tmp_path):
-    old = tmp_path / "old_prepare.py"
-    old.write_text('p.add_argument("--text-converter")\n')
-    env.prep.__file__ = str(old)
-    env.run()
-    argv = env.prep.runs[0]
-    assert "--text-converter" in argv and "--text-data-tool" not in argv and "--weight-norm-device" not in argv
-
-
 def test_default_cache_dir():
     assert _prepare.cache_root() == Path.home() / ".cache" / "kitten-inference" / "tts2"
 
 
 def test_decoder_weights_downloaded_in_stage_one(env):
-    env.prep.ACOUSTIC_REPO, env.prep.ACOUSTIC_FILE = "ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors"
-    env.prep.convert_s3gen = types.SimpleNamespace(PINNED_REVISION="1e4698ca7cbb41ff030c4185f0927a3b42d76924")
     env.run()
     argv = env.prep.runs[0]
     assert argv[argv.index("--acoustic-source") + 1].endswith("s3gen_meanflow.safetensors")
     (call,) = [c for c in env.hub.calls if c[0] == "file"]
     assert call[1:4] == ("ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors",
                          "1e4698ca7cbb41ff030c4185f0927a3b42d76924") and call[5] is False
+
+
+def test_child_process_failure_shows_the_log_tail(tmp_path, monkeypatch):
+    import subprocess
+    log = tmp_path / "prepare.log"
+
+    def fake_run(cmd, stdin=None, stdout=None, stderr=None, env=None):
+        assert cmd[1] == "-c" and "kitten_inference.tts2._assets.prepare" in cmd[2] and cmd[3:] == ["--out", "x"]
+        assert env["PYTHONPATH"].split(os.pathsep)[0].endswith(("site-packages", "python"))
+        stdout.write(b"line 1\nerror: full decoder source checksum mismatch\n")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(_prepare.PrepareError, match="checksum mismatch .full log: .*prepare.log"):
+        _prepare._run_prepare(["--out", "x"], log)

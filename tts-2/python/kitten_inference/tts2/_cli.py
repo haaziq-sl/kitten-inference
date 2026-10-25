@@ -117,9 +117,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(USAGE, end="")
         try:
             backend = _backend.find(own.get("--backend"))
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError) as exc:  # the usage above is still the answer to --help
             print(f"kitten-tts2: {exc}", file=sys.stderr)
-            return 0 if not args or "--help" in names else 1
+            return 0
         return _run(str(backend.cli), ["--help"])
     if own.get("--with-cloning") and not own.get("--prepare-only"):
         print("kitten-tts2: --with-cloning goes with --prepare-only (cloning files are added on their own when "
