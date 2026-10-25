@@ -3210,6 +3210,20 @@ Session* session_of(Engine* e, uint64_t id) {
   return it == e->sessions.end() ? nullptr : it->second.get();
 }
 
+// Sets a thread-local pointer (g_auto_probe, g_create_handoff) for one create attempt and clears it when the attempt
+// returns or throws.
+template <class T>
+class CreateScope {
+ public:
+  CreateScope(T*& slot, T* value) : slot_(slot) { slot_ = value; }
+  ~CreateScope() { slot_ = nullptr; }
+  CreateScope(const CreateScope&) = delete;
+  CreateScope& operator=(const CreateScope&) = delete;
+
+ private:
+  T*& slot_;
+};
+
 }  // namespace
 }  // namespace kt2n::engine
 
@@ -4512,14 +4526,10 @@ static int32_t default_create_checked(const kt2n_engine_config* cfg, kt2n_engine
   probe.decide_only = true;
   kt2n_error low_err{};
   int32_t rc;
-  g_auto_probe = &probe;
-  try {
+  {
+    CreateScope<AutoProbe> scope(g_auto_probe, &probe);
     rc = engine_create_impl(&c, out, &low_err);
-  } catch (...) {
-    g_auto_probe = nullptr;
-    throw;
   }
-  g_auto_probe = nullptr;
   if (rc == KT2N_OK && *out) {  // cannot happen: the check stops before the engine exists
     kt2n_engine_destroy(*out);
     *out = nullptr;
@@ -4556,14 +4566,10 @@ static int32_t default_create_checked(const kt2n_engine_config* cfg, kt2n_engine
     handoff.text = std::move(probe.text);
     handoff.vblob = std::move(probe.vblob);
   }
-  g_create_handoff = &handoff;
-  try {
+  {
+    CreateScope<CreateHandoff> scope(g_create_handoff, &handoff);
     rc = engine_create_impl(cfg, out, err);
-  } catch (...) {
-    g_create_handoff = nullptr;
-    throw;
   }
-  g_create_handoff = nullptr;
   return rc;
 }
 
