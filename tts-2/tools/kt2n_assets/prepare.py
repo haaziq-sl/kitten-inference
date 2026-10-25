@@ -486,8 +486,8 @@ def main(argv=None) -> int:
     source_text = prepare_text(grammar_dir, converter, wheel, dest / "text")
     with tempfile.TemporaryDirectory(prefix="kt2n-config-") as scratch:
         runtime = Path(scratch) / "runtime_config.json"
-        runtime.write_text(json.dumps({"type": config["type"], "token_map": config["token_map"],
-                                      "generation": config.get("generation", {})}), encoding="utf-8", newline="\n")
+        runtime.write_bytes((json.dumps({"type": config["type"], "token_map": config["token_map"],
+                                      "generation": config.get("generation", {})})).encode("utf-8"))
         # Only the files preparation downloads: a shared Hugging Face cache may hold more of the same revision.
         convert.convert(lm_dir, dest / "model.kt2n", runtime_config=str(runtime), side_files=LM_SIDE_FILES)
     convert_s3gen.convert(str(acoustic), str(dest / "s3gen.kt2n"),

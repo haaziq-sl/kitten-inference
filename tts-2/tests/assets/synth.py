@@ -172,10 +172,10 @@ def make_checkpoint(root: str | Path, spec: SynthSpec | None = None, *,
     src.mkdir(parents=True, exist_ok=True)
     write_safetensors(src / "model.safetensors", tensors if tensors is not None else make_tensors(spec),
                       metadata={"format": "pt"})
-    (src / "config.json").write_text(json.dumps(qwen3_config(spec), indent=2) + "\n", encoding="utf-8", newline="\n")
-    (src / "tokenizer.json").write_text('{"version": "1.0", "model": {"type": "BPE"}}\n', encoding="utf-8", newline="\n")
-    (src / "vocab.json").write_text('{"a": 0, "b": 1}\n', encoding="utf-8", newline="\n")
-    (src / "merges.txt").write_text("#version: 0.2\na b\n", encoding="utf-8", newline="\n")
+    (src / "config.json").write_bytes((json.dumps(qwen3_config(spec), indent=2) + "\n").encode("utf-8"))
+    (src / "tokenizer.json").write_bytes(('{"version": "1.0", "model": {"type": "BPE"}}\n').encode("utf-8"))
+    (src / "vocab.json").write_bytes(('{"a": 0, "b": 1}\n').encode("utf-8"))
+    (src / "merges.txt").write_bytes(("#version: 0.2\na b\n").encode("utf-8"))
     rc_dir = src.parent if runtime_config_in_parent else src
-    (rc_dir / "runtime_config.json").write_text(json.dumps(runtime_config(spec), indent=2) + "\n", encoding="utf-8", newline="\n")
+    (rc_dir / "runtime_config.json").write_bytes((json.dumps(runtime_config(spec), indent=2) + "\n").encode("utf-8"))
     return src

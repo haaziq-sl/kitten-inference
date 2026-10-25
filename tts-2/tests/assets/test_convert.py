@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -405,7 +406,7 @@ def test_refuses_missing_or_bad_layer_count(tmp_path, layers):
         del cfg["num_hidden_layers"]
     else:
         cfg["num_hidden_layers"] = layers
-    (src / "config.json").write_text(json.dumps(cfg), encoding="utf-8", newline="\n")
+    (src / "config.json").write_bytes((json.dumps(cfg)).encode("utf-8"))
     with pytest.raises(ConvertError, match="num_hidden_layers"):
         convert(src, tmp_path / "x.kt2n", **QUIET)
 
@@ -419,7 +420,7 @@ def test_refuses_output_that_aliases_a_source_file(tmp_path):
     src = make_checkpoint(tmp_path)
     before = _tree_digest(tmp_path)
     (tmp_path / "link.kt2n").symlink_to(src / "model.safetensors")
-    (tmp_path / "hard.kt2n").hardlink_to(src / "config.json")
+    os.link(src / "config.json", tmp_path / "hard.kt2n")  # Path.hardlink_to needs Python 3.10
     for out in (src / "model.safetensors", src / "config.json", src / "tokenizer.json",
                 src.parent / "runtime_config.json", src / ".." / "effective-bf16" / "model.safetensors",
                 tmp_path / "link.kt2n", tmp_path / "hard.kt2n"):
@@ -477,7 +478,7 @@ def test_side_file_allowlist_ignores_other_cached_files(synth_src, tmp_path):
     for name in ("model.safetensors", "config.json", "tokenizer.json"):
         shutil.copyfile(synth_src / name, lean / name)
     shutil.copyfile(synth_src.parent / "runtime_config.json", lean.parent / "runtime_config.json")
-    (synth_src / "generation_config.json").write_text("{}\n", encoding="utf-8", newline="\n")
+    (synth_src / "generation_config.json").write_bytes(("{}\n").encode("utf-8"))
     try:
         full, only = tmp_path / "full.kt2n", tmp_path / "only.kt2n"
         convert(synth_src, full, side_files=("config.json", "tokenizer.json"), **QUIET)

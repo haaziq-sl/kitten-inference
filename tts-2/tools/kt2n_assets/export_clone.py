@@ -224,7 +224,7 @@ def export(checkpoint: Path, acoustic: Path, destination: Path, sincnet_referenc
                   "preparation_device": "cpu",
                   "dependencies": {name: importlib.metadata.version(name) for name in (
                       "torch", "torchaudio", "numpy", "scipy", "librosa", "asteroid-filterbanks")}}
-        (stage / "export.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")
+        (stage / "export.json").write_bytes((json.dumps(report, indent=2) + "\n").encode("utf-8"))
         stage.rename(destination)
     if sincnet_reference is not None:
         write_reference({name: speaker[name] for name in DERIVED_PYANNOTE}, sincnet_reference)

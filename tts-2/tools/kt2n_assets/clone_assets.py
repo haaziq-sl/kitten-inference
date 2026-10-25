@@ -157,8 +157,8 @@ def write_reference(arrays: dict, path: Path) -> None:
     for name in sorted(arrays):
         raw = zlib.compress(np.ascontiguousarray(arrays[name], dtype="<f4").tobytes(), 9).hex()
         tensors[name] = {"shape": list(arrays[name].shape), "data": [raw[i:i + 96] for i in range(0, len(raw), 96)]}
-    path.write_text(json.dumps({"format": "little-endian float32, zlib, hex", "tensors": tensors}, indent=1) + "\n",
-                    encoding="utf-8", newline="\n")
+    text = json.dumps({"format": "little-endian float32, zlib, hex", "tensors": tensors}, indent=1) + "\n"
+    path.write_bytes(text.encode("utf-8"))
 
 
 def reference_constants(path: Path = REFERENCE_CONSTS) -> dict:
