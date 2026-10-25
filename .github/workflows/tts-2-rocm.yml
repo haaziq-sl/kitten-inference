@@ -7,7 +7,7 @@ name: tts-2 ROCm wheel
 
 on:
   push:
-    branches: [ws/rocm, ws/integ, feat/tts-0.8-and-tts-2]
+    branches: ['**']
     tags: ['v*']
     paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
   pull_request:

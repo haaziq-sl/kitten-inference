@@ -88,3 +88,25 @@ def test_only_the_engines(guard):
     assert guard.only(reqs, []) == reqs
     with pytest.raises(SystemExit, match="do not name kitten-inference-tts3"):
         guard.only(reqs, ["kitten-inference-tts3"])
+
+
+def test_wait_retries_a_failed_request(guard, capsys):
+    import urllib.error
+    answers = [urllib.error.HTTPError("u", 503, "Service Unavailable", {}, None), TimeoutError("timed out"),
+               ConnectionResetError(104, "reset")]
+    reqs = guard.only(guard.requirements(PYPROJECT), ["kitten-inference-tts2-cu12"])
+
+    def flaky(index, name):
+        if answers:
+            raise answers.pop(0)
+        return _pypi(FULL)(index, name)
+
+    slept = []
+    assert guard.wait("idx", reqs, "wait", 3600, 60, get=flaky, sleep=slept.append) == []
+    assert len(slept) == 3 and "503" in capsys.readouterr().out
+    # check mode (and the end of the wait) still reports the failure instead of passing
+    answers.append(urllib.error.URLError("no route"))
+    assert guard.wait("idx", reqs, "check", 3600, 60, get=flaky, sleep=slept.append)[0].startswith("PyPI request failed")
+    clock = iter([0, 7201])
+    answers.append(urllib.error.URLError("no route"))
+    assert guard.wait("idx", reqs, "wait", 7200, 60, get=flaky, sleep=slept.append, clock=lambda: next(clock))

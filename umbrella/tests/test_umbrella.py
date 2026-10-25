@@ -1,8 +1,10 @@
 """The umbrella package: version, namespace extension, no engine imports, and its extras."""
 import importlib
+import re
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -13,9 +15,16 @@ EXTRAS = {
 }
 
 
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
 def test_version():
+    # __version__ is a literal (CONTRACT: no metadata lookups); a post release must change it with the pyproject
     import kitten_inference
-    assert kitten_inference.__version__ == "0.2.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+(\.post\d+)?", kitten_inference.__version__), kitten_inference.__version__
+    if PYPROJECT.is_file():
+        assert kitten_inference.__version__ == re.search(r'^version = "([^"]+)"',
+                                                         PYPROJECT.read_text(encoding="utf-8"), re.M).group(1)
 
 
 def test_import_does_nothing_else():
@@ -52,7 +61,8 @@ def test_metadata_extras():
         dist = metadata.distribution("kitten-inference")
     except metadata.PackageNotFoundError:
         pytest.skip("kitten-inference is not installed")
-    assert dist.version == "0.2.0"
+    import kitten_inference
+    assert dist.version == kitten_inference.__version__
     assert set(dist.metadata.get_all("Provides-Extra")) == set(EXTRAS)
     def canonical(spec):  # "name<0.3,>=0.2.0" -> ("name", {"<0.3", ">=0.2.0"})
         spec = spec.replace(" ", "")

@@ -41,20 +41,29 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
 
 ## Release
 
-1. Tag the commit whose CI was tested. Every distribution's version must be the release's version:
-   `tts-0.8/pyproject.toml`, `tts-2/python/pyproject.toml`, `umbrella/pyproject.toml`, `CU12_VERSION` in
-   `tts-2-engine.yml`, and the engine version in `tts-2/CMakeLists.txt` (the ROCm wheel's, unless `ROCM_VERSION` in
-   `tts-2-rocm.yml` sets one).
+1. Tag the commit whose CI was tested. Every distribution's version must be the release's version, in each place it
+   is written:
+   - `kitten-inference`: `umbrella/pyproject.toml` and `__version__` in `umbrella/kitten_inference/__init__.py`;
+   - `kitten-inference-tts2`: `tts-2/python/pyproject.toml` and `__version__` in
+     `tts-2/python/kitten_inference/tts2/__init__.py`;
+   - `kitten-inference-tts08`: `tts-0.8/pyproject.toml` and `__version__` in `tts-0.8/kitten_inference/tts08/__init__.py`;
+   - the engine wheels: the engine version in `tts-2/CMakeLists.txt` (`project(kt2n VERSION ...)`), which both take
+     unless `CU12_VERSION` in `tts-2-engine.yml` or `ROCM_VERSION` in `tts-2-rocm.yml` sets one.
+
+   The unit tests fail when a `__version__` and its pyproject differ, and the engine wheel builds refuse a version
+   that is not the engine's (or a post release of it).
 2. `git tag -a v0.2.0 -m "kitten-inference 0.2.0"` on that commit, then `git push origin v0.2.0`.
 3. Watch the four runs. The CUDA wheel jobs fail unless their GPU code is the reference's; their logs say
-   `SASS check: IDENTICAL`. The Windows CUDA wheel takes about 35 minutes.
+   `SASS check: IDENTICAL`. The Windows CUDA wheel takes 40 minutes to about 2 hours: its build compiles the CUDA-core
+   decode kernels again until their GPU code is the reference's.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
    the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. Then remove the lines
    about 0.1.1 from `umbrella/README.md` and `tts-2/python/README.md`.
 
 ## Post releases
 
-A fix to one distribution goes out as `<version>.postN` of that distribution only. Change its version (the files in
-step 1; for the ROCm wheel set `ROCM_VERSION`), then tag `v<version>.postN`. A publish job uploads only when its
+A fix to one distribution goes out as `<version>.postN` of that distribution only. Change its version in the places
+step 1 lists for it (for an engine wheel: set `CU12_VERSION` or `ROCM_VERSION` to `<version>.postN`; the engine version
+in `tts-2/CMakeLists.txt` stays), then tag `v<version>.postN`. A publish job uploads only when its
 distribution's version equals the tag's, so the other distributions are left out. Their extras ranges
 (`>=0.2.0,<0.3`) take the post release.

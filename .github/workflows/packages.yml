@@ -49,6 +49,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --disable-pip-version-check build==1.3.0 twine==6.2.0
+      - name: Versions (from the pyprojects, which a post release changes)
+        shell: bash
+        run: |
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - name: Build sdists and wheels (each wheel is built from its sdist)
         run: |
           python -m build umbrella --outdir dist
@@ -58,10 +63,11 @@ jobs:
         run: |
           python -m twine check --strict dist/*
           python - <<'PY'
-          import glob, tarfile, zipfile
-          umbrella = zipfile.ZipFile(glob.glob("dist/kitten_inference-0.2.0-py3-none-any.whl")[0]).namelist()
-          tts2 = zipfile.ZipFile(glob.glob("dist/kitten_inference_tts2-0.2.0-py3-none-any.whl")[0]).namelist()
-          assert [n for n in umbrella if not n.startswith("kitten_inference-0.2.0.dist-info/")] == \
+          import glob, os, tarfile, zipfile
+          u, t = os.environ["UMBRELLA_VERSION"], os.environ["TTS2_VERSION"]
+          umbrella = zipfile.ZipFile(glob.glob(f"dist/kitten_inference-{u}-py3-none-any.whl")[0]).namelist()
+          tts2 = zipfile.ZipFile(glob.glob(f"dist/kitten_inference_tts2-{t}-py3-none-any.whl")[0]).namelist()
+          assert [n for n in umbrella if not n.startswith(f"kitten_inference-{u}.dist-info/")] == \
               ["kitten_inference/__init__.py"], umbrella
           assert "kitten_inference/__init__.py" not in tts2
           assert not [n for n in tts2 if "__pycache__" in n or n.endswith(".pyc")]
@@ -69,7 +75,7 @@ jobs:
                        "kitten_inference/tts2/_assets/s3gen_tensors.tsv", "kitten_inference/tts2/NOTICE",
                        "kitten_inference/tts2/licenses/Apache-2.0.txt"):
               assert need in tts2, need
-          sdist = tarfile.open(glob.glob("dist/kitten_inference_tts2-0.2.0.tar.gz")[0]).getnames()
+          sdist = tarfile.open(glob.glob(f"dist/kitten_inference_tts2-{t}.tar.gz")[0]).getnames()
           assert any(n.endswith("kitten_inference/tts2/_assets/prepare.py") for n in sdist)
           print(len(umbrella), "files in the umbrella wheel,", len(tts2), "in the tts2 wheel")
           PY
@@ -104,6 +110,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
+      - name: Versions (from the pyprojects, which a post release changes)
+        shell: bash
+        run: |
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -138,21 +149,22 @@ jobs:
           python -m pip install --disable-pip-version-check -U pip
           # The dependencies come from the built wheel's metadata. pip wheel: anything without a wheel for this
           # Python is built here, and the log says so.
-          python -m pip wheel --disable-pip-version-check --wheel-dir deps dist/kitten_inference_tts2-0.2.0-py3-none-any.whl \
+          python -m pip wheel --disable-pip-version-check --wheel-dir deps dist/kitten_inference_tts2-${{ env.TTS2_VERSION }}-py3-none-any.whl \
             pytest pip 2>&1 | tee deps.log
           rm -f deps/kitten_inference_tts2-*.whl
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders and a local index with 0.1.x, as on PyPI)
-        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps --old stubs-old
+        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps --old stubs-old \
+          --version "${{ env.UMBRELLA_VERSION }}"
       - name: Install kitten-inference[tts-2] for the unit tests (on macOS, which has no engine wheel, the two packages)
         shell: bash
         run: |
           python -m venv venv
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
-          if [ "$RUNNER_OS" = macOS ]; then SPEC="kitten-inference==0.2.0 kitten-inference-tts2==0.2.0"; \
-          else SPEC="kitten-inference[tts-2]==0.2.0"; fi
+          if [ "$RUNNER_OS" = macOS ]; then SPEC="kitten-inference==$UMBRELLA_VERSION kitten-inference-tts2==$TTS2_VERSION"; \
+          else SPEC="kitten-inference[tts-2]==$UMBRELLA_VERSION"; fi
           $PY -m pip install --disable-pip-version-check --no-index --find-links dist --find-links stubs \
             --find-links deps $SPEC pytest
       - name: Unit tests (installed packages; tests/gpu is skipped, no other test may skip)
@@ -165,6 +177,71 @@ jobs:
         run: |
           cd "$RUNNER_TEMP"
           "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
+            "$GITHUB_WORKSPACE/tts-2/python/tests"
+
+  lowest-deps:
+    # kitten-inference-tts2's lower bounds (numpy, huggingface-hub, tokenizers, filelock) are the oldest versions
+    # tested: the lowest version of each that has a wheel for this Python, with the unit tests. The torch-free weight
+    # fold with the oldest numpy is checked byte for byte in tts-2-prepare.yml.
+    name: Lowest dependencies, Linux, Python ${{ matrix.python }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Versions (from the pyprojects, which a post release changes)
+        shell: bash
+        run: |
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: stubs
+          path: stubs
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+      - name: Install kitten-inference[tts-2] with the oldest allowed dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The wheel's own requirements, so that the lower bounds come from the built metadata.
+          python3 - "dist/kitten_inference_tts2-$TTS2_VERSION-py3-none-any.whl" > requirements-lowest.txt <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              meta = next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))
+              for line in z.read(meta).decode().splitlines():
+                  if line.startswith("Requires-Dist:"):
+                      print(line.split(":", 1)[1].strip())
+          PY
+          cat requirements-lowest.txt
+          uv venv -q -p "${{ matrix.python }}" venv
+          uv pip install -p venv/bin/python --resolution lowest-direct --no-build --find-links dist --find-links stubs \
+            "kitten-inference[tts-2]==$UMBRELLA_VERSION" -r requirements-lowest.txt
+          uv pip install -p venv/bin/python pytest
+          uv pip freeze -p venv/bin/python
+      - name: Unit tests with those versions
+        env:
+          KT2N_REQUIRE_ABI_TEST: "1"
+          KT2N_REQUIRE_FFMPEG: "1"
+          KT2N_STRICT_SKIPS: "1"
+          KT2N_EXPECT_NO_NVIDIA_DRIVER: "1"
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/venv/bin/python" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
             "$GITHUB_WORKSPACE/tts-2/python/tests"
 
   engine-wheels:
@@ -189,6 +266,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Versions (from the pyprojects, which a post release changes)
+        shell: bash
+        run: |
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -207,8 +289,8 @@ jobs:
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
           $PY -m pip install --disable-pip-version-check -q -U pip
-          $PY -m pip install --disable-pip-version-check dist/kitten_inference-0.2.0-py3-none-any.whl \
-            dist/kitten_inference_tts2-0.2.0-py3-none-any.whl $(find engine -name 'kitten_inference_tts2_cu12-*.whl')
+          $PY -m pip install --disable-pip-version-check dist/kitten_inference-$UMBRELLA_VERSION-py3-none-any.whl \
+            dist/kitten_inference_tts2-$TTS2_VERSION-py3-none-any.whl $(find engine -name 'kitten_inference_tts2_cu12-*.whl')
           sha256sum $(find engine -name '*.whl')
       - name: Load the engine through kitten_inference.tts2 (no GPU)
         shell: bash
@@ -235,14 +317,20 @@ jobs:
         run: |
           apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip python3-venv > /dev/null
           python3 --version && python3 -m pip --version
+      - name: Versions (from the pyprojects, which a post release changes)
+        shell: bash
+        run: |
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - name: Install each spelling with pip 22.0.2
         shell: bash
         run: |
           set -o pipefail
-          python3 -m pip download -q --dest deps dist/kitten_inference_tts2-0.2.0-py3-none-any.whl
+          python3 -m pip download -q --dest deps "dist/kitten_inference_tts2-$TTS2_VERSION-py3-none-any.whl"
           rm -f deps/kitten_inference_tts2-*.whl
-          for spec in "kitten-inference[tts-0.8]==0.2.0" "kitten-inference[tts-0-8]==0.2.0" \
-                      "kitten-inference[tts-2]==0.2.0" "kitten-inference[tts-2-rocm]==0.2.0"; do
+          V=$UMBRELLA_VERSION
+          for spec in "kitten-inference[tts-0.8]==$V" "kitten-inference[tts-0-8]==$V" \
+                      "kitten-inference[tts-2]==$V" "kitten-inference[tts-2-rocm]==$V"; do
             echo "::group::$spec"
             echo "$ python3 -m pip install --no-index --find-links dist --find-links stubs --find-links deps \"$spec\""
             python3 -m pip install --no-index --find-links dist --find-links stubs --find-links deps "$spec" 2>&1 \
@@ -260,7 +348,7 @@ jobs:
           for v in 22.0.2 22.3.1 23.0.1 23.1.2 23.2.1 23.3 23.3.2 24.0 25.3; do
             rm -rf /tmp/v && python3 -m venv /tmp/v && /tmp/v/bin/python -m pip install -q --disable-pip-version-check "pip==$v"
             out=$(/tmp/v/bin/python -m pip install --disable-pip-version-check --no-index --find-links dist \
-                  --find-links stubs "kitten-inference[tts-0.8]==0.2.0" 2>&1)
+                  --find-links stubs "kitten-inference[tts-0.8]==$UMBRELLA_VERSION" 2>&1)
             got=$(/tmp/v/bin/python -m pip list --disable-pip-version-check 2>/dev/null | grep -ci '^kitten-inference-tts08')
             echo "pip $v: [tts-0.8] installs kitten-inference-tts08: $([ "$got" = 1 ] && echo yes || echo no)$(echo "$out" | grep -o "WARNING: .*extra.*" | sed 's/^/ -- /')" \
               | tee -a old-pip.log

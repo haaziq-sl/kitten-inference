@@ -7,13 +7,16 @@ nothing (pip then fails, or falls back to the earlier kitten-inference 0.1.1).
     python .github/scripts/pypi_ready.py wait   [--timeout-minutes 120] [--every-seconds 60]
     python .github/scripts/pypi_ready.py wait   --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
 
-check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout.
+check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout;
+a failed request (an error answer from PyPI, a timeout, a dropped connection) counts as "not ready yet" and is tried
+again at the next check.
 --only: just these distributions of the extras (the release order: the engine wheels before kitten-inference-tts2
 and kitten-inference-tts08, those before the umbrella). Without --only it also warns (GitHub annotation) while the
 earlier kitten-inference 0.1.0 / 0.1.1 are not yanked.
 Read-only: it only reads PyPI's JSON API.
 """
 import argparse
+import http.client
 import json
 import re
 import sys
@@ -125,6 +128,29 @@ def earlier_not_yanked(index: str, get=fetch) -> list:
     return [v for v in versions if releases.get(v) and not all(f.get("yanked") for f in releases[v])]
 
 
+# What a request to PyPI can fail with that is worth trying again (HTTPError is a URLError; socket timeouts and reset
+# connections are OSErrors; a cut-off answer is not JSON).
+TRANSIENT = (urllib.error.URLError, OSError, http.client.HTTPException, ValueError)
+
+
+def wait(index: str, reqs: dict, mode: str, timeout_s: float, every_s: float, get=fetch, sleep=time.sleep,
+         clock=time.monotonic) -> list:
+    """[] once every distribution is there; else the problems of the last check (mode check: after one check;
+    mode wait: when the timeout has passed)."""
+    deadline = clock() + timeout_s
+    while True:
+        try:
+            problems = missing(index, reqs, get=get)
+        except TRANSIENT as exc:
+            problems = [f"PyPI request failed ({type(exc).__name__}: {exc}); trying again"]
+        if not problems:
+            return []
+        print("not ready:", "; ".join(problems), flush=True)
+        if mode == "check" or clock() > deadline:
+            return problems
+        sleep(every_s)
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("mode", choices=["check", "wait"])
@@ -137,18 +163,16 @@ def main() -> int:
     reqs = only(requirements(a.pyproject), a.only)
     print("waiting for" if a.only else "the umbrella's extras need:",
           ", ".join(f"{n}{s}" for n, s in sorted(reqs.items())))
-    deadline = time.monotonic() + a.timeout_minutes * 60
-    while True:
-        problems = missing(a.index, reqs)
-        if not problems:
-            break
-        print("not ready:", "; ".join(problems), flush=True)
-        if a.mode == "check" or time.monotonic() > deadline:
-            what = "this distribution" if a.only else "the umbrella"
-            print(f"::error::{what} must not be published before these are on PyPI: " + "; ".join(problems))
-            return 1
-        time.sleep(a.every_seconds)
-    old = [] if a.only else earlier_not_yanked(a.index)
+    problems = wait(a.index, reqs, a.mode, a.timeout_minutes * 60, a.every_seconds)
+    if problems:
+        what = "this distribution" if a.only else "the umbrella"
+        print(f"::error::{what} must not be published before these are on PyPI: " + "; ".join(problems))
+        return 1
+    try:
+        old = [] if a.only else earlier_not_yanked(a.index)
+    except TRANSIENT as exc:  # only a reminder: never a reason to fail the release
+        print(f"::notice::could not check whether kitten-inference 0.1.x are yanked ({exc})")
+        old = []
     if old:
         print(f"::warning::kitten-inference {', '.join(old)} not yanked: where an extra's engine has no wheel, pip "
               "installs that version instead (with only a warning). Yank them on PyPI (pinned installs still work).")

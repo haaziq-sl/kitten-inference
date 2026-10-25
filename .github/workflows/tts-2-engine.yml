@@ -10,22 +10,25 @@ name: tts-2 engine wheels
 
 on:
   push:
-    branches: ["ws/engine", "ws/integ", "feat/tts-0.8-and-tts-2"]
+    branches: ["**"]
     tags: ["v*"]
+    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+  pull_request:
     paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Wheel version (0.2.0; fixes are 0.2.0.postN)"
-        default: "0.2.0"
-        required: true
+        description: "Wheel version, e.g. 0.2.0.post1 for a packaging fix (empty: the engine version)"
+        default: ""
+        required: false
 
 permissions:
   contents: read
 
 env:
-  # The version of pushed builds and releases (a post release of these wheels changes it here: RELEASING.md).
-  CU12_VERSION: "0.2.0"
+  # The version of pushed builds and releases; empty: the engine's version (tts-2/CMakeLists.txt). A post release of
+  # these wheels sets it here, e.g. 0.2.0.post1 (RELEASING.md); make_wheel.py refuses any other version.
+  CU12_VERSION: ""
 
 jobs:
   linux:

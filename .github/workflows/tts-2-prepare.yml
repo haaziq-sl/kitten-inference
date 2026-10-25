@@ -7,7 +7,7 @@ name: tts-2 prepare
 
 on:
   push:
-    branches: [ws/prepare, ws/integ, feat/tts-0.8-and-tts-2]
+    branches: ["**"]
     paths:
       - "tts-2/tools/**"
       - "tts-2/tests/assets/**"
@@ -52,6 +52,10 @@ jobs:
           - {os: ubuntu-24.04, python: "3.15", numpy: latest}
           - {os: windows-2022, python: "3.9", numpy: latest}
           - {os: windows-2022, python: "3.15", numpy: latest}
+          # the oldest dependency versions kitten-inference-tts2 allows (numpy 1.24.0, huggingface-hub 0.25.0,
+          # tokenizers 0.22.0; tts-2/python/pyproject.toml)
+          - {os: ubuntu-24.04, python: "3.9", numpy: lowest}
+          - {os: windows-2022, python: "3.9", numpy: lowest}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -68,7 +72,9 @@ jobs:
           # Wheels only. On Python 3.15 PyYAML (a dependency of huggingface-hub) has no wheel yet: build it alone from source.
           extra=""; [ "${{ matrix.python }}" = "3.15" ] && extra="--no-binary pyyaml"
           python -m pip install --only-binary :all: $extra -r tts-2/requirements-prepare.txt pytest
-          if [ "${{ matrix.numpy }}" != latest ]; then python -m pip install --only-binary :all: "numpy==${{ matrix.numpy }}"; fi
+          if [ "${{ matrix.numpy }}" = lowest ]; then
+            python -m pip install --only-binary :all: numpy==1.24.0 huggingface-hub==0.25.0 tokenizers==0.22.0
+          elif [ "${{ matrix.numpy }}" != latest ]; then python -m pip install --only-binary :all: "numpy==${{ matrix.numpy }}"; fi
           python -m pip list | grep -i -E "^(numpy|tokenizers|huggingface.hub|pyyaml) "
           python - <<'PY'
           import importlib.util, platform, sys, numpy
