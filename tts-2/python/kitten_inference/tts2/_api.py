@@ -6,6 +6,7 @@ import hashlib
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
@@ -134,6 +135,7 @@ class KittenTTS2:
         self._mode = BUILTIN
         self._voice_ids: Dict[str, int] = {}     # built-in name -> id, for the current engine
         self._custom_ids: Dict[str, int] = {}    # Voice.key -> id, for the current engine
+        self._custom_users: Dict[int, str] = {}  # request id -> Voice.key of the requests that used a custom voice
         self._last_voice = 0
         self._max_prefix_ids = 0
         self._verified = set()  # model files whose SHA-256 matched in this process
@@ -209,6 +211,7 @@ class KittenTTS2:
             self._engine = None
         self._voice_ids.clear()
         self._custom_ids.clear()
+        self._custom_users.clear()
         self._last_voice = 0
         try:
             self._engine = self._create(config, bundle)
@@ -332,13 +335,18 @@ class KittenTTS2:
         return vid
 
     def _drop_custom_voices(self, engine: Engine) -> None:
-        """Evicts the loaded custom voice (the engine has room for one), unless a running request still uses it."""
+        """Evicts the loaded custom voice (the engine has room for one), unless a running request still uses it.
+        Requests that were stopped (a closed stream) are waited for: they release the voice within milliseconds."""
         for key, vid in list(self._custom_ids.items()):
-            if engine.voice_info(vid).refs > 0:
+            if any(k == key and engine.is_live(i) for i, k in list(self._custom_users.items())):
                 raise RuntimeError("the previous cloned or loaded voice is still in use by a running stream(); "
                                    "finish or close it before using another one")
+            deadline = time.monotonic() + 10
+            while engine.voice_info(vid).refs > 0 and time.monotonic() < deadline:
+                engine.pump(20)
             engine.voice_evict(vid)
             del self._custom_ids[key]
+        self._custom_users = {i: k for i, k in self._custom_users.items() if engine.is_live(i)}
 
     def load_voice(self, path: Union[str, os.PathLike]) -> Voice:
         """Reads a voice saved by save_voice() (or kitten-tts2 --save-voice) and loads it into the engine."""
@@ -432,6 +440,10 @@ class KittenTTS2:
                 ident = engine.submit(params)
             except EngineError as exc:
                 raise _request_error(exc) from None
+            if isinstance(voice, Voice):
+                if len(self._custom_users) > 64:  # keep only the running ones
+                    self._custom_users = {i: k for i, k in self._custom_users.items() if engine.is_live(i)}
+                self._custom_users[ident] = voice.key
             return engine, ident
 
     def generate(self, text: str, voice: Union[str, Voice] = "Bruno", stream: bool = False,

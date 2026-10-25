@@ -84,6 +84,11 @@ class Engine:
             raise RuntimeError("the engine is closed")
         return self._handle
 
+    def is_live(self, ident: int) -> bool:
+        """Whether request ``ident`` is still running for a caller (not finished, not abandoned)."""
+        with self._lock:
+            return ident in self._queues and ident not in self._abandoned
+
     def busy(self) -> bool:
         with self._lock:
             return any(i not in self._abandoned for i in self._queues)
