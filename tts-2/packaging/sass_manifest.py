@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -62,8 +63,10 @@ def cuobjdump() -> str:
 
 
 def fatbin_sections(data: bytes) -> bytes | None:
-    """The .nv_fatb section(s) of a Windows PE image (DLL) or COFF object file (also the /bigobj form, which the
-    build's CUDA objects use); None for anything else (ELF is read by cuobjdump as it is)."""
+    """The CUDA fatbinary section(s) of a Windows PE image (DLL: `.nv_fatb`, names cut to 8 characters) or COFF object
+    file (`.nv_fatbin`, a long name kept in the string table; also the /bigobj form, which the build's CUDA objects
+    use); None for anything else (ELF is read by cuobjdump as it is)."""
+    strtab = None  # COFF objects: where the string table starts (long section names are "/<offset>" into it)
     if data[:2] == b"MZ":
         pe = struct.unpack_from("<I", data, 0x3C)[0]
         if data[pe:pe + 4] != b"PE\0\0":
@@ -71,19 +74,28 @@ def fatbin_sections(data: bytes) -> bytes | None:
         coff = pe + 4
         nsec = struct.unpack_from("<H", data, coff + 2)[0]
         sec = coff + 20 + struct.unpack_from("<H", data, coff + 16)[0]
-    elif data[:2] == b"\x64\x86":  # an x64 COFF object file (IMAGE_FILE_MACHINE_AMD64)
+    elif data[:2] == b"\x64\x86":  # an x64 COFF object file (IMAGE_FILE_MACHINE_AMD64); symbols are 18 bytes
         nsec = struct.unpack_from("<H", data, 2)[0]
         sec = 20 + struct.unpack_from("<H", data, 16)[0]
+        symptr, nsym = struct.unpack_from("<II", data, 8)
+        strtab = symptr + 18 * nsym
     elif data[:4] == b"\0\0\xff\xff" and struct.unpack_from("<HH", data, 4) == (2, 0x8664):
-        # /bigobj (ANON_OBJECT_HEADER_BIGOBJ, 56 bytes): 32-bit section count at offset 44, sections right after
+        # /bigobj (ANON_OBJECT_HEADER_BIGOBJ, 56 bytes): 32-bit section count at offset 44, symbol table pointer and
+        # count at 48 and 52 (20-byte symbols), section headers right after the header
         nsec = struct.unpack_from("<I", data, 44)[0]
         sec = 56
+        symptr, nsym = struct.unpack_from("<II", data, 48)
+        strtab = symptr + 20 * nsym
     else:
         return None
     out = b""
     for i in range(nsec):
         name, vsize, _vaddr, rsize, rptr = struct.unpack_from("<8sIIII", data, sec + 40 * i)
-        if name.rstrip(b"\0").startswith(b".nv_fatb"):
+        name = name.rstrip(b"\0")
+        if name.startswith(b"/") and strtab is not None and name[1:].isdigit():
+            at = strtab + int(name[1:])
+            name = data[at:data.index(b"\0", at)]
+        if name.startswith(b".nv_fatb"):
             size = min(vsize, rsize) if vsize else rsize  # objects have no virtual size
             out += data[rptr:rptr + size]
     return out
@@ -254,8 +266,54 @@ def report(lib: Path, got: dict, ref: dict) -> tuple[bool, list]:
     return not (differ or only_lib or only_ref), (differ if not (only_lib or only_ref) else None)
 
 
+def function_identifier(name: str) -> str | None:
+    """The function's own identifier from an Itanium-mangled name (with the anonymous-namespace prefix normalised):
+    _ZN12kt2n_tern_cc47_GLOBAL__N_13dec_cc_kernelILi8E... -> dec_cc_kernel."""
+    if not name.startswith("_Z"):
+        return None
+    i, last = (3 if name.startswith("_ZN") else 2), None
+    while i < len(name) and name[i].isdigit():
+        j = i
+        while j < len(name) and name[j].isdigit():
+            j += 1
+        if name.startswith("_GLOBAL__N_", j):  # its length is the original (longer) prefix's
+            i = j + len("_GLOBAL__N_")
+            continue
+        n = int(name[i:j])
+        last, i = name[j:j + n], j + n
+    return last
+
+
+def objects_of_sources(build: Path, differ: list) -> list[Path]:
+    """Fallback: the objects of the .cu sources (compile_commands.json) that mention the differing functions' names."""
+    try:
+        entries = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    idents = {x for x in (function_identifier(n) for _, n in differ) if x}
+    hits = []
+    for e in entries:
+        src = Path(e["file"])
+        if src.suffix != ".cu" or not src.is_file():
+            continue
+        text = src.read_text(encoding="utf-8", errors="replace")
+        if not any(re.search(r"\b" + re.escape(x) + r"\b", text) for x in idents):
+            continue
+        out = e.get("output")
+        if not out:
+            m = re.search(r'\s-o\s+("[^"]+"|\S+)', e.get("command", ""))
+            out = m.group(1).strip('"') if m else None
+        if out:  # "output" is relative to the build's top directory, "-o" to the entry's directory
+            for obj in ([Path(out)] if Path(out).is_absolute() else [build / out, Path(e["directory"]) / out]):
+                if obj.is_file():
+                    hits.append(obj)
+                    break
+    return hits
+
+
 def objects_with(build: Path, differ: list) -> list[Path]:
-    """The CUDA object files under `build` that hold the differing functions."""
+    """The CUDA object files under `build` that hold the differing functions (read from their GPU code; if that finds
+    none, the objects of the sources that name them)."""
     objs = sorted(p for p in build.rglob("*") if p.is_file() and p.name.endswith((".cu.o", ".cu.obj")))
     want: dict[str, set[str]] = {}
     for arch, n in differ:
@@ -267,6 +325,10 @@ def objects_with(build: Path, differ: list) -> list[Path]:
             if any(n in fs for n in names):
                 hits.append(o)
                 break
+    if not hits:
+        hits = objects_of_sources(build, differ)
+        if hits:
+            print("  (objects found from the sources that name the functions)")
     return hits
 
 
