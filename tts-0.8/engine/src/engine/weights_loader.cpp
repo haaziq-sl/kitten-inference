@@ -1,5 +1,6 @@
 #include "weights_loader.hpp"
 #include "weight_cache.hpp"
+#include "utils/file_open.hpp"
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
@@ -20,7 +21,7 @@ void load_weights(const std::string& weights_path,
 
     auto file_deleter = [](FILE* fp){ if (fp) fclose(fp); };
     std::unique_ptr<FILE, decltype(file_deleter)> f_owner(
-        fopen(weights_path.c_str(), "rb"), file_deleter);
+        fopen_utf8(weights_path, "rb"), file_deleter);
     FILE* f = f_owner.get();
     if (!f)
         throw std::runtime_error("Cannot open weights: " + weights_path);

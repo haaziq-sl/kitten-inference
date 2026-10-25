@@ -2,6 +2,7 @@
 
 #include "models/kitten.hpp"
 #include "engine/model.hpp"
+#include "utils/file_open.hpp"
 
 #include <algorithm>
 #include <sstream>
@@ -51,7 +52,7 @@ std::vector<float> KittenModel::parse_ids(const std::string& s)
 
 std::vector<float> KittenModel::load_ids_bin(const std::string& path)
 {
-    FILE* f = fopen(path.c_str(), "rb");
+    FILE* f = fopen_utf8(path, "rb");
     if (!f) throw std::runtime_error("Cannot open IDs bin: " + path);
     fseek(f, 0, SEEK_END);
     long nb = ftell(f);
@@ -64,7 +65,7 @@ std::vector<float> KittenModel::load_ids_bin(const std::string& path)
 
 void KittenModel::load_voice(const std::string& voice_path)
 {
-    FILE* f = fopen(voice_path.c_str(), "rb");
+    FILE* f = fopen_utf8(voice_path, "rb");
     if (!f) throw std::runtime_error("Cannot open voice: " + voice_path);
     fseek(f, 0, SEEK_END);
     long nb = ftell(f);
