@@ -10,6 +10,12 @@ target_link_libraries(test_cli_core PRIVATE kt2n_cli_core GTest::gtest_main)
 kt2n_set_warnings(test_cli_core)
 gtest_discover_tests(test_cli_core DISCOVERY_MODE PRE_TEST PROPERTIES LABELS cpu)
 
+# The reference-audio decode with the system's ffmpeg program (skips the decode cases when ffmpeg is not on PATH).
+add_executable(test_cli_ffmpeg ffmpeg_decode_test.cc)
+target_link_libraries(test_cli_ffmpeg PRIVATE kt2n_cli_core GTest::gtest_main)
+kt2n_set_warnings(test_cli_ffmpeg)
+gtest_discover_tests(test_cli_ffmpeg DISCOVERY_MODE PRE_TEST PROPERTIES LABELS cpu)
+
 # Links no engine: the test provides its own kt2n_stats_json.
 add_executable(test_cli_stats_reader stats_reader_test.cc)
 target_include_directories(test_cli_stats_reader PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/cli")
