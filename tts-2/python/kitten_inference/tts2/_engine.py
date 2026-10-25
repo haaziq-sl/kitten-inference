@@ -1,8 +1,13 @@
 """A thin, thread-safe owner of one ``kt2n_engine``: create/destroy, submit, voice calls and an event pump.
 
 Events are copied out of engine memory and returned to the engine at once (``kt2n_events_release``), then routed
-to the queue of the request or build they belong to. Any thread waiting for its own events may pump; only one
-pumps at a time, so several requests (or a suspended stream and a new request) never steal each other's events.
+to the queue of the request or build they belong to. Any thread waiting for its own events may pump, one at a time
+(leader/followers): the others wait on a condition that the pumping thread signals after each batch it routes, so
+an event polled by another thread reaches its waiting owner at once, and requests never steal each other's events.
+
+A suspended stream() that is abandoned (closed, or collected as garbage) cancels its request without taking the
+queue lock: the garbage collector can run its ``finally`` at any point, also inside this class's own critical
+sections, so abandon() only records the id (an atomic deque append) and the next locked step applies it.
 """
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ import collections
 import ctypes
 import threading
 from dataclasses import dataclass
-from typing import Deque, Dict, Iterator, Optional, Set
+from typing import Deque, Dict, Iterator, List, Optional, Set
 
 from . import _abi
 
@@ -56,26 +61,40 @@ class Event:
     fields_json: Optional[str] = None
     error: Optional[EngineError] = None
     voice: int = 0
+    at_ns: int = 0  # CLOCK_MONOTONIC when it happened in the engine (time.monotonic_ns() on Linux)
+
+
+TERMINAL = (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT)
 
 
 class Engine:
     def __init__(self, lib, config: _abi.EngineConfig):
         self.lib = lib
-        handle = ctypes.c_void_p()
-        err = _abi.Error()
-        status = lib.kt2n_engine_create(ctypes.byref(config), ctypes.byref(handle), ctypes.byref(err))
-        if status != _abi.OK:
-            if handle.value:
-                lib.kt2n_engine_destroy(handle)
-            raise error_from(lib, status, err)
-        self._handle = handle
+        self._handle: Optional[ctypes.c_void_p] = None
         self._queues: Dict[int, Deque[Event]] = {}
         self._abandoned: Set[int] = set()
-        self._lock = threading.Lock()        # queues, abandoned set
-        self._pump_lock = threading.Lock()   # one kt2n_poll at a time; destroy waits for it
+        self._dropped: Deque[int] = collections.deque()  # abandon() -> applied by _drain() under _lock
+        self._lock = threading.Lock()                     # queues, abandoned set, pumping flag
+        self._routed = threading.Condition(self._lock)    # signalled after each routed batch
+        self._pumping = False                             # a thread is polling; the others wait on _routed
+        self._pump_lock = threading.Lock()   # held around kt2n_poll; destroy waits for it
         self._call_lock = threading.RLock()  # every other engine call; destroy waits for it
         self._events = (_abi.Event * POLL_BATCH)()
         self.closing = False  # destroy() has begun: requests end as cancelled
+        handle = ctypes.c_void_p()
+        err = _abi.Error()
+        try:
+            status = lib.kt2n_engine_create(ctypes.byref(config), ctypes.byref(handle), ctypes.byref(err))
+            if status != _abi.OK:
+                raise error_from(lib, status, err)
+            self._handle = handle
+        except BaseException:
+            # Also Ctrl-C: create blocks for seconds, and Python raises KeyboardInterrupt as soon as it returns, with
+            # the new engine (and its GPU memory) in `handle` only. This object is never returned: free it here.
+            self._handle = None
+            if handle.value:
+                lib.kt2n_engine_destroy(handle)
+            raise
 
     # -- lifetime ---------------------------------------------------------------------------------------------
     @property
@@ -87,11 +106,17 @@ class Engine:
     def is_live(self, ident: int) -> bool:
         """Whether request ``ident`` is still running for a caller (not finished, not abandoned)."""
         with self._lock:
-            return ident in self._queues and ident not in self._abandoned
+            release = self._drain()
+            live = ident in self._queues and ident not in self._abandoned
+        self._release_all(release)
+        return live
 
     def busy(self) -> bool:
         with self._lock:
-            return any(i not in self._abandoned for i in self._queues)
+            release = self._drain()
+            busy = any(i not in self._abandoned for i in self._queues)
+        self._release_all(release)
+        return busy
 
     def destroy(self) -> None:
         """Cancels what is running and frees the engine. A thread still waiting for its events gets RuntimeError
@@ -107,6 +132,8 @@ class Engine:
             handle, self._handle = self._handle, None
             if handle is not None:
                 self.lib.kt2n_engine_destroy(handle)
+        with self._lock:
+            self._routed.notify_all()  # waiters see the closed engine at once
 
     # -- calls ------------------------------------------------------------------------------------------------
     def check(self, status: int, err: Optional[_abi.Error] = None) -> None:
@@ -190,24 +217,35 @@ class Engine:
 
     def abandon(self, ident: int) -> None:
         """Cancels ``ident`` and stops waiting for it: its events are dropped and its id released on its terminal
-        event (by whichever thread pumps next). Safe to call from a generator's ``finally``."""
-        with self._lock:
-            if ident not in self._queues:
-                return
-            terminal = any(e.kind in (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT) for e in self._queues[ident])
-            if terminal:
+        event. Safe in a generator's ``finally`` that the garbage collector runs: it takes no lock but the reentrant
+        call lock (an atomic append, applied by the next locked step)."""
+        if ident in self._queues:  # a plain read: finished ids are already released
+            self._dropped.append(ident)
+            self.cancel(ident)
+
+    def _drain(self) -> List[int]:
+        """Applies abandon() calls (lock held). Returns the ids to release, after the lock is dropped."""
+        release = []
+        while self._dropped:
+            ident = self._dropped.popleft()
+            queue = self._queues.get(ident)
+            if queue is None or ident in self._abandoned:
+                continue
+            if any(e.kind in TERMINAL for e in queue):
                 del self._queues[ident]
+                release.append(ident)
             else:
                 self._abandoned.add(ident)
-        if terminal:
-            self._release(ident)
-        else:
-            self.cancel(ident)
+        return release
 
     def _release(self, ident: int) -> None:
         with self._call_lock:
             if self._handle is not None:
                 self.lib.kt2n_release(self._handle, ident)
+
+    def _release_all(self, idents: List[int]) -> None:
+        for ident in idents:
+            self._release(ident)
 
     # -- events -----------------------------------------------------------------------------------------------
     def _copy(self, ev: _abi.Event) -> Event:
@@ -218,27 +256,34 @@ class Engine:
             error = error_from(self.lib, ev.status, e)
         fields = ev.fields_json.decode("utf-8", "replace") if ev.fields_json else None
         return Event(kind=ev.kind, status=ev.status, id=ev.id, data=data, samples=ev.samples,
-                     is_final_chunk=bool(ev.is_final_chunk), fields_json=fields, error=error, voice=ev.voice)
+                     is_final_chunk=bool(ev.is_final_chunk), fields_json=fields, error=error, voice=ev.voice,
+                     at_ns=ev.at_ns)
 
-    def pump(self, timeout_ms: int = POLL_TIMEOUT_MS) -> None:
-        """Polls once (waiting at most timeout_ms) and routes what arrived."""
+    def _poll(self, timeout_ms: int, out: List[Event]) -> None:
+        """One kt2n_poll (waiting at most timeout_ms): appends the events, copied, to ``out`` and gives them back to
+        the engine. Ctrl-C raised as kt2n_poll returns still keeps the events (out is the caller's list) and
+        returns their buffers."""
         with self._pump_lock:
             handle = self.handle  # RuntimeError once destroyed
             count = ctypes.c_int32(0)
-            self.check(self.lib.kt2n_poll(handle, self._events, POLL_BATCH, timeout_ms, ctypes.byref(count)))
-            n = int(count.value)
-            if n <= 0:
-                return
             try:
-                copied = [self._copy(self._events[i]) for i in range(n)]
+                self.check(self.lib.kt2n_poll(handle, self._events, POLL_BATCH, timeout_ms, ctypes.byref(count)))
             finally:
-                self.lib.kt2n_events_release(handle, self._events, n)
+                n = max(0, int(count.value))
+                if n:
+                    try:
+                        out.extend(self._copy(self._events[i]) for i in range(n))
+                    finally:
+                        self.lib.kt2n_events_release(handle, self._events, n)
+
+    def _route(self, events: List[Event]) -> None:
+        """Puts each event in its request's queue and wakes the waiting threads."""
         release = []
         with self._lock:
-            for ev in copied:
-                terminal = ev.kind in (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT)
+            release += self._drain()
+            for ev in events:
                 if ev.id in self._abandoned:
-                    if terminal:
+                    if ev.kind in TERMINAL:
                         self._abandoned.discard(ev.id)
                         self._queues.pop(ev.id, None)
                         release.append(ev.id)
@@ -246,21 +291,49 @@ class Engine:
                 queue = self._queues.get(ev.id)
                 if queue is not None:
                     queue.append(ev)
-        for ident in release:
-            self._release(ident)
+            self._routed.notify_all()
+        self._release_all(release)
+
+    def pump(self, timeout_ms: int = POLL_TIMEOUT_MS, ident: Optional[int] = None) -> None:
+        """Waits for events once: returns at once when ``ident`` already has one queued; otherwise polls (waiting at
+        most timeout_ms) and routes what arrived, or, while another thread polls, waits until it has routed a batch."""
+        with self._lock:
+            release = self._drain()
+            if ident is not None and self._queues.get(ident):
+                lead = False
+            elif self._pumping:
+                lead = False
+                self._routed.wait(timeout_ms / 1000.0)
+            else:
+                self._pumping = lead = True
+        self._release_all(release)
+        if not lead:
+            return
+        copied: List[Event] = []
+        try:
+            self._poll(timeout_ms, copied)
+        finally:
+            try:
+                self._route(copied)
+            finally:
+                with self._lock:
+                    self._pumping = False
+                    self._routed.notify_all()  # a waiting thread takes over the polling
 
     def events(self, ident: int) -> Iterator[Event]:
         """Yields the events of ``ident`` in order until its terminal event (included), then releases the id."""
         while True:
             with self._lock:
+                release = self._drain()
                 queue = self._queues[ident]
                 ev = queue.popleft() if queue else None
-                if ev is not None and ev.kind in (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT):
+                if ev is not None and ev.kind in TERMINAL:
                     del self._queues[ident]
+            self._release_all(release)
             if ev is None:
-                self.pump()
+                self.pump(POLL_TIMEOUT_MS, ident)
                 continue
-            if ev.kind in (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT):
+            if ev.kind in TERMINAL:
                 self._release(ident)
                 yield ev
                 return
