@@ -1,5 +1,5 @@
 # Build the Windows kitten-inference-tts2-cu12 wheel (py3-none-win_amd64).
-#   powershell -File tts-2\packaging\build_wheel_windows.ps1 [-Out DIR] [-Jobs N] [-Version 0.2.0]
+#   powershell -File tts-2\packaging\build_wheel_windows.ps1 [-Out DIR] [-Jobs N] [-Version 0.2.0.post1]
 # Run it from a Visual Studio 2022 x64 developer environment (vcvars64; the CI job uses ilammy/msvc-dev-cmd) with
 # CUDA 12.8 (CUDA_PATH), CMake 3.28+, Ninja and Python 3 on PATH.
 # Steps: the text dependencies with the static C runtime (tools/build_text_deps.py --msvc-static-runtime),
@@ -10,7 +10,7 @@
 param(
   [string]$Out = "",
   [int]$Jobs = 0,
-  [string]$Version = "0.2.0"
+  [string]$Version = ""   # default: the engine version (make_wheel.py)
 )
 $ErrorActionPreference = "Stop"
 $Src = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -32,10 +32,13 @@ $t1 = Get-Date
 Run "cmake" @("--preset", "wheel-windows")
 Run "cmake" @("--build", "--preset", "wheel-windows", "--parallel", "$Jobs")
 # The GPU code must be the default build's, function for function (packaging/sass_manifest.py): files whose code came
-# out differently are compiled again. KT2N_SASS_CHECK=0 skips this (development builds only).
+# out differently are compiled again. On Windows nearly every compile of the CUDA-core decode kernels varies in a few of
+# them, so the differing object is compiled and checked on its own up to 20 times before each relink (about 45 s each;
+# 6 x 20 compiles fit the job's time limit). KT2N_SASS_CHECK=0 skips this (development builds only).
 if ($env:KT2N_SASS_CHECK -ne "0") {
   Run "python" @("packaging/sass_manifest.py", "check", "build/wheel-windows/bin/kt2n_engine.dll", "--reference",
-                 "packaging/sass-reference.txt", "--build-dir", "build/wheel-windows", "--attempts", "6", "--",
+                 "packaging/sass-reference.txt", "--build-dir", "build/wheel-windows", "--attempts", "6",
+                 "--object-attempts", "20", "--",
                  "cmake", "--build", "--preset", "wheel-windows", "--parallel", "$Jobs")
 } else {
   "WARNING: KT2N_SASS_CHECK=0: the GPU code was not compared with the default build's; do not release this wheel"
@@ -44,7 +47,9 @@ $t2 = Get-Date
 $Stage = Join-Path $Src "build/wheel-windows-stage"
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 Run "cmake" @("--install", "build/wheel-windows", "--prefix", $Stage)
-Run "python" @("packaging/make_wheel.py", "--stage", $Stage, "--plat", "win_amd64", "--out", $Out, "--version", $Version)
+$makeArgs = @("packaging/make_wheel.py", "--stage", $Stage, "--plat", "win_amd64", "--out", $Out)
+if ($Version) { $makeArgs += @("--version", $Version) }
+Run "python" $makeArgs
 
 # Imports: Windows system DLLs only.
 $allowed = @("KERNEL32.dll", "ADVAPI32.dll", "WINMM.dll", "SHELL32.dll", "USER32.dll", "ole32.dll", "OLEAUT32.dll",

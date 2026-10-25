@@ -43,21 +43,26 @@ sets the version.
 
 The wheel's GPU code must be the default build's (`cmake --preset default`), instruction for instruction, so that it
 gives the same audio. After `cmake --build`, both build scripts run `sass_manifest.py check` against
-`sass-reference.txt`: one hash per GPU function and architecture of the default build of a gated commit (SASS identical
-to the reference release on every architecture, seeded audio identical).
+`sass-reference.txt`: one hash per GPU function and architecture of the default build of a checked commit. Checked
+means: its GPU code (SASS) is identical, function for function on all 8 architectures, to the previous reference's
+(after a deliberate change of GPU code: only the changed functions differ, and they were reviewed), and 36 seeded test
+requests give byte-identical audio before and after on an RTX 4090.
 
 nvcc's device front end (cicc, CUDA C++ to PTX) is not deterministic for a few kernels: with the same source, flags
 and toolkit, 6 of 44 compiles on a busy Linux build machine gave another SASS for the vocoder's sm_90
-`conv1d_tc3_k<64>` (one 16-byte shared-memory load split into a 16-byte and an 8-byte load of the same bytes), and each
-Windows build so far had one such function among the CUDA-core decode kernels. ptxas gives the same SASS for the same
-PTX every time. So when a
-function's SASS differs, the check deletes the object files that hold it, runs the build again (only those files are
-compiled again) and checks again, up to 6 times. A build that still differs, or whose set of GPU functions differs,
-fails: the GPU code really changed, and the reference has to be made again from a gated build:
+`conv1d_tc3_k<64>` (one 16-byte shared-memory load split into a 16-byte and an 8-byte load of the same bytes). On
+Windows nearly every compile of the CUDA-core decode kernels (`src/cuda/legacy/tern_dec_cc.cu`, 39 kernels for
+sm_61 and sm_75) differs in 2 to 7 of them: 2 of 12 compiles in three CI runs had all of them identical. ptxas gives
+the same SASS for the same PTX every time. So when a function's SASS differs, the check compiles the object files that
+hold it again and compares their own GPU code with the reference (up to 20 times on Windows, 10 on Linux, about 45 s
+each), then links the library again and checks all of it, up to 6 times. A build that still differs, or whose set of
+GPU functions differs, fails: the GPU code really changed. After a deliberate change, make the reference again from
+the default build of a commit checked as above, built from a checkout at `/root/src/port` (nvcc puts the source path
+into the names of GPU functions in anonymous namespaces; `build_linux_docker.sh` mounts the source there too):
 
 ```sh
 python3 tts-2/packaging/sass_manifest.py dump build/default/lib/libkt2n_engine.so \
-  --out tts-2/packaging/sass-reference.txt --note "default build of <commit>, gated <date>"
+  --out tts-2/packaging/sass-reference.txt --note "default build of <commit>, checked <date>"
 ```
 
 Release only wheels whose build log says `SASS check: IDENTICAL`; every wheel the CI workflow uploads has passed it.

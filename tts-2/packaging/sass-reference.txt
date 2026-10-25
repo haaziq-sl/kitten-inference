@@ -1,8 +1,8 @@
-# SASS reference of the Kitten TTS 2 engine library: the default build (cmake --preset default) of a commit that
-# passed the gate. Read by tts-2/packaging/sass_manifest.py check; see that file for how it is made and used.
+# SASS reference of the Kitten TTS 2 engine library: the default build (cmake --preset default) of a commit whose
+# GPU code was checked. Read by tts-2/packaging/sass_manifest.py check; see that file and packaging/README.md.
 # Made 2026-10-25 from the default build of the GPU sources of commit 3b66167 (unchanged since). Its 598 functions
-# that the gate's reference build (d77c247) also has are identical to it on all 8 architectures; the other 39 are
-# the CUDA-core decode kernels for sm_61 and sm_75. Seeded audio: 36 of 36 cases identical on an RTX 4090.
+# that the previous engine build also has are identical to it on all 8 architectures; the other 39 are the
+# CUDA-core decode kernels for sm_61 and sm_75. Seeded audio: 36 of 36 cases identical on an RTX 4090.
 # One line per GPU function: its name, then per architecture of the archs line the first 16 hex digits of the
 # sha256 of its SASS instruction lines ('-': not in that architecture's code).
 archs sm_100 sm_120 sm_61 sm_75 sm_80 sm_86 sm_89 sm_90

@@ -6,7 +6,7 @@
 # the GPU code check against the default build (sass_manifest.py), install into a stage folder, make_wheel.py, then
 # `auditwheel show` (the wheel must need nothing outside the manylinux_2_28 policy: the CUDA runtime is static and the
 # driver is loaded at run time). Environment:
-#   JOBS (default: the CPUs available), WHEEL_VERSION (default 0.2.0), KT2N_TEXT_DEPS (reuse a text-deps prefix),
+#   JOBS (default: the CPUs available), WHEEL_VERSION (default: the engine's version; or that version plus .postN), KT2N_TEXT_DEPS (reuse a text-deps prefix),
 #   KT2N_SASS_CHECK=0 (skip the GPU code check: never for a release).
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")/.." && pwd)
@@ -29,7 +29,7 @@ cmake --build --preset wheel --parallel "$JOBS"
 # out differently are compiled again. KT2N_SASS_CHECK=0 skips this (development builds with other architectures only).
 if [ "${KT2N_SASS_CHECK:-1}" != 0 ]; then
   "$PY" packaging/sass_manifest.py check build/wheel/lib/libkt2n_engine.so --reference packaging/sass-reference.txt \
-    --build-dir build/wheel --attempts 6 -- cmake --build --preset wheel --parallel "$JOBS"
+    --build-dir build/wheel --attempts 6 --object-attempts 10 -- cmake --build --preset wheel --parallel "$JOBS"
 else
   echo "WARNING: KT2N_SASS_CHECK=0: the GPU code was not compared with the default build's; do not release this wheel"
 fi
@@ -38,7 +38,7 @@ rm -rf build/wheel-stage
 cmake --install build/wheel --prefix build/wheel-stage > /dev/null
 mkdir -p "$OUT"
 "$PY" packaging/make_wheel.py --stage build/wheel-stage --plat manylinux_2_28_x86_64 --out "$OUT" \
-  --version "${WHEEL_VERSION:-0.2.0}"
+  --version "${WHEEL_VERSION:-}"
 WHL=$(ls -t "$OUT"/kitten_inference_tts2_cu12-*-py3-none-manylinux_2_28_x86_64.whl | head -1)
 "$PY" -m pip install -q "auditwheel>=6,<7"
 "$PY" -m auditwheel show "$WHL" | tee "$OUT/auditwheel-show.txt"

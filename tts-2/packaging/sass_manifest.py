@@ -2,14 +2,15 @@
 """The wheel's GPU code must be the default build's, instruction for instruction (standard library + cuobjdump).
 
   sass_manifest.py dump LIB --out MANIFEST [--note TEXT]
-  sass_manifest.py check LIB --reference MANIFEST [--build-dir DIR --attempts N -- REBUILD COMMAND...]
+  sass_manifest.py check LIB --reference MANIFEST [--build-dir DIR --attempts N [--object-attempts M]
+                                                    -- REBUILD COMMAND...]
   sass_manifest.py objects BUILD_DIR [--arch sm_75]
 
 `dump` writes the SASS (the machine code of each GPU architecture) of every function in an engine library as one hash
-per function and architecture: packaging/sass-reference.txt holds the default build's, made from a build that passed
-the gate (SASS identical to the reference release on every architecture, seeded audio identical). `check` compares a
-library with it and exits 0 only when every function on every architecture is the same, with the same set of
-functions.
+per function and architecture: packaging/sass-reference.txt holds the default build's, made from a build whose GPU code
+was checked (packaging/README.md: SASS identical to the previous reference on every architecture, or the changed
+functions reviewed, and seeded audio unchanged). `check` compares a library with it and exits 0 only when every
+function on every architecture is the same, with the same set of functions.
 
 Why the retry: nvcc's device front end (cicc, which turns CUDA C++ into PTX) is not deterministic for a few kernels.
 With the same source, flags and toolkit, a few compiles in 44 on a busy Linux build machine (none in 24 on an idle CI
@@ -20,7 +21,15 @@ and usually also for these variants, but not always. So a build can differ from 
 those files again gives the reference SASS. With --build-dir and a rebuild command, `check` finds the object files
 that hold the differing functions, deletes them, runs the rebuild command (which recompiles just those files and links
 the library again) and checks again, up to N attempts. A function that is new, missing or still different after the
-attempts is a real change of the GPU code: the check fails, and the reference has to be made again from a gated build.
+attempts is a real change of the GPU code: the check fails, and the reference has to be made again from a checked
+build (packaging/README.md).
+
+--object-attempts M (rebuild commands of the form `cmake --build ...` only): before each relink, compile just those
+object files again (the rebuild command with --target OBJECT) and compare their own GPU code with the reference, up to
+M times, until it is the reference's; then link and check the whole library. On Windows nearly every compile of the
+CUDA-core decode kernels (src/cuda/legacy/tern_dec_cc.cu, 39 kernels for sm_61 and sm_75) varies in a few of them, so
+a compile whose 78 kernels all match is the exception; an object compile and check takes about 45 s there, a relink
+and full check about 5 minutes. The last line gives the number of object compiles and how many matched.
 
 LIB is an ELF shared library or object (Linux), or a Windows DLL or object file, whose CUDA fatbinary section
 (.nv_fatb) is read directly. Windows names are paired with the reference's across the int64 ABI (int64_t / uint64_t
@@ -184,8 +193,8 @@ def write_manifest(path: Path, d: dict, note: str) -> None:
     archs = sorted(d)
     names = sorted({n for fs in d.values() for n in fs})
     lines = [
-        "# SASS reference of the Kitten TTS 2 engine library: the default build (cmake --preset default) of a commit that",
-        "# passed the gate. Read by tts-2/packaging/sass_manifest.py check; see that file for how it is made and used.",
+        "# SASS reference of the Kitten TTS 2 engine library: the default build (cmake --preset default) of a commit whose",
+        "# GPU code was checked. Read by tts-2/packaging/sass_manifest.py check; see that file and packaging/README.md.",
         *(["# " + x for x in textwrap.wrap(note, 114)] or ["#"]),
         "# One line per GPU function: its name, then per architecture of the archs line the first 16 hex digits of the",
         "# sha256 of its SASS instruction lines ('-': not in that architecture's code).",
@@ -332,6 +341,42 @@ def objects_with(build: Path, differ: list) -> list[Path]:
     return hits
 
 
+def is_cmake_build(command: list) -> bool:
+    return bool(command) and Path(command[0]).name.lower() in ("cmake", "cmake.exe") and "--build" in command
+
+
+def recompile_objects(build: Path, rebuild: list, objs: list, ref: dict, tries: int, stats: dict) -> bool:
+    """Compiles `objs` again, and only them (`rebuild` with --target), until the GPU code of each is the reference's,
+    up to `tries` compiles; the caller then links the library again and checks all of it. False when a compile
+    fails."""
+    targets = [str(o.relative_to(build)) for o in objs]  # the build tool's (Ninja's) names of the object files
+    for k in range(1, tries + 1):
+        for o in objs:
+            o.unlink(missing_ok=True)
+        if subprocess.run(rebuild + ["--target", *targets]).returncode != 0:
+            print("SASS check: compiling the object files again failed")
+            return False
+        differ, only_lib = [], []
+        for o in objs:
+            d, ol, _, _ = compare(dump(o, strict=False), ref)  # the rest of the reference is in other objects
+            differ += d
+            only_lib += ol
+        stats["compiles"] += 1
+        if only_lib:  # not in the reference at all: compiling again cannot help; the full check reports it
+            print(f"  object compile {k}: {len(only_lib)} functions are not in the reference")
+            return True
+        if not differ:
+            stats["identical"] += 1
+            print(f"  object compile {k}: identical to the reference", flush=True)
+            return True
+        per_arch = {}
+        for arch, _ in differ:
+            per_arch[arch] = per_arch.get(arch, 0) + 1
+        print(f"  object compile {k}: {len(differ)} functions differ ("
+              + ", ".join(f"{arch} {n}" for arch, n in sorted(per_arch.items())) + ")", flush=True)
+    return True
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -344,6 +389,8 @@ def main() -> int:
     c.add_argument("--reference", type=Path, required=True)
     c.add_argument("--build-dir", type=Path)
     c.add_argument("--attempts", type=int, default=6)
+    c.add_argument("--object-attempts", type=int, default=1,
+                   help="compiles of the differing object files, each checked on its own, before each relink")
     ob = sub.add_parser("objects", help="list the CUDA object files of a build that hold GPU code (a self-test of the "
                                          "rebuild step: they must be readable on this system)")
     ob.add_argument("build_dir", type=Path)
@@ -370,15 +417,22 @@ def main() -> int:
     ref = read_manifest(a.reference)
     import time
     t0 = time.time()
+    stats = {"compiles": 0, "identical": 0}
+
+    def compiles() -> str:
+        return (f"; object compiles {stats['compiles']}, identical to the reference {stats['identical']}"
+                if stats["compiles"] else "")
+
     for attempt in range(1, a.attempts + 1):
         ok, differ = report(a.lib, dump(a.lib), ref)
         print(f"  (attempt {attempt}, {time.time() - t0:.0f} s so far)", flush=True)
         if ok:
-            print(f"SASS check: IDENTICAL to {a.reference.name}" + (f" (after {attempt - 1} rebuilds)" if attempt > 1 else ""))
+            print(f"SASS check: IDENTICAL to {a.reference.name}" + (f" (after {attempt - 1} rebuilds{compiles()})"
+                                                                   if attempt > 1 else ""))
             return 0
         if differ is None:
             print("SASS check: the set of GPU functions differs from the reference: the GPU code changed. Make the "
-                  "reference again from a gated default build (see the top of sass_manifest.py).")
+                  "reference again from a checked default build (packaging/README.md).")
             return 1
         if not (a.build_dir and rebuild) or attempt == a.attempts:
             break
@@ -388,12 +442,17 @@ def main() -> int:
             return 1
         for o in objs:
             print(f"  compiling again: {o}")
-            o.unlink()
+        if a.object_attempts > 1 and is_cmake_build(rebuild):
+            if not recompile_objects(a.build_dir, rebuild, objs, ref, a.object_attempts, stats):
+                return 1
+        else:
+            for o in objs:
+                o.unlink()
         print(f"SASS check: attempt {attempt + 1}: {' '.join(rebuild)}", flush=True)
         if subprocess.run(rebuild).returncode != 0:
             print("SASS check: the rebuild failed")
             return 1
-    print(f"SASS check: DIFFERENT from {a.reference.name}")
+    print(f"SASS check: DIFFERENT from {a.reference.name}{compiles()}")
     return 1
 
 

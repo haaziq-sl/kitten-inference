@@ -138,6 +138,9 @@ cp "$STAGE/bin/kitten-tts-native" "$STAGE/bin/kt2n_prepare_text_data" "$TREE/$PK
 patchelf --replace-needed "$SONAME" libkt2n_engine.so "$TREE/$PKG/bin/kitten-tts-native"
 cp "$SRC/LICENSE" "$SRC/NOTICE" "$TREE/$PKG/licenses/"
 cp "$SRC/licenses/"*.txt "$TREE/$PKG/licenses/"
+# The source of the LGPL-2.1-or-later code compiled into the library (NOTICE, "Audio processing")
+mkdir -p "$TREE/$PKG/licenses/lgpl-source"
+cp "$SRC/src/post/atempo.cc" "$SRC/include/kt2n/post/atempo.h" "$TREE/$PKG/licenses/lgpl-source/"
 # ROCm code compiled into the library (NOTICE, "AMD ROCm"): the licence texts in licenses/rocm/ must be the ones the
 # installed ROCm packages ship, so that a ROCm update with a changed licence stops the build here.
 mkdir -p "$TREE/$PKG/licenses/rocm"
@@ -194,8 +197,7 @@ Name: $DIST
 Version: $VERSION
 Summary: Kitten TTS 2 native engine for AMD Radeon GPUs (ROCm), used by kitten-inference-tts2
 Home-page: https://github.com/KittenML/kitten-inference
-License: Apache-2.0 (the engine); third-party code compiled in, including AMD ROCm code (MIT, NCSA), is listed in kitten_inference/_tts2_rocm/licenses/NOTICE
-Classifier: License :: OSI Approved :: Apache Software License
+License: Apache-2.0 for KittenML's code. The library also contains third-party code under other licenses (LGPL-2.1-or-later, BSD-3-Clause, MIT, NCSA and more, including AMD ROCm code), listed in kitten_inference/_tts2_rocm/licenses/NOTICE; the whole is not Apache-2.0-only
 Classifier: Operating System :: POSIX :: Linux
 Classifier: Environment :: GPU
 Requires-Python: >=3.9

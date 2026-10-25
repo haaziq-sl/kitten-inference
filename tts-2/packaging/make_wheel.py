@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble the kitten-inference-tts2-cu12 wheel from an installed wheel-preset build (standard library only).
 
-  make_wheel.py --stage STAGE --plat manylinux_2_28_x86_64|win_amd64 --out DIR [--version 0.2.0]
+  make_wheel.py --stage STAGE --plat manylinux_2_28_x86_64|win_amd64 --out DIR [--version 0.2.0.post1]
 
 STAGE is `cmake --install build/<wheel preset> --prefix STAGE`: bin/kitten-tts-native(.exe),
 bin/kt2n_prepare_text_data(.exe) and the engine library (lib/libkt2n_engine.so, or bin/kt2n_engine.dll on Windows,
@@ -10,6 +10,10 @@ which goes to lib/ in the wheel). The wheel holds exactly the package layout of 
   kitten_inference/_tts2_cuda/__init__.py   BACKEND, ABI, VERSION, LIB, CLI, TEXT_DATA_TOOL, BUILD_INFO, CAPS
   kitten_inference/_tts2_cuda/lib/          the engine library
   kitten_inference/_tts2_cuda/bin/          the command-line tool and the text-data helper
+
+--version is the engine's version (project VERSION in tts-2/CMakeLists.txt, the default) or a post release of it
+(.postN, a packaging fix of the same engine); anything else is refused, so the wheel's version always names the engine
+inside it.
 
 plus the licences in the .dist-info folder. BUILD_INFO is the library's kt2n_build_info() text, read here with ctypes
 (it needs no GPU or driver). The archive is deterministic: sorted entries, fixed timestamps (SOURCE_DATE_EPOCH, else
@@ -22,6 +26,7 @@ import base64
 import ctypes
 import hashlib
 import os
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -29,6 +34,8 @@ from pathlib import Path
 NAME = "kitten-inference-tts2-cu12"
 PKG = "kitten_inference/_tts2_cuda"
 SOURCE = Path(__file__).resolve().parents[1]  # tts-2/
+# Adapted from FFmpeg's af_atempo.c (LGPL-2.1-or-later), compiled into the library: shipped as source too.
+LGPL_SOURCES = [Path("src/post/atempo.cc"), Path("include/kt2n/post/atempo.h")]
 
 INIT = '''"""Kitten TTS 2 native engine for NVIDIA GPUs (CUDA 12.8, NVIDIA driver R570 or newer): the engine library, its
 command-line tool and the text-data helper. Use it through kitten_inference.tts2 (pip install "kitten-inference[tts-2]").
@@ -71,6 +78,14 @@ the `ffmpeg` program (`sudo apt-get install -y ffmpeg`, or on Windows `winget in
 """
 
 
+def engine_version() -> str:
+    """The engine's version: CMake's project VERSION in tts-2/CMakeLists.txt."""
+    m = re.search(r"^project\(kt2n\s+VERSION\s+([0-9.]+)", (SOURCE / "CMakeLists.txt").read_text(encoding="utf-8"), re.M)
+    if not m:
+        sys.exit(f"no project VERSION in {SOURCE / 'CMakeLists.txt'}")
+    return m.group(1)
+
+
 def record_hash(data: bytes) -> str:
     return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
 
@@ -92,9 +107,14 @@ def main() -> int:
     p.add_argument("--stage", type=Path, required=True)
     p.add_argument("--plat", required=True, choices=["manylinux_2_28_x86_64", "win_amd64"])
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--version", default="0.2.0")
+    p.add_argument("--version", default="", help="the engine's version (default) or that version plus .postN")
     p.add_argument("--epoch", type=int, help="timestamp for the archive entries (default SOURCE_DATE_EPOCH)")
     a = p.parse_args()
+    engine = engine_version()
+    a.version = a.version or engine
+    if not re.fullmatch(re.escape(engine) + r"(\.post[0-9]+)?", a.version):
+        sys.exit(f"--version {a.version}: must be the engine's version {engine} or {engine}.postN "
+                 "(tts-2/CMakeLists.txt; RELEASING.md)")
 
     windows = a.plat == "win_amd64"
     exe = ".exe" if windows else ""
@@ -127,7 +147,9 @@ def main() -> int:
         "Summary: Kitten TTS 2 native engine for NVIDIA GPUs (CUDA 12.8): library and command-line tool",
         "Home-page: https://github.com/KittenML/kitten-inference",
         "Author: KittenML",
-        "License: Apache-2.0 (KittenML code); bundled third-party components keep their licenses (see NOTICE)",
+        "License: Apache-2.0 for KittenML's code. The library also contains third-party code under other licenses "
+        "(LGPL-2.1-or-later, BSD-3-Clause, MIT, NVIDIA CUDA EULA and more), listed in NOTICE; the whole is not "
+        "Apache-2.0-only",
         "Classifier: Environment :: GPU :: NVIDIA CUDA :: 12",
         "Classifier: Programming Language :: Python :: 3",
         "Classifier: Operating System :: " + ("Microsoft :: Windows" if windows else "POSIX :: Linux"),
@@ -142,6 +164,9 @@ def main() -> int:
     for lic in [SOURCE / "LICENSE", SOURCE / "NOTICE", *sorted((SOURCE / "licenses").glob("*.txt"))]:
         rel = lic.name if lic.parent == SOURCE else f"licenses/{lic.name}"
         entries[f"{distinfo}/licenses/{rel}"] = (lic.read_bytes(), False)
+    # The source of the LGPL-2.1-or-later code compiled into the library (NOTICE, "Audio processing")
+    for src in LGPL_SOURCES:
+        entries[f"{distinfo}/licenses/licenses/lgpl-source/{src.name}"] = ((SOURCE / src).read_bytes(), False)
     record = [f"{path},{record_hash(data)},{len(data)}" for path, (data, _) in sorted(entries.items())]
     record.append(f"{distinfo}/RECORD,,")
     entries[f"{distinfo}/RECORD"] = (("\n".join(record) + "\n").encode(), False)
