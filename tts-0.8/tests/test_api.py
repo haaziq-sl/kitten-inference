@@ -4,6 +4,7 @@ import importlib.metadata as metadata
 import re
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import kitten_inference.tts08 as tts08
@@ -150,6 +151,34 @@ class EngineGateTests(unittest.TestCase):
         with self.gate.use(self.engine, "cpu"):
             pass
         self.assertEqual(self.engine.calls, ["cuda", "cpu"])
+
+
+class DefaultBackendTests(unittest.TestCase):
+    """backend=None: Metal on Apple Silicon for fp32 models, the CPU for int8 models and everywhere else."""
+
+    def setUp(self):
+        self.cm = importlib.import_module("kitten_inference.tts08.cpp_model")
+        gm = importlib.import_module("kitten_inference.tts08.get_model")
+        self.arch = {size: {q: gm._builtin_arch_path(f"kitten_{q}_{size}_arch.json") for q in ("fp32", "int8")}
+                     for size in ("15m", "40m", "80m")}
+
+    def test_int8_models_are_recognised(self):
+        for size, paths in self.arch.items():
+            self.assertFalse(self.cm._has_int8_layers(paths["fp32"]), size)
+            self.assertTrue(self.cm._has_int8_layers(paths["int8"]), size)
+
+    def choose(self, system, machine, arch_path):
+        with mock.patch.object(self.cm.sys, "platform", system), \
+                mock.patch.object(self.cm.platform, "machine", return_value=machine):
+            return self.cm._default_backend(FakeEngine(), arch_path)
+
+    def test_choice(self):
+        for size, paths in self.arch.items():
+            self.assertEqual(self.choose("darwin", "arm64", paths["fp32"]), "metal", size)
+            self.assertEqual(self.choose("darwin", "arm64", paths["int8"]), "cpu", size)
+            for system, machine in (("darwin", "x86_64"), ("linux", "aarch64"), ("win32", "AMD64")):
+                for q in ("fp32", "int8"):
+                    self.assertEqual(self.choose(system, machine, paths[q]), "cpu", (size, system, q))
 
 
 class PackagingTests(unittest.TestCase):

@@ -1,4 +1,5 @@
 import contextlib
+import json
 import os
 import platform
 import sys
@@ -131,9 +132,17 @@ class _EngineGate:
 _ENGINE_GATE = _EngineGate()
 
 
-def _default_backend(engine):
-    # Metal on Apple Silicon when a Metal device is available, otherwise CPU.
-    if sys.platform == "darwin" and platform.machine() == "arm64":
+def _has_int8_layers(arch_path):
+    # int8 models use *_int8 layers (conv1d_int8, seqgemm_int8, attention_int8).
+    with open(arch_path, encoding="utf-8") as f:
+        nodes = json.load(f).get("nodes", [])
+    return any(str(node.get("op", "")).endswith("_int8") for node in nodes)
+
+
+def _default_backend(engine, arch_path):
+    # Apple Silicon: Metal when a Metal device is available, except for int8 models, which run several times
+    # faster on the CPU than on Metal. Everywhere else: the CPU.
+    if sys.platform == "darwin" and platform.machine() == "arm64" and not _has_int8_layers(arch_path):
         try:
             with _ENGINE_GATE.use(engine, "metal"):
                 return "metal"
@@ -201,7 +210,7 @@ class KittenTTS_1_Cpp:
         self._mi = _import_engine()
         if backend == "amd_gpu":
             raise ValueError("The native engine does not support backend='amd_gpu'.")
-        self.backend = backend or _default_backend(self._mi)
+        self.backend = backend or _default_backend(self._mi, arch_path)
         # The engine allocates and uploads the weights for the backend that is set while the model loads.
         with _ENGINE_GATE.use(self._mi, self.backend):
             self.session = self._mi.InferenceModel(arch_path, weights_path)

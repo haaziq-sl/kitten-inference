@@ -101,7 +101,8 @@ class KittenTTS:
                 KittenML model name such as ``kitten-tts-mini-0.8``.
             cache_dir: Directory to cache downloaded files
             backend: ``"cpu"`` or ``"metal"``. Defaults to Metal on Apple
-                Silicon when a Metal device is available, otherwise CPU.
+                Silicon when a Metal device is available, except for int8
+                models, and to the CPU otherwise.
         """
         repo_id = _resolve_model_id(model_name)
         self.model = download_from_huggingface(repo_id=repo_id, cache_dir=cache_dir, backend=backend)
