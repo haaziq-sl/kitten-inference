@@ -148,14 +148,26 @@ def resolve_revision(repo: str, revision: Optional[str], root: Path,
 
 
 def _record_ref(root: Path, repo: str, revision: Optional[str], sha: str) -> None:
+    """Remembers which commit ``revision`` resolved to, for use without a network. Best effort: on Windows a replace
+    fails while another process replaces the same file (two KittenTTS2() starting together), and losing that race
+    only means the other process wrote the same note."""
     rev = revision or "main"
     if _SHA.fullmatch(rev):
         return
     ref = _ref_file(root, repo, rev)
-    ref.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if ref.read_text(encoding="utf-8").strip() == sha:
+            return
+    except OSError:
+        pass
     tmp = ref.with_name(f"{ref.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(sha + "\n", encoding="utf-8")
-    os.replace(tmp, ref)
+    try:
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(sha + "\n", encoding="utf-8")
+        os.replace(tmp, ref)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _config(path: Path) -> Optional[dict]:

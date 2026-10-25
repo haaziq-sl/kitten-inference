@@ -88,7 +88,8 @@ def check_rocm(device: int = 0, load=_cdll) -> int:
         return -1
     if status == HIP_ERROR_NO_DEVICE or (status == 0 and count.value == 0):
         raise GPUError("ROCm sees no AMD GPU: check that this user can open /dev/kfd and /dev/dri (the render and "
-                       "video groups), or in a container pass --device /dev/kfd --device /dev/dri")
+                       "video groups; /dev/dxg under WSL2), that HIP_VISIBLE_DEVICES does not hide it, or in a "
+                       "container pass --device /dev/kfd --device /dev/dri")
     if status == 0 and count.value <= device:
         raise GPUError(f"there is no AMD GPU {device}: ROCm sees {count.value} (device= counts from 0)")
     return count.value if status == 0 else -1

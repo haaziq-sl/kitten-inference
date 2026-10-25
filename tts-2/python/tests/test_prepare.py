@@ -321,3 +321,17 @@ def test_windows_real_non_ascii_folders(tmp_path, monkeypatch):
         moved = root.parent.name == "kitten-inference" and root.name.startswith("tts2-")
         assert moved or os.path.samefile(root, home / ".cache" / "kitten-inference" / "tts2"), root
         print(f"{name!r}: {root} ({'moved' if moved else 'short path'})")
+
+
+def test_a_concurrent_ref_update_is_not_an_error(env, monkeypatch):
+    # Windows refuses os.replace while another process replaces the same file (CI saw PermissionError with 4 threads).
+    env.run()
+    ref = _prepare._ref_file(env.cache, "KittenML/kitten-tts-2", "main")
+    ref.write_text("0" * 40 + "\n")  # stale: the next run rewrites it
+
+    def busy(src, dst):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(_prepare.os, "replace", busy)
+    assert env.run() == env.cache / SHA
+    assert not list(ref.parent.glob("*.tmp"))
