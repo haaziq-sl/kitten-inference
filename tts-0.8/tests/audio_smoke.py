@@ -1,7 +1,11 @@
 import argparse
+import importlib
 import json
 import platform
+import shutil
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -53,6 +57,25 @@ SPEED_CASES = [
         "filename": "speed-kiki-fast.wav",
     },
 ]
+# micro and mini have wider layers than nano (for example a 256-wide LSTM instead of 64): run each once.
+MODEL_CASES = [
+    {"model": "KittenML/kitten-tts-mini-0.8", "voice": "Jasper", "speed": 1.0, "filename": "mini-jasper.wav"},
+    {"model": "KittenML/kitten-tts-mini-0.8-int8", "voice": "Bella", "speed": 1.0, "filename": "mini-int8-bella.wav"},
+    {"model": "KittenML/kitten-tts-micro-0.8", "voice": "Hugo", "speed": 1.0, "filename": "micro-hugo.wav"},
+    {"model": "KittenML/kitten-tts-micro-0.8-int8", "voice": "Rosie", "speed": 1.0, "filename": "micro-int8-rosie.wav"},
+]
+NANO = "KittenML/kitten-tts-nano-0.8"
+NANO_INT8 = "KittenML/kitten-tts-nano-0.8-int8"
+# One model per thread, all generating at once. None is the default backend (Metal on Apple Silicon).
+THREAD_PLAN = [
+    (NANO, None, "Bella"),
+    (NANO, None, "Jasper"),
+    (NANO_INT8, "cpu", "Luna"),
+    (NANO, "cpu", "Kiki"),
+]
+# A Latin-1, a Latin-2 and a CJK letter: no Windows ANSI code page has all three.
+UNICODE_DIR_PREFIX = "kitten-é-Ł-猫-"
+METAL_TOLERANCE = 1e-3
 
 
 def validate_audio(audio, label):
@@ -68,6 +91,10 @@ def validate_audio(audio, label):
     return peak
 
 
+def as_audio(values):
+    return np.asarray(values, dtype=np.float32).reshape(-1)
+
+
 def synthesize(model_cache, out_dir, cache_dir, case, backend=None):
     model_name = case["model"]
     cache_key = (model_name, backend or "default")
@@ -78,10 +105,7 @@ def synthesize(model_cache, out_dir, cache_dir, case, backend=None):
 
     label = f"{model_name} {case['voice']} speed={case['speed']} backend={backend or 'default'}"
     start = time.perf_counter()
-    audio = np.asarray(
-        model.generate(TEXT, voice=case["voice"], speed=case["speed"]),
-        dtype=np.float32,
-    ).reshape(-1)
+    audio = as_audio(model.generate(TEXT, voice=case["voice"], speed=case["speed"]))
     gen_seconds = time.perf_counter() - start
     peak = validate_audio(audio, label)
 
@@ -109,10 +133,146 @@ def compare(results, other_dir):
     for r in results:
         o = other[Path(r["path"]).name]
         label = f"{Path(r['path']).name}: {r['active_backend']} vs {o['active_backend']}"
+        r["samples_vs_other_pct"] = round(100.0 * (r["samples"] - o["samples"]) / o["samples"], 2)
         if abs(r["samples"] - o["samples"]) > 0.05 * o["samples"]:
             raise AssertionError(f"{label}: samples {r['samples']} vs {o['samples']}")
         if not 0.5 <= r["rms"] / o["rms"] <= 2.0:
             raise AssertionError(f"{label}: rms {r['rms']:.4f} vs {o['rms']:.4f}")
+
+
+def difference(a, b):
+    """Largest sample difference, or None when the lengths differ."""
+    if a.shape != b.shape:
+        return None
+    return float(np.max(np.abs(a - b))) if a.size else 0.0
+
+
+def check_same(label, got, want, exact):
+    """CPU output must repeat exactly; Metal output must keep its length and stay within METAL_TOLERANCE."""
+    diff = difference(got, want)
+    ok = diff is not None and (diff == 0.0 if exact else diff <= METAL_TOLERANCE)
+    if not ok:
+        raise AssertionError(
+            f"{label}: {len(got)} samples vs {len(want)} expected, largest difference {diff}"
+        )
+    return diff
+
+
+def resolved_backend(backend):
+    if backend:
+        return backend
+    return "metal" if sys.platform == "darwin" and platform.machine() == "arm64" else "cpu"
+
+
+def unicode_path_check(cache_dir, backend):
+    """Load nano from a folder whose path has non-ASCII characters; it must speak like the built-in nano."""
+    gm = importlib.import_module("kitten_inference.tts08.get_model")
+    spec = gm.BUILTIN_NATIVE_MODELS[NANO.lower()]
+    root = Path(tempfile.mkdtemp(prefix=UNICODE_DIR_PREFIX))
+    try:
+        shutil.copy(gm._builtin_arch_path(spec["arch_file"]), root / spec["arch_file"])
+        weights = gm._download_file(
+            gm.NATIVE_WEIGHTS_REPO, spec["weights_file"], str(cache_dir), gm.NATIVE_WEIGHTS_REVISION
+        )
+        shutil.copy(weights, root / spec["weights_file"])
+        voice_files = {}
+        for voice in gm.VOICE_NAMES:
+            src = gm._download_file(
+                gm.NATIVE_WEIGHTS_REPO, f"{spec['voice_dir']}/{voice}.bin", str(cache_dir), gm.NATIVE_WEIGHTS_REVISION
+            )
+            shutil.copy(src, root / f"{voice}.bin")
+            voice_files[voice] = f"{voice}.bin"
+        config = {
+            "type": "CPP1",
+            "arch_file": spec["arch_file"],
+            "weights_file": spec["weights_file"],
+            "voice_files": voice_files,
+            "voice_aliases": gm.DEFAULT_VOICE_ALIASES,
+            "speed_priors": spec["speed_priors"],
+            "style_index": "text_length",
+        }
+        (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+        local = KittenTTS(str(root), backend=backend)
+        got = as_audio(local.generate(TEXT, voice="Bella"))
+        builtin = KittenTTS(NANO, cache_dir=str(cache_dir), backend=backend)
+        want = as_audio(builtin.generate(TEXT, voice="Bella"))
+        validate_audio(got, f"nano from {root}")
+        diff = check_same(f"nano from {root}", got, want, exact=resolved_backend(backend) == "cpu")
+        return [{"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def backend_mix_check(cache_dir):
+    """Models on two backends in one process: a model made later must not move an earlier one to its backend."""
+    results = []
+    cpu_model = KittenTTS(NANO_INT8, cache_dir=str(cache_dir), backend="cpu")
+    cpu_ref = as_audio(cpu_model.generate(TEXT, voice="Luna"))
+    default_model = KittenTTS(NANO, cache_dir=str(cache_dir))
+    default_ref = as_audio(default_model.generate(TEXT, voice="Bella"))
+    default_exact = resolved_backend(None) == "cpu"
+
+    again = as_audio(cpu_model.generate(TEXT, voice="Luna"))
+    results.append({
+        "check": "cpu model after a default-backend model was made",
+        "samples": int(len(again)),
+        "max_diff": check_same("cpu model after a default-backend model", again, cpu_ref, exact=True),
+    })
+
+    KittenTTS(NANO, cache_dir=str(cache_dir), backend="cpu")
+    again = as_audio(default_model.generate(TEXT, voice="Bella"))
+    results.append({
+        "check": f"default-backend ({resolved_backend(None)}) model after a cpu model was made",
+        "samples": int(len(again)),
+        "max_diff": check_same("default-backend model after a cpu model", again, default_ref, exact=default_exact),
+    })
+    return results
+
+
+def threads_check(cache_dir, rounds=2, timeout=900):
+    """One model per thread, all generating at once; each output must match the same model run alone."""
+    refs = {}
+    for model_name, backend, voice in THREAD_PLAN:
+        key = (model_name, backend, voice)
+        if key not in refs:
+            model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
+            refs[key] = as_audio(model.generate(TEXT, voice=voice))
+
+    start = threading.Barrier(len(THREAD_PLAN))
+    outcomes = [None] * len(THREAD_PLAN)
+
+    def worker(i, model_name, backend, voice):
+        try:
+            model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
+            start.wait(timeout=timeout)
+            diffs = []
+            for r in range(rounds):
+                audio = as_audio(model.generate(TEXT, voice=voice))
+                diffs.append(check_same(
+                    f"thread {i} ({model_name}, {resolved_backend(backend)}) round {r}",
+                    audio, refs[(model_name, backend, voice)], exact=resolved_backend(backend) == "cpu",
+                ))
+            outcomes[i] = {"thread": i, "model": model_name, "backend": resolved_backend(backend),
+                           "voice": voice, "max_diff": max(diffs)}
+        except BaseException as exc:  # reported by the main thread
+            outcomes[i] = {"thread": i, "error": f"{type(exc).__name__}: {exc}"}
+            start.abort()  # the other threads stop waiting at the barrier
+
+    threads = [threading.Thread(target=worker, args=(i,) + plan, daemon=True) for i, plan in enumerate(THREAD_PLAN)]
+    began = time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout)
+    hung = [i for i, t in enumerate(threads) if t.is_alive()]
+    if hung:
+        raise AssertionError(f"threads {hung} did not finish within {timeout} s")
+    errors = [o["error"] for o in outcomes if "error" in o]
+    if errors:
+        raise AssertionError("; ".join(errors))
+    seconds = round(time.perf_counter() - began, 2)
+    return [dict(o, rounds=rounds, wall_seconds=seconds) for o in outcomes]
 
 
 def main():
@@ -124,9 +284,11 @@ def main():
     parser.add_argument("--compare-to", default=None, help="Output dir of a run on another backend to compare with.")
     parser.add_argument(
         "--mode",
-        choices=["quick", "release", "speed"],
+        choices=["quick", "release", "speed", "models", "paths", "mix", "threads"],
         default="release",
-        help="quick generates one WAV; release generates voice/model samples plus speed check.",
+        help="quick: one WAV; release: nano voices, speeds and int8; speed: the speed check only; "
+        "models: micro and mini, fp32 and int8; paths: a model folder with non-ASCII characters in its path; "
+        "mix: CPU and default-backend models in one process; threads: several models generating at once.",
     )
     args = parser.parse_args()
 
@@ -140,6 +302,14 @@ def main():
 
     if args.mode == "quick":
         results.append(synthesize(model_cache, out_dir, cache_dir, QUICK_CASE, args.backend))
+    elif args.mode == "models":
+        results.extend(synthesize(model_cache, out_dir, cache_dir, case, args.backend) for case in MODEL_CASES)
+    elif args.mode == "paths":
+        results.extend(unicode_path_check(cache_dir, args.backend))
+    elif args.mode == "mix":
+        results.extend(backend_mix_check(cache_dir))
+    elif args.mode == "threads":
+        results.extend(threads_check(cache_dir))
     else:
         if args.mode == "release":
             results.extend(
@@ -165,7 +335,7 @@ def main():
 
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print(f"python {platform.python_version()} {sys.platform} {platform.machine()}")
+    print(f"python {platform.python_version()} {sys.platform} {platform.machine()} mode={args.mode}")
     print(summary_path.read_text(encoding="utf-8"))
 
 

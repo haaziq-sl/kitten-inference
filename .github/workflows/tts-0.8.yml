@@ -163,8 +163,26 @@ jobs:
             "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
             "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "audio-smoke/$tag" \
               --cache-dir .hf-cache --expect-backend cpu
+            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode paths --out-dir "audio-smoke/paths-$tag" \
+              --cache-dir .hf-cache
             echo "::endgroup::"
           done
+
+      # One Python per platform: micro and mini (fp32 and int8), two backends in one process, and
+      # several models generating at once from different threads. Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads (CPython 3.12)
+        shell: bash
+        run: |
+          set -uo pipefail
+          py=venv-cp312/bin/python
+          status=0
+          for mode in models mix threads; do
+            echo "::group::$mode"
+            "$py" tts-0.8/tests/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
+              || { echo "::error::audio_smoke --mode $mode failed (exit $?)"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
 
       - name: Oversubscribed threads (33 OpenMP threads on the runner's few cores), fp32 and int8
         shell: bash
@@ -216,8 +234,11 @@ jobs:
             test_command: >-
               python -m unittest discover -s {package}/tests -v &&
               python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-              --cache-dir {project}/.hf-cache --expect-backend cpu
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
             host_pythons: ""
+            uv_python: cpython-3.12-windows-x86_64-none
 
           - name: Windows ARM64 CPython 3.11-3.15
             os: windows-11-arm
@@ -239,8 +260,11 @@ jobs:
             test_command: >-
               python -m unittest discover -s {package}/tests -v &&
               python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-              --cache-dir {project}/.hf-cache --expect-backend cpu
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
             host_pythons: ""
+            uv_python: cpython-3.12-windows-aarch64-none
 
           - name: macOS ARM64 CPython 3.8-3.15
             os: macos-26
@@ -269,8 +293,11 @@ jobs:
               python {package}/tests/audio_smoke.py --mode release --out-dir smoke-metal
               --cache-dir {project}/.hf-cache --expect-backend metal &&
               python {package}/tests/audio_smoke.py --mode release --out-dir smoke-cpu
-              --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal
+              --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir smoke-paths
+              --cache-dir {project}/.hf-cache
             host_pythons: "3.8"
+            uv_python: cpython-3.12-macos-aarch64-none
 
           - name: macOS x86_64 CPython 3.8-3.15
             os: macos-15-intel
@@ -295,8 +322,11 @@ jobs:
             test_command: >-
               python -m unittest discover -s {package}/tests -v &&
               python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
-              --cache-dir {project}/.hf-cache --expect-backend cpu
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
             host_pythons: ""
+            uv_python: cpython-3.12-macos-x86_64-none
 
     steps:
       - uses: actions/checkout@v5
@@ -345,7 +375,6 @@ jobs:
           output-dir: wheelhouse
 
       - uses: astral-sh/setup-uv@v6
-        if: matrix.host_pythons != ''
         with:
           version: "0.13.5"
 
@@ -366,6 +395,35 @@ jobs:
             "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-cpu-$tag" \
               --cache-dir .hf-cache --backend cpu --expect-backend cpu --compare-to "smoke-metal-$tag"
           done
+
+      # One Python per platform: micro and mini (fp32 and int8; on Apple Silicon on Metal, then on the CPU,
+      # compared), two backends in one process, and several models generating at once from different threads.
+      # Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads (CPython 3.12)
+        shell: bash
+        run: |
+          set -uo pipefail
+          uv venv -q --managed-python -p "${{ matrix.uv_python }}" venv-312
+          py=venv-312/bin/python
+          [ -x "$py" ] || py=venv-312/Scripts/python.exe
+          uv pip install -q -p "$py" wheelhouse/*-cp312-cp312-*.whl
+          "$py" -c "import platform; print(platform.python_version(), platform.machine())"
+          status=0
+          run() {
+            echo "::group::$*"
+            "$py" tts-0.8/tests/audio_smoke.py --cache-dir .hf-cache "$@" \
+              || { echo "::error::audio_smoke $* failed (exit $?)"; status=1; }
+            echo "::endgroup::"
+          }
+          if [ "${{ matrix.artifact }}" = macos-arm64 ]; then
+            run --mode models --out-dir models-metal --expect-backend metal
+            run --mode models --out-dir models-cpu --backend cpu --expect-backend cpu --compare-to models-metal
+          else
+            run --mode models --out-dir models --expect-backend cpu
+          fi
+          run --mode mix --out-dir mix
+          run --mode threads --out-dir threads
+          exit $status
 
       - run: ls -l wheelhouse
         shell: bash
