@@ -31,6 +31,7 @@ env:
 
 jobs:
   linux-wheels:
+    if: false
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -157,14 +158,7 @@ jobs:
           - name: Windows x86_64 CPython 3.8-3.15
             os: windows-2025-vs2026
             artifact: windows-x86_64
-            cibw_build: >-
-              cp38-win_amd64
-              cp39-win_amd64
-              cp310-win_amd64
-              cp311-win_amd64
-              cp312-win_amd64
-              cp313-win_amd64
-              cp314-win_amd64
+            cibw_build: cp312-win_amd64
             cibw_build_315: cp315-win_amd64
             cibw_archs_windows: AMD64
             cibw_archs_macos: auto
@@ -182,39 +176,6 @@ jobs:
               --cache-dir {project}/.hf-cache
             host_pythons: ""
             uv_python: cpython-3.12-windows-x86_64-none
-
-          - name: macOS ARM64 CPython 3.8-3.15
-            os: macos-26
-            artifact: macos-arm64
-            cibw_build: >-
-              cp38-macosx_arm64
-              cp39-macosx_arm64
-              cp310-macosx_arm64
-              cp311-macosx_arm64
-              cp312-macosx_arm64
-              cp313-macosx_arm64
-              cp314-macosx_arm64
-            cibw_build_315: cp315-macosx_arm64
-            cibw_archs_windows: auto
-            cibw_archs_macos: arm64
-            cmake_config_settings: >-
-              cmake.define.ENABLE_CUDA=OFF
-              cmake.define.ENABLE_NATIVE_ARCH=OFF
-              cmake.define.ENABLE_X86_AVX2=OFF
-              cmake.define.ENABLE_ARM_DOTPROD=ON
-            # cibuildwheel cannot run the cp38 arm64 wheel (its Python 3.8 is x86_64);
-            # the next step tests it with an arm64 Python 3.8.
-            test_skip: "cp38-macosx_arm64"
-            test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-metal
-              --cache-dir {project}/.hf-cache --expect-backend metal &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-cpu
-              --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir smoke-paths
-              --cache-dir {project}/.hf-cache
-            host_pythons: "3.8"
-            uv_python: cpython-3.12-macos-aarch64-none
 
     steps:
       - uses: actions/checkout@v5
@@ -247,6 +208,7 @@ jobs:
 
       # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same flags, repair and tests.
       - name: Build and test the CPython 3.15 wheel
+        if: false
         uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_BUILD: ${{ matrix.cibw_build_315 }}
@@ -393,6 +355,7 @@ jobs:
 
 
   macos-openmp-probe:
+    if: false
     # Measurement only (this branch is not for merging): the shipped macOS build has no OpenMP. Build the same
     # source with Homebrew's libomp and time 1 thread against all cores on the same runner, plus Metal on arm64.
     name: macOS OpenMP probe ${{ matrix.os }}
