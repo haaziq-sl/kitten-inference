@@ -405,6 +405,7 @@ jobs:
           fi
 
   crt-paths-probe:
+    if: false
     # Measurement only: the C runtime's narrow fopen() and a UTF-8 non-ASCII path, per Windows version.
     name: CRT paths probe ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
