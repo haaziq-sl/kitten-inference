@@ -68,7 +68,9 @@ def test_bundled_prepare_imports_without_torch():
 def test_bundled_prepare_data_files():
     from importlib import resources
     root = resources.files("kitten_inference.tts2._assets")
-    for name in ("s3gen_tensors.tsv", "clone_consts_reference.json"):
+    for name in ("s3gen_tensors.tsv", "clone_consts_reference.json", "clone_sincnet_reference.json"):
+        if name == "clone_sincnet_reference.json" and not root.joinpath("clone_assets.py").read_text().count(name):
+            continue  # added by the torch-free cloning preparation
         assert root.joinpath(name).is_file(), name
 
 

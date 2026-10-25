@@ -13,6 +13,7 @@ import argparse
 import base64
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -65,6 +66,10 @@ def main() -> int:
         f"{pkg}/bin/kitten-tts-native{EXE}": cli.read_bytes(),
         f"{pkg}/bin/kt2n_prepare_text_data{EXE}": tool.read_bytes(),
     }
+    if os.name != "nt":  # a versioned build: the tool needs the library under its SONAME too (bin/../lib)
+        needed = subprocess.run(["readelf", "-d", str(cli)], capture_output=True, text=True).stdout
+        for name in sorted(set(re.findall(r"\[(libkt2n_engine\.so[.0-9]*)\]", needed)) - {LIB}):
+            files[f"{pkg}/lib/{name}"] = lib.read_bytes()
     dist = DIST[a.backend]
     name = dist.replace("_", "-")
     info = f"{dist}-{a.version}.dist-info"
@@ -83,7 +88,7 @@ def main() -> int:
     with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as z:
         for path, data in files.items():
             zi = zipfile.ZipInfo(path, date_time=(2026, 1, 1, 0, 0, 0))
-            zi.external_attr = (0o755 if "/bin/" in path else 0o644) << 16
+            zi.external_attr = ((0o755 if "/bin/" in path else 0o644) | 0o100000) << 16  # S_IFREG: pip keeps +x
             zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, data)
     print(wheel)

@@ -33,6 +33,14 @@ class FakeHub:
             path.mkdir(parents=True, exist_ok=True)
             return str(path)
 
+        def hf_hub_download(repo, name, revision=None, cache_dir=None, token=None, **kw):
+            hub.calls.append(("file", repo, name, revision, cache_dir, token))
+            path = tmp_path / "hf" / "files" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"decoder")
+            return str(path)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", hf_hub_download)
         monkeypatch.setattr(huggingface_hub, "HfApi", Api)
         monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
 
@@ -194,3 +202,14 @@ def test_old_prepare_flags(env, monkeypatch, tmp_path):
 
 def test_default_cache_dir():
     assert _prepare.cache_root() == Path.home() / ".cache" / "kitten-inference" / "tts2"
+
+
+def test_decoder_weights_downloaded_in_stage_one(env):
+    env.prep.ACOUSTIC_REPO, env.prep.ACOUSTIC_FILE = "ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors"
+    env.prep.convert_s3gen = types.SimpleNamespace(PINNED_REVISION="1e4698ca7cbb41ff030c4185f0927a3b42d76924")
+    env.run()
+    argv = env.prep.runs[0]
+    assert argv[argv.index("--acoustic-source") + 1].endswith("s3gen_meanflow.safetensors")
+    (call,) = [c for c in env.hub.calls if c[0] == "file"]
+    assert call[1:4] == ("ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors",
+                         "1e4698ca7cbb41ff030c4185f0927a3b42d76924") and call[5] is False

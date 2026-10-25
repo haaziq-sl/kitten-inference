@@ -142,7 +142,7 @@ def _run_prepare(prepare, argv: List[str], log_path: Path) -> None:
     """prepare.main(argv) in this process; its own printout goes to log_path (and is shown on failure)."""
     out = io.StringIO()
     try:
-        with contextlib.redirect_stdout(out):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = prepare.main(argv)
     except SystemExit as exc:
         code = exc.code
@@ -177,6 +177,20 @@ def _snapshot(repo: str, sha: str, patterns: List[str], cache_dir: Optional[os.P
         raise PrepareError(f"downloading {repo} at {sha[:12]} failed: {exc}") from exc
 
 
+def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Optional[Path]:
+    """The pinned decoder weights (ResembleAI/chatterbox-turbo), downloaded here so that every large download shows
+    its progress in stage 1; prepare checks their SHA-256. None when this prepare does not name them."""
+    repo, name = getattr(prepare, "ACOUSTIC_REPO", None), getattr(prepare, "ACOUSTIC_FILE", None)
+    revision = getattr(getattr(prepare, "convert_s3gen", None), "PINNED_REVISION", None)
+    if not (repo and name and revision):
+        return None
+    from huggingface_hub import hf_hub_download
+    try:
+        return Path(hf_hub_download(repo, name, revision=revision, cache_dir=_download_cache(cache_dir), token=False))
+    except Exception as exc:
+        raise PrepareError(f"downloading {repo}/{name} failed: {exc}") from exc
+
+
 def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: Optional[os.PathLike] = None,
            with_cloning: bool = False, repo: str = MODEL_REPO, log: Callable[[str], None] = _log) -> Path:
     """The prepared model directory for ``revision`` (default: the latest, main), preparing it first if needed."""
@@ -200,12 +214,15 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
             started = time.monotonic()
             if not is_prepared(final):
                 patterns = _model_files(prepare) + (_cloning_files(prepare) if with_cloning else [])
-                log(f"[1/3] downloading {repo} at {sha[:12]} (first use only)")
+                log(f"[1/3] downloading {repo} at {sha[:12]} and the decoder weights (first use only)")
                 snapshot = _snapshot(repo, sha, patterns, cache_dir)
+                acoustic = _acoustic(prepare, cache_dir)
+                if acoustic is not None:
+                    common += ["--acoustic-source", str(acoustic)]
                 partial = root / f".partial-{sha}"
                 shutil.rmtree(partial, ignore_errors=True)
-                log(f"[2/3] preparing the model for this machine{' with voice cloning' if with_cloning else ''}; "
-                    "this downloads the pinned decoder and text files and takes a few minutes")
+                log(f"[2/3] preparing the model for this machine{' with voice cloning' if with_cloning else ''} "
+                    "(about a minute)")
                 argv = ["--model-dir", str(snapshot), "--out", str(partial), tool_flag, str(tool), *common]
                 if with_cloning:
                     argv.append("--with-cloning")
@@ -218,6 +235,9 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
             else:
                 log(f"[1/3] downloading the voice cloning files of {repo} at {sha[:12]} (first use only)")
                 snapshot = _snapshot(repo, sha, _model_files(prepare) + _cloning_files(prepare), cache_dir)
+                acoustic = _acoustic(prepare, cache_dir)
+                if acoustic is not None:
+                    common += ["--acoustic-source", str(acoustic)]
                 # config.json is the commit point: without its cloning entry, files in native/cloning are a
                 # stopped earlier attempt.
                 shutil.rmtree(final / "native" / "cloning", ignore_errors=True)

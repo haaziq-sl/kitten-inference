@@ -80,7 +80,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-14]
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -100,8 +100,11 @@ jobs:
         shell: bash
         run: |
           python -m pip install --disable-pip-version-check -U pip
-          python -m pip download --disable-pip-version-check --dest deps "numpy>=1.24" "huggingface-hub>=0.25,<2" \
-            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest pip
+          # pip wheel: anything without a wheel for this Python is built here, and the log says so.
+          python -m pip wheel --disable-pip-version-check --wheel-dir deps "numpy>=1.24" "huggingface-hub>=0.25,<2" \
+            "tokenizers>=0.22,<0.23" "filelock>=3.12" pytest pip 2>&1 | tee deps.log
+          echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
+            "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders only)
         run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps
       - name: Install kitten-inference[tts-2] for the unit tests
