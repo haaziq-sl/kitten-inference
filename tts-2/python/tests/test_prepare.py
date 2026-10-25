@@ -226,3 +226,98 @@ def test_child_process_failure_shows_the_log_tail(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(_prepare.PrepareError, match="checksum mismatch .full log: .*prepare.log"):
         _prepare._run_prepare(["--out", "x"], log)
+
+
+def test_gpu_check_runs_only_before_a_download(env):
+    checks = []
+    env.run(before_download=lambda: checks.append(1))
+    assert checks == [1]
+    env.run(before_download=lambda: checks.append(2))  # prepared: nothing to download, no check
+    assert checks == [1]
+
+
+def test_gpu_check_failure_downloads_nothing(env):
+    def no_gpu():
+        raise RuntimeError("no NVIDIA driver found")
+    with pytest.raises(RuntimeError, match="no NVIDIA driver"):
+        env.run(before_download=no_gpu)
+    assert not [c for c in env.hub.calls if c[0] in ("snapshot", "file")] and env.prep.runs == []
+
+
+def test_child_writes_utf8(tmp_path):
+    e = _prepare._child_env(tmp_path)
+    assert e["PYTHONIOENCODING"] == "utf-8" and e["PYTHONUTF8"] == "1"
+
+
+def test_child_prints_a_non_ascii_path_to_its_log(tmp_path, monkeypatch):
+    # The bundled prepare prints the bundle path at the end. On Windows (Python < 3.15) output to a file used the
+    # ANSI code page, and a path outside it stopped the child after the conversion.
+    out = tmp_path / "Łukasz 田中" / "bundle"
+    out.mkdir(parents=True)
+    (out / "native").mkdir()
+    (out / "native" / "model.kt2n").write_bytes(b"x")
+    child = ("import sys; from pathlib import Path; from kitten_inference.tts2._assets.prepare import print_summary; "
+             "out = Path(sys.argv[1]); print_summary(out, out / 'config.json', cloning=True)")
+    monkeypatch.setattr(_prepare, "_CHILD", child)
+    log = tmp_path / "prepare.log"
+    _prepare._run_prepare([str(out)], log)
+    assert str(out) in log.read_text(encoding="utf-8")
+
+
+class _Windows:
+    """cache_root() on Windows with a non-UTF-8 code page, with the short-path answer chosen by the test."""
+
+    def __init__(self, monkeypatch, tmp_path, short):
+        monkeypatch.setattr(_prepare, "_narrow_paths_are_utf8", lambda: False)
+        monkeypatch.setattr(_prepare, "_short_path", lambda path: short(path))
+        monkeypatch.setattr(_prepare, "DEFAULT_CACHE", tmp_path / "José" / ".cache" / "kitten-inference" / "tts2")
+        monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "ProgramData"))
+
+
+def test_non_ascii_cache_uses_the_short_path(monkeypatch, tmp_path):
+    _Windows(monkeypatch, tmp_path, lambda path: tmp_path / "JOSE~1" / "tts2")
+    assert _prepare.cache_root() == tmp_path / "JOSE~1" / "tts2"
+    assert _prepare.cache_root(tmp_path / "Łukasz") == tmp_path / "JOSE~1" / "tts2"
+
+
+def test_non_ascii_default_cache_without_a_short_name_moves(monkeypatch, tmp_path):
+    _Windows(monkeypatch, tmp_path, lambda path: path)  # "José" is a valid 8.3 name: no ASCII short form
+    notes = []
+    root = _prepare.cache_root(log=notes.append)
+    assert root.parent == tmp_path / "ProgramData" / "kitten-inference" and root.name.startswith("tts2-")
+    assert root.is_dir() and len(notes) == 1 and str(root) in notes[0]
+    assert _prepare.cache_root(log=notes.append) == root and len(notes) == 1  # said once
+
+
+def test_non_ascii_cache_dir_is_refused_before_any_download(monkeypatch, tmp_path, env):
+    _Windows(monkeypatch, tmp_path, lambda path: None)
+    with pytest.raises(_prepare.PrepareError, match='ASCII folder: KittenTTS2.cache_dir="C:/kitten-tts2"'):
+        _prepare.ensure(text_data_tool=tmp_path / "tool", cache_dir=tmp_path / "Łukasz")
+    assert env.hub.calls == []
+
+
+def test_child_temp_folder_is_ascii_where_the_engine_needs_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(_prepare, "_narrow_paths_are_utf8", lambda: False)
+    monkeypatch.setenv("TEMP", str(tmp_path / "José" / "Temp"))
+    e = _prepare._child_env(tmp_path / "cache")
+    assert e["TEMP"] == e["TMP"] == str(tmp_path / "cache" / "tmp")
+    monkeypatch.setenv("TEMP", str(tmp_path / "Temp"))
+    assert _prepare._child_env(tmp_path / "cache")["TEMP"] == str(tmp_path / "Temp")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="platform: Windows only")
+def test_windows_real_non_ascii_folders(tmp_path, monkeypatch):
+    """On a real Windows file system: a folder name that needs a short name (Ł is not in the OEM code page) and one
+    that may not get one (é is): the engine gets an ASCII path to the same folder, or the default moves."""
+    if _prepare._narrow_paths_are_utf8():
+        pytest.skip("platform: this Windows runs with the UTF-8 code page")
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "ProgramData"))
+    for name in ("Łukasz Wiśniewski", "José"):
+        home = tmp_path / name
+        monkeypatch.setattr(_prepare, "DEFAULT_CACHE", home / ".cache" / "kitten-inference" / "tts2")
+        root = _prepare.cache_root()
+        assert all(ord(c) < 128 for c in str(root)), root
+        root.mkdir(parents=True, exist_ok=True)
+        moved = root.parent.name == "kitten-inference" and root.name.startswith("tts2-")
+        assert moved or os.path.samefile(root, home / ".cache" / "kitten-inference" / "tts2"), root
+        print(f"{name!r}: {root} ({'moved' if moved else 'short path'})")

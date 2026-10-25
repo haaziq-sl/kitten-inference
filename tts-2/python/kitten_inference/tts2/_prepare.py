@@ -8,6 +8,8 @@ downloads and resumes unfinished ones, and the pinned decoder, grammar and data 
 from __future__ import annotations
 
 import contextlib
+import ctypes
+import hashlib
 import json
 import os
 import re
@@ -35,8 +37,72 @@ def _log(message: str) -> None:
     print(f"kitten-tts2: {message}", file=sys.stderr, flush=True)
 
 
-def cache_root(cache_dir: Optional[os.PathLike] = None) -> Path:
-    return Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE
+def _ascii(text: str) -> bool:
+    return all(ord(c) < 128 for c in text)
+
+
+def _narrow_paths_are_utf8() -> bool:
+    """Whether the engine can open non-ASCII paths: always, except on Windows when the process code page is not
+    UTF-8 (the engine and its text-data tool open files through the C runtime, which reads paths in that code page,
+    and the engine refuses non-ASCII paths there). python.exe has no UTF-8 code page manifest, so this is the
+    common Windows case."""
+    if sys.platform != "win32":
+        return True
+    try:
+        return ctypes.windll.kernel32.GetACP() == 65001
+    except (AttributeError, OSError):  # pragma: no cover
+        return False
+
+
+def _short_path(path: Path) -> Optional[Path]:
+    """The 8.3 short form of an existing Windows path (None when Windows has none for it)."""
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, len(buf))
+    except (AttributeError, OSError):  # pragma: no cover
+        return None
+    return Path(buf.value) if 0 < n < len(buf) else None
+
+
+def _fallback_root() -> Path:
+    """An ASCII folder for this user's models when the user folder's path is not ASCII (Windows, see cache_root)."""
+    base = Path(os.environ.get("PROGRAMDATA") or "C:\\ProgramData")
+    user = hashlib.sha256(str(Path.home()).encode("utf-8")).hexdigest()[:12]
+    return base / "kitten-inference" / f"tts2-{user}"
+
+
+def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[str], None]] = None) -> Path:
+    """Where prepared models are kept: ``cache_dir``, or ~/.cache/kitten-inference/tts2.
+
+    On Windows with a non-UTF-8 code page (the usual case), the engine opens only ASCII paths. A path with other
+    characters is then replaced by its 8.3 short form when that is ASCII; else the default folder moves to an ASCII
+    folder under %PROGRAMDATA% (with a note), and a given cache_dir is refused at once, before any download."""
+    root = Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE
+    if _ascii(str(root)) or _narrow_paths_are_utf8():
+        return root
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    short = _short_path(root)
+    if short is not None and _ascii(str(short)):
+        return short
+    if cache_dir is None:
+        fallback = _fallback_root()
+        if _ascii(str(fallback)):
+            try:
+                if not fallback.is_dir():  # say it once, when the folder is made
+                    fallback.mkdir(parents=True, exist_ok=True)
+                    (log or _log)(f"the path of your user folder has characters the engine cannot open on this "
+                                  f"Windows setup; models are kept in {fallback} instead (cache_dir= chooses another "
+                                  "folder)")
+                return fallback
+            except OSError:
+                pass
+    raise PrepareError(f"the model folder {root} has characters outside ASCII, which the engine cannot open on Windows "
+                       "with this system's code page. Use an ASCII folder: KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
+                       "kitten-tts2 --cache-dir C:\\kitten-tts2 (or turn on \"Use Unicode UTF-8 for worldwide language "
+                       "support\" in the Region settings)")
 
 
 def _download_cache(cache_dir: Optional[os.PathLike]) -> Optional[Path]:
@@ -122,16 +188,31 @@ def _locked(path: Path):
         lock.release()
 
 
+def _child_env(root: Path) -> dict:
+    """The environment of the prepare child: this package on its path, and UTF-8 output. On Windows before Python
+    3.15 output sent to a file uses the ANSI code page, so printing a path outside it (C:\\Users\\Łukasz under
+    cp1252) would stop the child after the conversion. Where the engine opens only ASCII paths, the child's temporary
+    folder is also under the (ASCII) model folder, because the text-data tool reads its input from there."""
+    import kitten_inference.tts2 as package
+    site = str(Path(package.__file__).resolve().parents[2])  # the folder that holds kitten_inference/tts2
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([site, *filter(None, [os.environ.get("PYTHONPATH")])]),
+               PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    if not _narrow_paths_are_utf8():
+        temp = env.get("TEMP") or env.get("TMP") or ""
+        if not _ascii(temp) or not temp:
+            tmp = root / "tmp"
+            tmp.mkdir(parents=True, exist_ok=True)
+            env["TEMP"] = env["TMP"] = str(tmp)
+    return env
+
+
 def _run_prepare(argv: List[str], log_path: Path) -> None:
     """Runs prepare.main(argv) in a child Python process; its output goes to log_path (the tail is shown on failure).
     Ctrl-C stops the child too (same console)."""
-    import kitten_inference.tts2 as package
-    site = str(Path(package.__file__).resolve().parents[2])  # the folder that holds kitten_inference/tts2
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join([site, *filter(None, [os.environ.get("PYTHONPATH")])]))
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "wb") as log:
         code = subprocess.run([sys.executable, "-c", _CHILD, *argv], stdin=subprocess.DEVNULL, stdout=log,
-                              stderr=subprocess.STDOUT, env=env).returncode
+                              stderr=subprocess.STDOUT, env=_child_env(log_path.parent)).returncode
     if code != 0:
         try:
             lines = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
@@ -162,14 +243,18 @@ def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Path:
 
 
 def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: Optional[os.PathLike] = None,
-           with_cloning: bool = False, repo: str = MODEL_REPO, log: Callable[[str], None] = _log) -> Path:
-    """The prepared model directory for ``revision`` (default: the latest, main), preparing it first if needed."""
-    root = cache_root(cache_dir)
+           with_cloning: bool = False, repo: str = MODEL_REPO, log: Callable[[str], None] = _log,
+           before_download: Optional[Callable[[], None]] = None) -> Path:
+    """The prepared model directory for ``revision`` (default: the latest, main), preparing it first if needed.
+    ``before_download`` runs once before anything is downloaded (the GPU check: fail before minutes of work)."""
+    root = cache_root(cache_dir, log)
     sha = resolve_revision(repo, revision, root, log)
     final = root / sha
     if is_prepared(final, with_cloning):
         _record_ref(root, repo, revision, sha)
         return final
+    if before_download is not None:
+        before_download()
     root.mkdir(parents=True, exist_ok=True)
     with _locked(root / f".{sha}.lock"):
         if not is_prepared(final, with_cloning):
