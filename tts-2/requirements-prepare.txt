@@ -1,0 +1,13 @@
+# Bundle preparation (tools/prepare_assets.py), validated with Python 3.12.
+# Not needed at runtime.
+#
+# The decoder weight norms are folded on CUDA by default, so this needs a CUDA
+# build of torch 2.7.1 and an NVIDIA GPU. Install torch first, then the rest:
+#   python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#   python -m pip install -r requirements-prepare.txt
+# The tested bundle was folded with torch 2.7.1+cu128. A CPU-only torch works
+# with --weight-norm-device cpu, but its folded weights differ slightly.
+numpy>=1.24
+tokenizers>=0.22,<0.23
+huggingface-hub>=0.25,<2
+torch==2.7.1

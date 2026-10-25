@@ -1,0 +1,266 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "CUDA engine with text normaliser and voice cloning",
+      "description": "Needs CUDA 12.8 or newer, the FFmpeg development libraries and the text dependencies built by tools/build_text_deps.py. Set the KT2N_TEXT_DEPS environment variable to their prefix (or pass -DKT2N_TEXT_DEPS=<prefix>).",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "KT2N_CUDA": "ON",
+        "KT2N_BUILD_TEXT": "ON",
+        "KT2N_TEXT_DEPS": "$env{KT2N_TEXT_DEPS}",
+        "KT2N_BUILD_CLONING": "ON",
+        "KT2N_VOICE_AV": "ON",
+        "KT2N_AV": "OFF",
+        "KT2N_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "no-cloning",
+      "inherits": "default",
+      "displayName": "CUDA engine with text normaliser, without voice cloning",
+      "description": "Like default, but without voice cloning, so the FFmpeg development libraries are not needed.",
+      "cacheVariables": {
+        "KT2N_BUILD_CLONING": "OFF",
+        "KT2N_VOICE_AV": "OFF"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "default",
+      "displayName": "Development: default plus tests, warnings as errors",
+      "description": "Like default, with the test suite and with compiler warnings treated as errors.",
+      "cacheVariables": {
+        "KT2N_BUILD_TESTS": "ON",
+        "KT2N_WERROR": "ON"
+      }
+    },
+    {
+      "name": "hip",
+      "inherits": "default",
+      "displayName": "AMD Radeon (HIP / ROCm) engine with text normaliser and voice cloning",
+      "description": "Needs ROCm 7.1 or newer (HIP and rocRAND), the FFmpeg development libraries and the text dependencies built by tools/build_text_deps.py (KT2N_TEXT_DEPS). Builds for RDNA3 and RDNA4 (gfx1100, gfx1101, gfx1102, gfx1200, gfx1201); set KT2N_HIP_ARCHS to change that.",
+      "cacheVariables": {
+        "KT2N_CUDA": "OFF",
+        "KT2N_HIP": "ON",
+        "CMAKE_HIP_COMPILER": "/opt/rocm/llvm/bin/clang++",
+        "CMAKE_PREFIX_PATH": "/opt/rocm"
+      }
+    },
+    {
+      "name": "hip-dev",
+      "inherits": "hip",
+      "displayName": "AMD Radeon development: hip plus tests",
+      "description": "Like hip, with the test suite.",
+      "cacheVariables": {
+        "KT2N_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "cuda-portable",
+      "inherits": "default",
+      "displayName": "CUDA build of the AMD code paths (validation only)",
+      "description": "Compiles the portable software forms of every SM-specific instruction, the code an AMD build runs, for SM 7.5 and SM 12.0, with tests. For checking the AMD paths on an NVIDIA GPU; slower than the default build.",
+      "cacheVariables": {
+        "KT2N_PORTABLE": "ON",
+        "KT2N_CUDA_ARCHS": "75-real;120-real",
+        "KT2N_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows: CUDA engine with text normaliser, without voice cloning (MSVC + Ninja)",
+      "description": "Run from an x64 Native Tools prompt for Visual Studio 2022 (vcvars64) with CUDA 12.8, CMake and Ninja on PATH. Set KT2N_TEXT_DEPS to the prefix built by tools/build_text_deps.py. Voice cloning is off (it needs the FFmpeg development libraries).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "KT2N_CUDA": "ON",
+        "KT2N_BUILD_TEXT": "ON",
+        "KT2N_TEXT_DEPS": "$env{KT2N_TEXT_DEPS}",
+        "KT2N_BUILD_CLONING": "OFF",
+        "KT2N_VOICE_AV": "OFF",
+        "KT2N_AV": "OFF",
+        "KT2N_BUILD_TESTS": "OFF",
+        "KT2N_BUILD_EXAMPLES": "OFF"
+      }
+    },
+    {
+      "name": "windows-dev",
+      "inherits": "windows",
+      "displayName": "Windows development: the windows preset plus tests",
+      "cacheVariables": {
+        "KT2N_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "configuration": "Release"
+    },
+    {
+      "name": "no-cloning",
+      "configurePreset": "no-cloning",
+      "configuration": "Release"
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "configuration": "Release"
+    },
+    {
+      "name": "hip",
+      "configurePreset": "hip",
+      "configuration": "Release"
+    },
+    {
+      "name": "hip-dev",
+      "configurePreset": "hip-dev",
+      "configuration": "Release"
+    },
+    {
+      "name": "cuda-portable",
+      "configurePreset": "cuda-portable",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows",
+      "configurePreset": "windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-dev",
+      "configurePreset": "windows-dev",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "cpu",
+      "displayName": "Tests that need no GPU",
+      "configurePreset": "dev",
+      "filter": {
+        "include": {
+          "label": "cpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    },
+    {
+      "name": "gpu",
+      "displayName": "GPU tests (fail instead of skipping when no GPU is visible)",
+      "configurePreset": "dev",
+      "environment": {
+        "KT2N_REQUIRE_GPU": "1"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    },
+    {
+      "name": "hip-cpu",
+      "displayName": "Tests that need no GPU (HIP build)",
+      "configurePreset": "hip-dev",
+      "filter": {
+        "include": {
+          "label": "cpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    },
+    {
+      "name": "hip-gpu",
+      "displayName": "GPU tests on an AMD Radeon (fail instead of skipping when no GPU is visible)",
+      "configurePreset": "hip-dev",
+      "environment": {
+        "KT2N_REQUIRE_GPU": "1"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-cpu",
+      "displayName": "Windows: tests that need no GPU",
+      "configurePreset": "windows-dev",
+      "filter": {
+        "include": {
+          "label": "cpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-gpu",
+      "displayName": "Windows: GPU tests",
+      "configurePreset": "windows-dev",
+      "environment": {
+        "KT2N_REQUIRE_GPU": "1"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "configuration": "Release"
+    }
+  ]
+}
