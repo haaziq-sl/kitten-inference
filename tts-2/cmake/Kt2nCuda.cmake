@@ -31,7 +31,10 @@
 #   KT2N_CUDA_COMPRESS_MODE  nvcc --compress-mode for the embedded GPU code (CUDA 12.8+): default, size, speed,
 #                        balance or none; empty (default) passes nothing. It changes how the code is stored, not the
 #                        code: the driver decompresses it when it loads the library.
-#   KT2N_CUDA_LINEINFO   ON (default): -lineinfo, source lines for profilers; OFF leaves them out.
+#   KT2N_CUDA_LINEINFO   ON (default): -lineinfo, source lines for profilers; OFF leaves them out (about 48 MB less
+#                        library with the wheel presets). The SASS is the same either way (measured: 32 compiles of
+#                        each give the same set of variants of the one kernel whose PTX nvcc does not write the same
+#                        every time, see packaging/sass_manifest.py).
 #
 # Numerics: never --use_fast_math, never -ftz=true (configure refuses them).
 # The CUDA runtime is linked statically (the machine that runs it may have no nvcc and we
