@@ -10,7 +10,7 @@ permissions:
 jobs:
   probe:
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,10 +34,10 @@ jobs:
           git show 3528dda:tts-0.8/kitten_inference/tts08/cpp_model.py > old_cpp_model.py
           diff -q new_cpp_model.py old_cpp_model.py || true
           sysctl -n machdep.cpu.brand_string; system_profiler SPDisplaysDataType | grep -E "Chipset|Metal" | head -3
-      - name: A/B (8 iterations per arm, interleaved)
+      - name: A/B (12 iterations per arm, interleaved)
         run: |
-          for i in 1 2 3 4 5 6 7 8; do
-            for arm in old new fixed new-keep; do
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            for arm in old new fixed solo; do
               src=new_cpp_model.py; [ "$arm" = old ] && src=old_cpp_model.py; [ "$arm" = fixed ] && src=.github/probe/fixed_cpp_model.py
               cp "$src" "$SITE/cpp_model.py"
               v/bin/python .github/probe/metal_probe.py "$arm" "$i" 2>/dev/null | tee -a probe.jsonl

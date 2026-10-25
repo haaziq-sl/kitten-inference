@@ -1,7 +1,7 @@
 """Measurement only (branch ws/integ-metal-probe, never merged): how far Metal output moves from the same model run
 alone when two Metal threads and two CPU threads generate at once, per engine gate version.
 
-    python metal_probe.py ARM ITERATION   (ARM: old | new | fixed | new-keep; run with the matching cpp_model.py installed)
+    python metal_probe.py ARM ITERATION   (ARM: old | new | fixed | new-keep | solo; run with the matching cpp_model.py installed)
 
 new-keep keeps every thread's model alive until all threads end (no model is destroyed while another thread's call
 runs). Prints one JSON line per Metal thread and round: max sample difference and RMS ratio vs the reference."""
@@ -40,11 +40,17 @@ def worker(i, name, backend, voice):
                      "same_length": same_len, "max_diff": diff, "rms_ratio": rms, "t": round(time.perf_counter(), 3)})
 
 
-threads = [threading.Thread(target=worker, args=(i,) + p) for i, p in enumerate(s.THREAD_PLAN)]
 t0 = time.perf_counter()
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
+if arm == "solo":  # no threads: each Metal model of the plan alone, the same two generations, one after another
+    barrier = threading.Barrier(1)
+    for i, p in enumerate(s.THREAD_PLAN):
+        if s.resolved_backend(p[1], p[0]) == "metal":
+            worker(i, *p)
+else:
+    threads = [threading.Thread(target=worker, args=(i,) + p) for i, p in enumerate(s.THREAD_PLAN)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 for row in sorted(rows, key=lambda x: (x["thread"], x["round"])):
     print(json.dumps(dict(row, wall=round(time.perf_counter() - t0, 2))))
