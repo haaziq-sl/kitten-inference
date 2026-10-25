@@ -97,11 +97,13 @@ pip install "kitten-inference[tts-2-rocm]"
 kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
 ```
 
-The engine package (`kitten-inference-tts2-rocm`, Linux x86_64 with glibc 2.28 or newer) is built for gfx1100,
-gfx1101, gfx1102, gfx1200 and gfx1201, the same GPU code as the `hip` build below. It does not include ROCm: it uses
-`libamdhip64.so.7` from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first
-run downloads and prepares the model (a 4.4 GB download; 8 minutes in our test, most of it the download); later runs
-start in a few seconds. It has no voice cloning.
+The engine package (`kitten-inference-tts2-rocm`, Linux x86_64 with glibc 2.28 or newer) is built with ROCm 7.1 for
+gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. Its audio is the same as that of a `hip` build made with ROCm 7.1 (the
+builds our numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding
+(about -60 to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7`
+from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first run downloads and
+prepares the model (a 4.4 GB download; 8 minutes in our test, most of it the download); later runs start in a few
+seconds. It has no voice cloning.
 
 ## 2. Get the source and build
 
