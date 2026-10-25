@@ -186,3 +186,15 @@ def test_manifest_digest_ignores_windows_line_ends(tmp_path):
     assert convert_s3gen.manifest_sha256(crlf) == convert_s3gen.manifest_sha256(convert_s3gen.MANIFEST)
     assert convert_s3gen.manifest_sha256(crlf) == hashlib.sha256(lf).hexdigest()
     assert convert_s3gen.read_manifest(crlf) == convert_s3gen.read_manifest(convert_s3gen.MANIFEST)
+
+
+@pytest.mark.parametrize("device", ["cuda", "cuda:0", "cpu"])
+def test_torch_folds_record_the_manifest_bytes_as_earlier_versions(tmp_path, device):
+    # Earlier versions hashed the checkout's bytes; a torch fold keeps that, so it rebuilds their file on a CRLF checkout.
+    lf = convert_s3gen.MANIFEST.read_bytes().replace(b"\r\n", b"\n")
+    crlf = tmp_path / "s3gen_tensors.tsv"
+    crlf.write_bytes(lf.replace(b"\n", b"\r\n"))
+    assert convert_s3gen.manifest_sha256(crlf, device) == hashlib.sha256(lf.replace(b"\n", b"\r\n")).hexdigest()
+    lf_file = tmp_path / "lf.tsv"
+    lf_file.write_bytes(lf)
+    assert convert_s3gen.manifest_sha256(lf_file, device) == convert_s3gen.manifest_sha256(lf_file, "numpy")

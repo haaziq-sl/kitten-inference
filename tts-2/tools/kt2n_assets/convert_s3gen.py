@@ -77,9 +77,12 @@ def _file_sha(path: str) -> str:
     return h.hexdigest()
 
 
-def manifest_sha256(path: pathlib.Path) -> str:
-    """The manifest's digest with LF line ends: a Windows checkout (git core.autocrlf) has CRLF, same content."""
-    return _sha(path.read_bytes().replace(b"\r\n", b"\n"))
+def manifest_sha256(path: pathlib.Path, device: str = "numpy") -> str:
+    """The manifest's digest as the file records it. numpy: with LF line ends, because a Windows checkout
+    (git core.autocrlf) has CRLF with the same content and the numpy file must be the same everywhere. A torch fold
+    (cuda, cpu) hashes the raw bytes, as earlier versions did, so it rebuilds their file on the machine that made it."""
+    data = path.read_bytes()
+    return _sha(data.replace(b"\r\n", b"\n") if device == "numpy" else data)
 
 
 def read_manifest(path: pathlib.Path) -> list[dict[str, Any]]:
@@ -250,7 +253,7 @@ def convert(src_path: str, out_path: str, *, manifest_path: pathlib.Path, expect
                 "tensor_count": len([k for k in header_obj if k != "__metadata__"]),
             },
             "converter": _converter(device),
-            "manifest_sha256": manifest_sha256(manifest_path),
+            "manifest_sha256": manifest_sha256(manifest_path, device),
             "extra_groups": [{"group": g, "file": os.path.basename(f.path), "sha256": _file_sha(f.path)}
                              for g, f in extra_files],
         },
