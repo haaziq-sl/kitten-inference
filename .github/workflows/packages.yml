@@ -144,14 +144,16 @@ jobs:
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders and a local index with 0.1.x, as on PyPI)
         run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps --old stubs-old
-      - name: Install kitten-inference[tts-2] for the unit tests
+      - name: Install kitten-inference[tts-2] for the unit tests (on macOS, which has no engine wheel, the two packages)
         shell: bash
         run: |
           python -m venv venv
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = macOS ]; then SPEC="kitten-inference==0.2.0 kitten-inference-tts2==0.2.0"; \
+          else SPEC="kitten-inference[tts-2]==0.2.0"; fi
           $PY -m pip install --disable-pip-version-check --no-index --find-links dist --find-links stubs \
-            --find-links deps "kitten-inference[tts-2]==0.2.0" pytest
+            --find-links deps $SPEC pytest
       - name: Unit tests (installed packages; tests/gpu is skipped, no other test may skip)
         shell: bash
         env:

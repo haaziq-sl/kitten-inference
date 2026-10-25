@@ -9,10 +9,11 @@ GPU_DIR = Path(__file__).parent / "gpu"
 # Unit tests (not tests/gpu) that were skipped: KT2N_STRICT_SKIPS=1 (CI) makes them a failure, except tests for
 # another operating system (skip reason "platform: ...").
 _skipped = []
+_gpu_tests = set()  # node ids of the tests in tests/gpu (filled at collection)
 
 
 def pytest_runtest_logreport(report):
-    if not report.skipped or "tests/gpu/" in report.nodeid.replace("\\", "/"):
+    if not report.skipped or report.nodeid in _gpu_tests:
         return
     reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
     if not str(reason).replace("Skipped: ", "").startswith("platform:"):
@@ -26,6 +27,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_collection_modifyitems(config, items):
+    _gpu_tests.update(item.nodeid for item in items if GPU_DIR in Path(str(item.fspath)).parents)
     # tests/gpu runs only when asked for (python -m pytest tests/gpu); a plain run is the unit tests.
     args = [str(a) for a in config.args]
     if any("gpu" in Path(a).parts for a in args):

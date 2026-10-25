@@ -16,6 +16,7 @@ from pathlib import Path
 
 from kitten_inference.tts2 import _abi, _backend, _gpu, _prepare
 
+sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")  # paths below are not ASCII (Windows: cp1252)
 failed = []
 
 
