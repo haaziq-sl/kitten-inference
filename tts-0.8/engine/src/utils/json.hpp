@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include "file_open.hpp"
 
 // ──────────────────────────────────────────────────────────────
 // JsonValue — variant node for JSON values
@@ -249,7 +250,7 @@ inline JsonValue json_parse(const std::string& s) {
 }
 
 inline JsonValue json_load(const std::string& path) {
-    FILE* f = fopen(path.c_str(), "rb");
+    FILE* f = fopen_utf8(path, "rb");
     if (!f) throw std::runtime_error("Cannot open JSON: " + path);
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);

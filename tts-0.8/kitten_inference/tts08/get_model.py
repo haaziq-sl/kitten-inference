@@ -9,6 +9,8 @@ from .preprocess import normalize_text
 DEFAULT_MODEL = "KittenML/kitten-tts-nano-0.1"
 NATIVE_CONFIG_TYPES = {"CPP1", "NATIVE1", "MODEL_INFERENCE"}
 NATIVE_WEIGHTS_REPO = "KittenML/meownn-models"
+# Built-in models always load this exact revision of the native weights.
+NATIVE_WEIGHTS_REVISION = "5e9bca0cc3a4e2a617f604b1333d5f34536c1eed"
 VOICE_NAMES = [
     "expr-voice-2-m",
     "expr-voice-2-f",
@@ -19,6 +21,18 @@ VOICE_NAMES = [
     "expr-voice-5-m",
     "expr-voice-5-f",
 ]
+# speed_priors of the reference ONNX nano 0.8 models (config.json of KittenML/kitten-tts-nano-0.8-fp32 and
+# -int8). The voice's prior multiplies the requested speed, as in kittenml 0.9.6. micro and mini have none.
+NANO_08_SPEED_PRIORS = {
+    "expr-voice-2-f": 0.8,
+    "expr-voice-2-m": 0.8,
+    "expr-voice-3-m": 0.8,
+    "expr-voice-3-f": 0.8,
+    "expr-voice-4-m": 0.9,
+    "expr-voice-4-f": 0.8,
+    "expr-voice-5-m": 0.8,
+    "expr-voice-5-f": 0.8,
+}
 DEFAULT_VOICE_ALIASES = {
     "Bella": "expr-voice-2-f",
     "Jasper": "expr-voice-2-m",
@@ -39,16 +53,19 @@ BUILTIN_NATIVE_MODELS = {
         "arch_file": "kitten_fp32_15m_arch.json",
         "weights_file": "kitten_fp32_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-nano-0.8-fp32": {
         "arch_file": "kitten_fp32_15m_arch.json",
         "weights_file": "kitten_fp32_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-nano-0.8-int8": {
         "arch_file": "kitten_int8_15m_arch.json",
         "weights_file": "kitten_int8_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-micro-0.8": {
         "arch_file": "kitten_fp32_40m_arch.json",
@@ -83,9 +100,9 @@ class KittenTTS:
             model_name: Hugging Face repository ID, local model directory, or a
                 KittenML model name such as ``kitten-tts-mini-0.8``.
             cache_dir: Directory to cache downloaded files
-            backend: Native engine backend. Defaults to ``cpu``; pass ``metal``
-                on Apple Silicon when using a Metal-enabled kitten-inference
-                wheel.
+            backend: ``"cpu"`` or ``"metal"``. Defaults to Metal on Apple
+                Silicon when a Metal device is available, except for int8
+                models, and to the CPU otherwise.
         """
         repo_id = _resolve_model_id(model_name)
         self.model = download_from_huggingface(repo_id=repo_id, cache_dir=cache_dir, backend=backend)
@@ -152,8 +169,8 @@ def _resolve_local_file(root, filename):
     return filename if os.path.isabs(filename) else os.path.join(root, filename)
 
 
-def _download_file(repo_id, filename, cache_dir):
-    return hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir)
+def _download_file(repo_id, filename, cache_dir, revision=None):
+    return hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir, revision=revision)
 
 
 def _builtin_arch_path(filename):
@@ -197,17 +214,21 @@ def _load_builtin_native_model(repo_id, spec, cache_dir=None, backend=None):
             NATIVE_WEIGHTS_REPO,
             f"{spec['voice_dir']}/{voice}.bin",
             cache_dir,
+            NATIVE_WEIGHTS_REVISION,
         )
         for voice in VOICE_NAMES
     }
 
     return KittenTTS_1_Cpp(
         arch_path=_builtin_arch_path(spec["arch_file"]),
-        weights_path=_download_file(NATIVE_WEIGHTS_REPO, spec["weights_file"], cache_dir),
+        weights_path=_download_file(
+            NATIVE_WEIGHTS_REPO, spec["weights_file"], cache_dir, NATIVE_WEIGHTS_REVISION
+        ),
         voice_paths=voice_paths,
+        speed_priors=spec.get("speed_priors", {}),
         voice_aliases=DEFAULT_VOICE_ALIASES,
         backend=backend,
-        style_index="token_count",
+        style_index="text_length",  # the reference ONNX path picks the style row by text length
         sample_rate=24000,
     )
 
@@ -217,7 +238,7 @@ def _instantiate_native_model(config, get_file, backend=None):
     if config_type not in NATIVE_CONFIG_TYPES:
         if config_type in {"ONNX1", "ONNX2"}:
             raise ValueError(
-                "This KittenTTS build uses the native model_inference engine. "
+                "kitten_inference.tts08 runs native models only. "
                 "Use a native model repo/config with type CPP1, arch_file, and weights_file."
             )
         raise ValueError(f"Unsupported model type: {config_type!r}.")

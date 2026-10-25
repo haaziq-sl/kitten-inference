@@ -1,4 +1,9 @@
+import contextlib
+import json
 import os
+import platform
+import sys
+import threading
 
 import espeakng_loader
 import numpy as np
@@ -14,6 +19,10 @@ os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
 
 SAMPLE_RATE = 24000
 STYLE_DIM = 256
+# The reference ONNX path (kittenml 0.9.6) ends the ids with "…" (10) then the pad (0), and drops the last
+# 5000 samples of every chunk. Both are copied here so the two paths give the same audio length.
+END_TOKEN = 10
+TAIL_TRIM_SAMPLES = 5000
 DEFAULT_VOICE = "expr-voice-5-m"
 DEFAULT_NATIVE_VOICE = "expr-voice-2-f"
 
@@ -56,15 +65,90 @@ class TextCleaner:
         return indexes
 
 
-def _import_model_inference():
+def _import_engine():
     try:
-        import model_inference as mi
+        from . import _engine
     except ImportError as exc:
         raise ImportError(
-            "KittenTTS native inference requires the kitten-inference wheel. "
-            "Install the wheel that matches this Python/platform before loading a model."
+            "The native engine (kitten_inference.tts08._engine) is missing or does not match "
+            'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
         ) from exc
-    return mi
+    return _engine
+
+
+class _EngineGate:
+    """Lets engine calls run at the same time only when that is safe.
+
+    The engine has one process-wide backend, which a model's kernels use while it loads and runs, and the
+    Metal backend records all GPU work into one shared command buffer. So CPU calls may overlap (one model
+    per thread), while a Metal call, or a call on another backend than the running ones, waits until the
+    engine is idle. Each call sets its own model's backend first.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._running = 0
+        self._exclusive = False
+        self._backend = None
+        self._waiting_exclusive = 0
+
+    def _must_wait(self, backend, exclusive):
+        if exclusive:
+            return self._running > 0
+        # A CPU call joins running CPU calls, but lets a waiting exclusive call go first.
+        return self._waiting_exclusive > 0 or (
+            self._running > 0 and (self._exclusive or self._backend != backend)
+        )
+
+    @contextlib.contextmanager
+    def use(self, engine, backend):
+        exclusive = backend != "cpu"
+        with self._cond:
+            if exclusive:
+                self._waiting_exclusive += 1
+            try:
+                while self._must_wait(backend, exclusive):
+                    self._cond.wait()
+            finally:
+                if exclusive:
+                    self._waiting_exclusive -= 1
+            if not self._running:
+                if not engine.set_backend(backend):
+                    self._cond.notify_all()
+                    raise ValueError(
+                        f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
+                    )
+                self._backend = backend
+                self._exclusive = exclusive
+            self._running += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._running -= 1
+                self._cond.notify_all()
+
+
+_ENGINE_GATE = _EngineGate()
+
+
+def _has_int8_layers(arch_path):
+    # int8 models use *_int8 layers (conv1d_int8, seqgemm_int8, attention_int8).
+    with open(arch_path, encoding="utf-8") as f:
+        nodes = json.load(f).get("nodes", [])
+    return any(str(node.get("op", "")).endswith("_int8") for node in nodes)
+
+
+def _default_backend(engine, arch_path):
+    # Apple Silicon: Metal when a Metal device is available, except for int8 models, which run several times
+    # faster on the CPU than on Metal. Everywhere else: the CPU.
+    if sys.platform == "darwin" and platform.machine() == "arm64" and not _has_int8_layers(arch_path):
+        try:
+            with _ENGINE_GATE.use(engine, "metal"):
+                return "metal"
+        except ValueError:
+            pass
+    return "cpu"
 
 
 def _coerce_voice_pack(values):
@@ -93,7 +177,7 @@ class KittenTTS_1_Cpp:
         style_index="token_count",
         sample_rate=SAMPLE_RATE,
     ):
-        """Initialize KittenTTS with the native model_inference engine."""
+        """Initialize KittenTTS with the native engine."""
         self.arch_path = arch_path
         self.weights_path = weights_path
         self.sample_rate = sample_rate
@@ -123,15 +207,13 @@ class KittenTTS_1_Cpp:
             if target in self.available_voices
         ] or self.available_voices
 
-        self._mi = _import_model_inference()
-        selected_backend = backend or "cpu"
-        if selected_backend == "amd_gpu":
+        self._mi = _import_engine()
+        if backend == "amd_gpu":
             raise ValueError("The native engine does not support backend='amd_gpu'.")
-        if not self._mi.set_backend(selected_backend):
-            raise ValueError(
-                f"Backend {selected_backend!r} is not available in the installed kitten-inference wheel."
-            )
-        self.session = self._mi.InferenceModel(arch_path, weights_path)
+        self.backend = backend or _default_backend(self._mi, arch_path)
+        # The engine allocates and uploads the weights for the backend that is set while the model loads.
+        with _ENGINE_GATE.use(self._mi, self.backend):
+            self.session = self._mi.InferenceModel(arch_path, weights_path)
 
     def _load_voices(self, voices_path, voice_paths):
         if voices_path:
@@ -162,6 +244,7 @@ class KittenTTS_1_Cpp:
         phonemes = " ".join(phonemes)
         tokens = self.text_cleaner(phonemes)
         tokens.insert(0, 0)
+        tokens.append(END_TOKEN)
         tokens.append(0)
         return np.asarray(tokens, dtype=np.float32)
 
@@ -202,10 +285,7 @@ class KittenTTS_1_Cpp:
         if set_speed is None:
             if np.isclose(speed, 1.0):
                 return
-            raise RuntimeError(
-                "The installed kitten-inference wheel does not support speed control. "
-                "Install the latest kitten-inference wheel for this Python/platform."
-            )
+            raise RuntimeError("This build of the native engine does not support speed control.")
         set_speed(speed)
 
     def normalize_text(self, text, locale="en-US", return_spans=False):
@@ -230,18 +310,20 @@ class KittenTTS_1_Cpp:
     def generate_single_chunk(self, text, voice=DEFAULT_VOICE, speed=1.0):
         voice = self._resolve_voice(voice)
         effective_speed = self._effective_speed(voice, speed)
-        self._set_native_speed(effective_speed)
 
         ids = self._phoneme_ids(text)
         style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
-        outputs = self.session.forward(
-            {
-                "phoneme_ids": ids,
-                "style_dec": style_dec,
-                "style_pred": style_pred,
-            }
-        )
-        return np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
+        with _ENGINE_GATE.use(self._mi, self.backend):
+            self._set_native_speed(effective_speed)
+            outputs = self.session.forward(
+                {
+                    "phoneme_ids": ids,
+                    "style_dec": style_dec,
+                    "style_pred": style_pred,
+                }
+            )
+        audio = np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
+        return audio[:-TAIL_TRIM_SAMPLES]
 
     def generate_to_file(
         self,

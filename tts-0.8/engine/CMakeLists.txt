@@ -183,9 +183,9 @@ if(HAVE_METAL)
         COMPILE_FLAGS "-fobjc-arc")
 
     # Compile Metal shaders to .metallib at build time
-    set(METAL_SHADER_SRC "${CMAKE_SOURCE_DIR}/src/backend/metal/shaders/kernels.metal")
-    set(METAL_AIR        "${CMAKE_BINARY_DIR}/metal_kernels.air")
-    set(METAL_LIB        "${CMAKE_BINARY_DIR}/metal_kernels.metallib")
+    set(METAL_SHADER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/backend/metal/shaders/kernels.metal")
+    set(METAL_AIR        "${CMAKE_CURRENT_BINARY_DIR}/metal_kernels.air")
+    set(METAL_LIB        "${CMAKE_CURRENT_BINARY_DIR}/metal_kernels.metallib")
     add_custom_command(
         OUTPUT  "${METAL_LIB}"
         COMMAND xcrun -sdk macosx metal -c "${METAL_SHADER_SRC}" -o "${METAL_AIR}"
@@ -195,6 +195,18 @@ if(HAVE_METAL)
         VERBATIM
     )
     add_custom_target(metal_shaders ALL DEPENDS "${METAL_LIB}")
+endif()
+
+# ── Optional C++ examples, benchmarks and tests ───────────────
+# Off by default and for wheels. Their sources (examples/, bench/, tests/, tools/) are not
+# part of this folder; the option exists for builds from the full engine tree.
+option(KITTEN_BUILD_EXTRAS "Build the C++ examples, benchmarks and tests" OFF)
+if(KITTEN_BUILD_EXTRAS)
+    foreach(_dir examples bench tests)
+        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_dir}")
+            message(FATAL_ERROR "KITTEN_BUILD_EXTRAS=ON needs ${CMAKE_CURRENT_SOURCE_DIR}/${_dir}, which is not part of this folder")
+        endif()
+    endforeach()
 endif()
 
 # ── Debug / diagnostic options ────────────────────────────────
@@ -327,6 +339,8 @@ set(LAYER_SOURCES
 # paths marked PUBLIC propagate to every executable that links this target.
 # When MODULE_PROBE=ON, model.cpp is excluded from the engine and compiled
 # separately per target (with probe flags for probe tools, without for others).
+set(ALL_TARGETS)
+if(KITTEN_BUILD_EXTRAS)
 if(MODULE_PROBE)
     set(_engine_model_cpp "")
 else()
@@ -436,6 +450,7 @@ foreach(tgt ${ALL_TARGETS})
         endif()
     endif()
 endforeach()
+endif()  # KITTEN_BUILD_EXTRAS
 
 
 # ── OpenMP ────────────────────────────────────────────────────
@@ -448,7 +463,9 @@ if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
     message(STATUS "OpenMP ${OpenMP_CXX_VERSION} found — multi-threaded GEMM enabled")
     # Link to engine so compile flags (-fopenmp) propagate to all consumers,
     # and add the link library to every executable explicitly.
-    target_link_libraries(engine PUBLIC OpenMP::OpenMP_CXX)
+    if(TARGET engine)
+        target_link_libraries(engine PUBLIC OpenMP::OpenMP_CXX)
+    endif()
     foreach(tgt ${ALL_TARGETS})
         target_link_libraries(${tgt} PRIVATE OpenMP::OpenMP_CXX)
     endforeach()
@@ -464,7 +481,9 @@ if(NOT HAVE_CUDA)
     check_ipo_supported(RESULT ipo_supported)
     if(ipo_supported)
         message(STATUS "LTO enabled")
-        set_property(TARGET engine PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        if(TARGET engine)
+            set_property(TARGET engine PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        endif()
         foreach(tgt ${ALL_TARGETS})
             set_property(TARGET ${tgt} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         endforeach()
@@ -515,7 +534,7 @@ if(Python3_FOUND AND Python3_Development.Module_FOUND)
         # Compile sources directly into the module (not via engine) so PIC is
         # applied automatically by pybind11_add_module without affecting the
         # non-PIC engine OBJECT library used by the main executables.
-        pybind11_add_module(model_inference
+        pybind11_add_module(_engine
             python/bindings.cpp
             ${OPS_SOURCES}
             src/engine/model.cpp
@@ -528,8 +547,8 @@ if(Python3_FOUND AND Python3_Development.Module_FOUND)
             src/models/kitten.cpp
             src/models/language_model.cpp
         )
-        target_include_directories(model_inference PRIVATE src)
-        target_include_directories(model_inference SYSTEM PRIVATE ${PYTHON_MODULE_INCLUDE_DIRS})
+        target_include_directories(_engine PRIVATE src)
+        target_include_directories(_engine SYSTEM PRIVATE ${PYTHON_MODULE_INCLUDE_DIRS})
         if(ANDROID)
             # Android extension modules are linked with --no-undefined, unlike
             # desktop Python extension modules where Python C-API symbols are
@@ -552,45 +571,45 @@ if(Python3_FOUND AND Python3_Development.Module_FOUND)
                 NO_DEFAULT_PATH)
             if(PYTHON_ANDROID_LIBRARY)
                 message(STATUS "Android Python library found: ${PYTHON_ANDROID_LIBRARY}")
-                target_link_libraries(model_inference PRIVATE "${PYTHON_ANDROID_LIBRARY}")
+                target_link_libraries(_engine PRIVATE "${PYTHON_ANDROID_LIBRARY}")
             else()
                 message(WARNING "Android Python library not found; Android link may fail with unresolved Python C-API symbols")
             endif()
         endif()
         if(PYTHON_MULTIARCH_PARENT_INCLUDE_DIR AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(model_inference PRIVATE
+            target_compile_options(_engine PRIVATE
                 $<$<COMPILE_LANGUAGE:CXX>:-idirafter>
                 $<$<COMPILE_LANGUAGE:CXX>:${PYTHON_MULTIARCH_PARENT_INCLUDE_DIR}>)
         endif()
         if(HAVE_CUDA)
-            target_sources(model_inference PRIVATE ${CUDA_BACKEND_SOURCES})
-            target_include_directories(model_inference PRIVATE "${CUDA_INCLUDE_DIR}")
-            target_link_libraries(model_inference PRIVATE ${CUDA_BLAS_LIB} ${CUDA_RUNTIME_LIB})
+            target_sources(_engine PRIVATE ${CUDA_BACKEND_SOURCES})
+            target_include_directories(_engine PRIVATE "${CUDA_INCLUDE_DIR}")
+            target_link_libraries(_engine PRIVATE ${CUDA_BLAS_LIB} ${CUDA_RUNTIME_LIB})
             if(WIN32 AND MSVC AND CUBLAS_DLL_NAME)
-                target_link_libraries(model_inference PRIVATE delayimp)
-                target_link_options(model_inference PRIVATE "/DELAYLOAD:${CUBLAS_DLL_NAME}")
+                target_link_libraries(_engine PRIVATE delayimp)
+                target_link_options(_engine PRIVATE "/DELAYLOAD:${CUBLAS_DLL_NAME}")
             endif()
-            target_compile_definitions(model_inference PRIVATE HAVE_CUDA)
+            target_compile_definitions(_engine PRIVATE HAVE_CUDA)
             if(HAVE_CUDNN)
-                target_include_directories(model_inference PRIVATE "${CUDNN_INCLUDE}")
-                target_link_libraries(model_inference PRIVATE "${CUDNN_LIB}")
-                target_compile_definitions(model_inference PRIVATE HAVE_CUDNN)
+                target_include_directories(_engine PRIVATE "${CUDNN_INCLUDE}")
+                target_link_libraries(_engine PRIVATE "${CUDNN_LIB}")
+                target_compile_definitions(_engine PRIVATE HAVE_CUDNN)
             endif()
         endif()
         if(HAVE_METAL)
-            target_sources(model_inference PRIVATE ${METAL_BACKEND_SOURCES})
-            target_compile_definitions(model_inference PRIVATE HAVE_METAL)
-            target_link_libraries(model_inference PRIVATE
+            target_sources(_engine PRIVATE ${METAL_BACKEND_SOURCES})
+            target_compile_definitions(_engine PRIVATE HAVE_METAL)
+            target_link_libraries(_engine PRIVATE
                 "-framework Metal"
                 "-framework Foundation"
                 "-framework MetalPerformanceShaders")
-            add_dependencies(model_inference metal_shaders)
+            add_dependencies(_engine metal_shaders)
         endif()
         if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
-            target_link_libraries(model_inference PRIVATE OpenMP::OpenMP_CXX)
+            target_link_libraries(_engine PRIVATE OpenMP::OpenMP_CXX)
         endif()
         if(NOT HAVE_CUDA)
-            set_property(TARGET model_inference PROPERTY INTERPROCEDURAL_OPTIMIZATION ${ipo_supported})
+            set_property(TARGET _engine PROPERTY INTERPROCEDURAL_OPTIMIZATION ${ipo_supported})
         endif()
     else()
         message(STATUS "pybind11 not found — skipping Python bindings (run: pip install pybind11)")
@@ -600,19 +619,22 @@ else()
 endif()
 
 # ── Install ───────────────────────────────────────────────────
-if(TARGET model_inference)
-    install(TARGETS model_inference
-            LIBRARY DESTINATION . COMPONENT python
-            RUNTIME DESTINATION . COMPONENT python
-            ARCHIVE DESTINATION . COMPONENT python)
+# The extension and the Metal shader library go next to the Python package files
+# (kitten_inference/tts08/). The model definitions ship with the Python package.
+set(KITTEN_PY_DEST "kitten_inference/tts08")
+if(TARGET _engine)
+    install(TARGETS _engine
+            LIBRARY DESTINATION ${KITTEN_PY_DEST} COMPONENT python
+            RUNTIME DESTINATION ${KITTEN_PY_DEST} COMPONENT python
+            ARCHIVE DESTINATION ${KITTEN_PY_DEST} COMPONENT python)
     if(HAVE_METAL)
-        install(FILES "${METAL_LIB}" DESTINATION . COMPONENT python)
+        install(FILES "${METAL_LIB}" DESTINATION ${KITTEN_PY_DEST} COMPONENT python)
     endif()
 endif()
 
-install(TARGETS image_classify DESTINATION bin)
-install(DIRECTORY model_defs/ DESTINATION share/cnn_inference/examples
-        FILES_MATCHING PATTERN "*.json")
+if(KITTEN_BUILD_EXTRAS)
+    install(TARGETS image_classify DESTINATION bin)
+endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "CXX flags: ${CMAKE_CXX_FLAGS}")

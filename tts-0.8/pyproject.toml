@@ -1,0 +1,64 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.12",
+    "pybind11>=3.0",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "kitten-inference-tts08"
+version = "0.2.0"
+description = "Kitten TTS 0.8 (15M, 40M and 80M models) on a native C++ engine"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "licenses/*.txt"]
+authors = [{ name = "KittenML" }]
+requires-python = ">=3.8"
+# Lower bounds are the oldest versions tested (CI job "lowest dependencies").
+# espeakng_loader 0.2.4 is the first whose Linux x86_64 library runs on glibc 2.29 (older ones need 2.34);
+# phonemizer 3.3 is the first that does not need setuptools (pkg_resources) at run time.
+dependencies = [
+    "espeakng_loader>=0.2.4",
+    "phonemizer>=3.3",
+    "soundfile>=0.12.1",
+    "numpy>=1.23",
+    "huggingface_hub>=0.20",
+]
+keywords = ["text-to-speech", "tts", "speech-synthesis", "kitten-tts"]
+classifiers = [
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+[project.urls]
+Homepage = "https://github.com/KittenML/kitten-inference"
+Source = "https://github.com/KittenML/kitten-inference/tree/main/tts-0.8"
+Issues = "https://github.com/KittenML/kitten-inference/issues"
+
+[tool.scikit-build]
+minimum-version = "0.12"
+build-dir = "build/{wheel_tag}"
+cmake.source-dir = "engine"
+cmake.build-type = "Release"
+cmake.define = { ENABLE_CUDA = "OFF", ENABLE_NATIVE_ARCH = "OFF", KITTEN_BUILD_EXTRAS = "OFF" }
+build.targets = ["_engine"]
+install.components = ["python"]
+install.strip = true
+wheel.platlib = true
+# Only kitten_inference/tts08 is shipped. kitten_inference/__init__.py belongs to the
+# kitten-inference distribution, so this one never installs it.
+wheel.packages = { "kitten_inference/tts08" = "kitten_inference/tts08" }
+wheel.exclude = ["**/__pycache__", "**/*.py[co]"]
+sdist.exclude = [".venv*", "build*", "dist", "wheelhouse", "audio-smoke*", ".hf-cache"]

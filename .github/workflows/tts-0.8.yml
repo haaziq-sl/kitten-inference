@@ -1,0 +1,715 @@
+name: tts-0.8
+
+# Builds and tests the kitten-inference-tts08 wheels. Every wheel is installed with its
+# dependencies and runs the unit tests and the audio smoke test (tts-0.8/tests).
+# Publishing runs only for v* tags in KittenML/kitten-inference.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths:
+      - "tts-0.8/**"
+      - ".github/workflows/tts-0.8.yml"
+  pull_request:
+    paths:
+      - "tts-0.8/**"
+      - ".github/workflows/tts-0.8.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tts-0.8-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
+jobs:
+  linux-wheels:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64 manylinux2014 CPython 3.8-3.15
+            artifact: linux-x86_64-manylinux2014
+            os: ubuntu-latest
+            arch: x86_64
+            manylinux_image: manylinux2014
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=ON
+              cmake.define.ENABLE_ARM_DOTPROD=OFF
+            cibw_build: >-
+              cp38-manylinux_x86_64
+              cp39-manylinux_x86_64
+              cp310-manylinux_x86_64
+              cp311-manylinux_x86_64
+              cp312-manylinux_x86_64
+              cp313-manylinux_x86_64
+              cp314-manylinux_x86_64
+
+          - name: Linux x86_64 manylinux_2_28 CPython 3.8-3.15
+            artifact: linux-x86_64-manylinux-2-28
+            os: ubuntu-latest
+            arch: x86_64
+            manylinux_image: manylinux_2_28
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=ON
+              cmake.define.ENABLE_ARM_DOTPROD=OFF
+            cibw_build: >-
+              cp38-manylinux_x86_64
+              cp39-manylinux_x86_64
+              cp310-manylinux_x86_64
+              cp311-manylinux_x86_64
+              cp312-manylinux_x86_64
+              cp313-manylinux_x86_64
+              cp314-manylinux_x86_64
+
+          - name: Linux ARM64 manylinux2014 CPython 3.8-3.15
+            artifact: linux-aarch64-manylinux2014
+            os: ubuntu-24.04-arm
+            arch: aarch64
+            manylinux_image: manylinux2014
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=OFF
+              cmake.define.ENABLE_ARM_DOTPROD=ON
+            cibw_build: >-
+              cp38-manylinux_aarch64
+              cp39-manylinux_aarch64
+              cp310-manylinux_aarch64
+              cp311-manylinux_aarch64
+              cp312-manylinux_aarch64
+              cp313-manylinux_aarch64
+              cp314-manylinux_aarch64
+
+          - name: Linux ARM64 manylinux_2_28 CPython 3.8-3.15
+            artifact: linux-aarch64-manylinux-2-28
+            os: ubuntu-24.04-arm
+            arch: aarch64
+            manylinux_image: manylinux_2_28
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=OFF
+              cmake.define.ENABLE_ARM_DOTPROD=ON
+            cibw_build: >-
+              cp38-manylinux_aarch64
+              cp39-manylinux_aarch64
+              cp310-manylinux_aarch64
+              cp311-manylinux_aarch64
+              cp312-manylinux_aarch64
+              cp313-manylinux_aarch64
+              cp314-manylinux_aarch64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # The wheels are tested on the runner, not in the build container: the espeak-ng
+      # library from espeakng_loader needs glibc 2.29, newer than both manylinux images.
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_MANYLINUX_AARCH64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same image, flags and tests.
+      - name: Build the CPython 3.15 wheel
+        uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: cp315-manylinux_${{ matrix.arch }}
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_MANYLINUX_AARCH64_IMAGE: ${{ matrix.manylinux_image }}
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+
+      - name: Test every wheel on the runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for py in 3.8 3.9 3.10 3.11 3.12 3.13 3.14 3.15; do
+            tag="cp${py/./}"
+            echo "::group::Python $py"
+            uv venv -q -p "$py" "venv-$tag"
+            uv pip install -q -p "venv-$tag/bin/python" wheelhouse/*-"$tag"-"$tag"-*.whl
+            "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
+            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "audio-smoke/$tag" \
+              --cache-dir .hf-cache --expect-backend cpu
+            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode paths --out-dir "audio-smoke/paths-$tag" \
+              --cache-dir .hf-cache
+            echo "::endgroup::"
+          done
+
+      # One Python per platform: micro and mini (fp32 and int8), two backends in one process, and
+      # several models generating at once from different threads. Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads (CPython 3.12)
+        shell: bash
+        run: |
+          set -uo pipefail
+          py=venv-cp312/bin/python
+          status=0
+          for mode in models auto mix threads; do
+            echo "::group::$mode"
+            "$py" tts-0.8/tests/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
+              || { echo "::error::audio_smoke --mode $mode failed (exit $?)"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Oversubscribed threads (33 OpenMP threads on the runner's few cores), fp32 and int8
+        shell: bash
+        run: |
+          set -euo pipefail
+          nproc
+          for i in 1 2 3; do
+            OMP_NUM_THREADS=33 venv-cp312/bin/python tts-0.8/tests/audio_smoke.py --mode release \
+              --out-dir "audio-smoke/omp33-$i" --cache-dir .hf-cache --expect-backend cpu > /dev/null
+            echo "run $i ok"
+          done
+
+      - run: ls -l wheelhouse
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tts08-wheels-${{ matrix.artifact }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  desktop-wheels:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64 CPython 3.8-3.15
+            os: windows-2025-vs2026
+            artifact: windows-x86_64
+            cibw_build: >-
+              cp38-win_amd64
+              cp39-win_amd64
+              cp310-win_amd64
+              cp311-win_amd64
+              cp312-win_amd64
+              cp313-win_amd64
+              cp314-win_amd64
+            cibw_build_315: cp315-win_amd64
+            cibw_archs_windows: AMD64
+            cibw_archs_macos: auto
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=ON
+              cmake.define.ENABLE_ARM_DOTPROD=OFF
+            test_skip: ""
+            test_command: >-
+              python -m unittest discover -s {package}/tests -v &&
+              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
+            host_pythons: ""
+            uv_python: cpython-3.12-windows-x86_64-none
+
+          - name: Windows ARM64 CPython 3.11-3.15
+            os: windows-11-arm
+            artifact: windows-arm64
+            cibw_build: >-
+              cp311-win_arm64
+              cp312-win_arm64
+              cp313-win_arm64
+              cp314-win_arm64
+            cibw_build_315: cp315-win_arm64
+            cibw_archs_windows: ARM64
+            cibw_archs_macos: auto
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=OFF
+              cmake.define.ENABLE_ARM_DOTPROD=OFF
+            test_skip: ""
+            test_command: >-
+              python -m unittest discover -s {package}/tests -v &&
+              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
+            host_pythons: ""
+            uv_python: cpython-3.12-windows-aarch64-none
+
+          - name: macOS ARM64 CPython 3.8-3.15
+            os: macos-26
+            artifact: macos-arm64
+            cibw_build: >-
+              cp38-macosx_arm64
+              cp39-macosx_arm64
+              cp310-macosx_arm64
+              cp311-macosx_arm64
+              cp312-macosx_arm64
+              cp313-macosx_arm64
+              cp314-macosx_arm64
+            cibw_build_315: cp315-macosx_arm64
+            cibw_archs_windows: auto
+            cibw_archs_macos: arm64
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=OFF
+              cmake.define.ENABLE_ARM_DOTPROD=ON
+            # cibuildwheel cannot run the cp38 arm64 wheel (its Python 3.8 is x86_64);
+            # the next step tests it with an arm64 Python 3.8.
+            test_skip: "cp38-macosx_arm64"
+            test_command: >-
+              python -m unittest discover -s {package}/tests -v &&
+              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-metal
+              --cache-dir {project}/.hf-cache --expect-backend auto &&
+              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-cpu
+              --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir smoke-paths
+              --cache-dir {project}/.hf-cache
+            host_pythons: "3.8"
+            uv_python: cpython-3.12-macos-aarch64-none
+
+          - name: macOS x86_64 CPython 3.8-3.15
+            os: macos-15-intel
+            artifact: macos-x86_64
+            cibw_build: >-
+              cp38-macosx_x86_64
+              cp39-macosx_x86_64
+              cp310-macosx_x86_64
+              cp311-macosx_x86_64
+              cp312-macosx_x86_64
+              cp313-macosx_x86_64
+              cp314-macosx_x86_64
+            cibw_build_315: cp315-macosx_x86_64
+            cibw_archs_windows: auto
+            cibw_archs_macos: x86_64
+            cmake_config_settings: >-
+              cmake.define.ENABLE_CUDA=OFF
+              cmake.define.ENABLE_NATIVE_ARCH=OFF
+              cmake.define.ENABLE_X86_AVX2=ON
+              cmake.define.ENABLE_ARM_DOTPROD=OFF
+            test_skip: ""
+            test_command: >-
+              python -m unittest discover -s {package}/tests -v &&
+              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              --cache-dir {project}/.hf-cache --expect-backend cpu &&
+              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              --cache-dir {project}/.hf-cache
+            host_pythons: ""
+            uv_python: cpython-3.12-macos-x86_64-none
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # espeak-ng ignores a data path of 160 characters or more, and the default macOS temp
+      # dir makes the test venv's espeak-ng-data path 161 characters long.
+      - name: Use a short temp dir
+        if: runner.os == 'macOS'
+        run: mkdir -p /tmp/cibw && echo "TMPDIR=/tmp/cibw" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+
+      # Windows: the wheels bundle the MSVC C++ and OpenMP runtimes (msvcp140, vcomp140), which Python does not
+      # ship. They must come from the redistributable folder of the Visual Studio that builds the engine: left to
+      # search PATH, delvewheel bundled an msvcp140 (14.40) older than the toolset (14.51), which Microsoft does
+      # not support. The "Wheel list and contents" job checks the versions.
+      - name: Find the MSVC runtime of the build toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          $redist = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt").Trim()
+          $arch = if ("${{ matrix.cibw_archs_windows }}" -eq "ARM64") { "arm64" } else { "x64" }
+          $dirs = @(Get-ChildItem "$vs\VC\Redist\MSVC\$redist\$arch" -Directory | Where-Object Name -Match '^Microsoft\.VC\d+\.(CRT|OpenMP)$')
+          "Visual Studio $vs, tools $tools, redist $redist ($arch)"
+          if ($dirs.Count -ne 2) { throw "expected one CRT and one OpenMP folder, found: $($dirs.Name -join ', ')" }
+          foreach ($d in $dirs) { Get-ChildItem $d.FullName -Filter *.dll | ForEach-Object { "{0} {1}" -f $_.FullName, $_.VersionInfo.FileVersion } }
+          "KITTEN_MSVC_REDIST=$($dirs.FullName -join ';')" >> $env:GITHUB_ENV
+
+      # kitten_inference is a namespace package, so delvewheel must not create its __init__.py. delvewheel is pinned
+      # and runs on its own Python, so every wheel (cp38 included) is repaired by the same version.
+      - name: Build and test wheels
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
+          CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+            uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+          CIBW_TEST_COMMAND: ${{ matrix.test_command }}
+          CIBW_TEST_SKIP: ${{ matrix.test_skip }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same flags, repair and tests.
+      - name: Build and test the CPython 3.15 wheel
+        uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build_315 }}
+          CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
+          CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+            uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+          CIBW_TEST_COMMAND: ${{ matrix.test_command }}
+          CIBW_BUILD_VERBOSITY: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      - name: Test the cp38 arm64 wheel (Metal, then CPU)
+        if: matrix.host_pythons != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          for py in ${{ matrix.host_pythons }}; do
+            tag="cp${py/./}"
+            # A managed arm64 interpreter: the runner's own Python 3.8 is x86_64.
+            uv venv -q --managed-python -p "cpython-$py-macos-aarch64-none" "venv-$tag"
+            uv pip install -q -p "venv-$tag/bin/python" wheelhouse/*-"$tag"-"$tag"-*.whl
+            "venv-$tag/bin/python" -c "import platform; print(platform.python_version(), platform.machine())"
+            "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
+            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-metal-$tag" \
+              --cache-dir .hf-cache --expect-backend auto
+            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-cpu-$tag" \
+              --cache-dir .hf-cache --backend cpu --expect-backend cpu --compare-to "smoke-metal-$tag"
+          done
+
+      # One Python per platform: micro and mini (fp32 and int8; on Apple Silicon on Metal, then on the CPU,
+      # compared), two backends in one process, and several models generating at once from different threads.
+      # Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads (CPython 3.12)
+        shell: bash
+        run: |
+          set -uo pipefail
+          uv venv -q --managed-python -p "${{ matrix.uv_python }}" venv-312
+          py=venv-312/bin/python
+          [ -x "$py" ] || py=venv-312/Scripts/python.exe
+          uv pip install -q -p "$py" wheelhouse/*-cp312-cp312-*.whl
+          "$py" -c "import platform; print(platform.python_version(), platform.machine())"
+          status=0
+          run() {
+            echo "::group::$*"
+            "$py" tts-0.8/tests/audio_smoke.py --cache-dir .hf-cache "$@" \
+              || { echo "::error::audio_smoke $* failed (exit $?)"; status=1; }
+            echo "::endgroup::"
+          }
+          if [ "${{ matrix.artifact }}" = macos-arm64 ]; then
+            # int8 models default to the CPU on Apple Silicon; Metal stays available with backend="metal".
+            run --mode models --out-dir models-metal --backend metal --expect-backend metal
+            run --mode models --out-dir models-cpu --backend cpu --expect-backend cpu --compare-to models-metal
+          else
+            run --mode models --out-dir models --expect-backend cpu
+          fi
+          run --mode auto --out-dir auto
+          run --mode mix --out-dir mix
+          run --mode threads --out-dir threads
+          exit $status
+
+      - run: ls -l wheelhouse
+        shell: bash
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tts08-wheels-${{ matrix.artifact }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  android-wheels:
+    # Experimental and non-blocking. Built, not tested: cibuildwheel runs Android tests only in an
+    # emulator of the runner's own architecture (x86_64 here), and numpy, soundfile and
+    # espeakng_loader publish no Android wheels on PyPI.
+    name: Android ARM64 CPython 3.13 (experimental)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Pre-cache Android target Python
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/.cache/cibuildwheel"
+          curl --fail --location --retry 8 --retry-all-errors --retry-delay 10 \
+            --output "$HOME/.cache/cibuildwheel/python-3.13.12-aarch64-linux-android.tar.gz" \
+            "https://repo.maven.apache.org/maven2/com/chaquo/python/python/3.13.12/python-3.13.12-aarch64-linux-android.tar.gz"
+
+      - name: Build Android wheel
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_PLATFORM: android
+          CIBW_BUILD: cp313-android_arm64_v8a
+          CIBW_ARCHS_ANDROID: arm64_v8a
+          ANDROID_API_LEVEL: "24"
+          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
+          CIBW_CONFIG_SETTINGS_ANDROID: >-
+            cmake.define.ENABLE_CUDA=OFF
+            cmake.define.ENABLE_NATIVE_ARCH=OFF
+            cmake.define.ENABLE_X86_AVX2=OFF
+            cmake.define.ENABLE_ARM_DOTPROD=ON
+            cmake.define.ENABLE_OPENMP=OFF
+          CIBW_BUILD_VERBOSITY_ANDROID: "1"
+        with:
+          package-dir: tts-0.8
+          output-dir: wheelhouse
+
+      - run: ls -l wheelhouse
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tts08-wheels-android-arm64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  oldest-linux:
+    # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
+    # pip picks the wheel, as it would for a user.
+    name: Ubuntu 20.04, Python 3.8, x86_64
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: tts08-wheels-linux-x86_64-*
+          path: wheelhouse
+          merge-multiple: true
+
+      - name: Install
+        run: |
+          set -eu
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv > /dev/null
+          ldd --version | head -1
+          python3 -m venv venv
+          venv/bin/python -m pip install -q --upgrade pip
+          venv/bin/python -m pip install --find-links wheelhouse kitten-inference-tts08
+          venv/bin/python -m pip list | grep -i -E "kitten|espeak|phonemizer|soundfile|numpy|huggingface"
+
+      - name: Test
+        run: |
+          venv/bin/python -m unittest discover -s tts-0.8/tests -v
+          venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
+
+  lowest-deps:
+    name: Lowest dependencies, Linux x86_64, Python ${{ matrix.python }}
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.11", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: tts08-wheels-linux-x86_64-manylinux-2-28
+          path: wheelhouse
+
+      - name: Install the wheel with the oldest allowed dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="cp${PY/./}"
+          wheel=$(ls wheelhouse/*-"$tag"-"$tag"-*.whl)
+          # The wheel's own requirements, so the lower bounds come from the built metadata.
+          python3 - "$wheel" > requirements-lowest.txt <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              meta = next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))
+              for line in z.read(meta).decode().splitlines():
+                  if line.startswith("Requires-Dist:"):
+                      print(line.split(":", 1)[1].strip())
+          PY
+          cat requirements-lowest.txt
+          uv venv -q -p "$PY" venv
+          # Lowest version of each requirement that has a wheel for this Python.
+          uv pip install -p venv/bin/python --resolution lowest-direct --no-build "$wheel" -r requirements-lowest.txt
+          uv pip freeze -p venv/bin/python
+        env:
+          PY: ${{ matrix.python }}
+
+      - name: Test
+        run: |
+          venv/bin/python -m unittest discover -s tts-0.8/tests -v
+          venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
+
+  wheel-list:
+    name: Wheel list and contents
+    needs: [linux-wheels, desktop-wheels, android-wheels]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: tts08-wheels-*
+          path: dist
+          merge-multiple: true
+
+      # Besides the package files, this checks two things per wheel: every bundled library is named in the
+      # shipped NOTICE, and on Windows every bundled MSVC runtime DLL is at least as new as the toolset that
+      # linked _engine.pyd (Microsoft supports only that combination).
+      - name: List wheels and check their contents
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import hashlib, json, pathlib, re, struct, sys, zipfile
+
+          def linker_version(pe):  # PE optional header: MajorLinkerVersion, MinorLinkerVersion
+              off = struct.unpack_from("<I", pe, 0x3C)[0]
+              assert pe[off:off + 4] == b"PE\0\0"
+              return pe[off + 26], pe[off + 27]
+
+          def file_version(pe):  # VS_FIXEDFILEINFO: signature, struct version, FileVersionMS, FileVersionLS
+              i = pe.find(struct.pack("<I", 0xFEEF04BD))
+              ms, ls = struct.unpack_from("<II", pe, i + 8)
+              return ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF
+
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          print(f"{len(wheels)} wheels\n\n| wheel | bytes | sha256 |\n|---|---:|---|")
+          bad, libs_seen, runtimes, sboms = [], {}, [], {}
+          for w in wheels:
+              z = zipfile.ZipFile(w)
+              names = z.namelist()
+              if "kitten_inference/__init__.py" in names:
+                  bad.append(f"{w.name}: ships kitten_inference/__init__.py")
+              if not any(n.startswith("kitten_inference/tts08/_engine") for n in names):
+                  bad.append(f"{w.name}: no _engine extension")
+              if not any(n.endswith("model_defs/kitten_int8_15m_arch.json") for n in names):
+                  bad.append(f"{w.name}: no model_defs")
+              if "macosx" in w.name and "kitten_inference/tts08/metal_kernels.metallib" not in names:
+                  bad.append(f"{w.name}: no metallib")
+              notice = next((n for n in names if n.endswith(".dist-info/licenses/NOTICE")), None)
+              notice_text = z.read(notice).decode() if notice else ""
+              for lic in ("LICENSE", "licenses/pybind11.txt", "licenses/GPL-3.0.txt",
+                          "licenses/GCC-exception-3.1.txt", "licenses/libc++.txt"):
+                  if not any(n.endswith(".dist-info/licenses/" + lic) for n in names):
+                      bad.append(f"{w.name}: licence file {lic} missing")
+              libs = [n for n in names if re.match(r"[^/]+\.libs/|.*/\.dylibs/", n)
+                      and re.search(r"\.(dll|dylib|so)(\.\d+)*$", n)]
+              for lib in libs:
+                  base = re.sub(r"-[0-9a-f]{8,}.*$", "", lib.rsplit("/", 1)[-1])
+                  libs_seen.setdefault(base, set()).add(w.name.split("-")[-1][:-4])
+                  if base.lower() not in notice_text.lower():
+                      bad.append(f"{w.name}: bundled {lib} is not named in NOTICE")
+              if "-win_" in w.name:
+                  pyd = next(n for n in names if re.match(r"kitten_inference/tts08/_engine.*\.pyd$", n))
+                  need = linker_version(z.read(pyd))
+                  for dll in ("msvcp140", "vcomp140"):
+                      if not any(l.split("/")[-1].lower().startswith(dll) for l in libs):
+                          bad.append(f"{w.name}: {dll} not bundled")
+                  for lib in libs:
+                      if re.match(r"(msvcp|vcomp|vcruntime|concrt)\d", lib.split("/")[-1].lower()):
+                          have = file_version(z.read(lib))
+                          runtimes.append(f"{w.name}: {lib.split('/')[-1]} {'.'.join(map(str, have))}"
+                                          f" (_engine.pyd linker {need[0]}.{need[1]})")
+                          if have[:2] < need:
+                              bad.append(f"{w.name}: {lib} is {have}, older than the {need} toolset")
+              for n in names:
+                  if n.endswith(".cdx.json"):
+                      for c in json.loads(z.read(n)).get("components", []):
+                          sboms.setdefault(f"{c.get('name')} {c.get('version')}", set()).add(w.name.split("-")[-1][:-4])
+              print(f"| {w.name} | {w.stat().st_size} | {hashlib.sha256(w.read_bytes()).hexdigest()} |")
+          print("\nBundled libraries (all named in NOTICE unless listed below):")
+          for base, tags in sorted(libs_seen.items()):
+              print(f"- {base}: {', '.join(sorted(tags))}")
+          print("\nMSVC runtime versions:")
+          print("\n".join(f"- {r}" for r in runtimes))
+          print("\nauditwheel SBOM components:")
+          for comp, tags in sorted(sboms.items()):
+              print(f"- {comp}: {', '.join(sorted(tags))}")
+          print("\n" + ("\n".join(bad) if bad else "contents ok"))
+          sys.exit(1 if bad else 0)
+          PY
+
+  publish:
+    name: Publish to PyPI
+    needs: [linux-wheels, desktop-wheels, android-wheels, oldest-linux, lowest-deps, wheel-list]
+    if: >-
+      always() &&
+      github.repository == 'KittenML/kitten-inference' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.linux-wheels.result == 'success' &&
+      needs.desktop-wheels.result == 'success' &&
+      needs.oldest-linux.result == 'success' &&
+      needs.lowest-deps.result == 'success' &&
+      needs.wheel-list.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: tts08-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - run: ls -l dist
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

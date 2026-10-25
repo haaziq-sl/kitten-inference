@@ -1,5 +1,6 @@
 /*
- * python/bindings.cpp — pybind11 Python bindings for the cpp-convnet inference engine.
+ * python/bindings.cpp — pybind11 bindings for the Kitten TTS 0.8 inference engine,
+ * built as the extension module kitten_inference.tts08._engine.
  *
  * Exposed:
  *   set_backend(name)       → bool         select "cpu", "cuda", or "metal"
@@ -83,11 +84,12 @@ static int classifier_num_classes_hint(const InferenceModel& model) {
 
 // ── Module ───────────────────────────────────────────────────────────────────
 
-PYBIND11_MODULE(model_inference, m) {
+PYBIND11_MODULE(_engine, m) {
     m.doc() =
-        "Python bindings for the cpp-convnet inference engine.\n\n"
+        "Native engine for kitten_inference.tts08.\n\n"
         "Quick start::\n\n"
-        "    import numpy as np, model_inference as mi\n"
+        "    import numpy as np\n"
+        "    from kitten_inference.tts08 import _engine as mi\n"
         "    model = mi.InferenceModel('model_defs/resnet50_fp32_arch.json',\n"
         "                              'weights/resnet50_fp32.bin')\n"
         "    logits = model.forward(np.zeros((224, 224, 3), dtype=np.float32))\n";
@@ -166,7 +168,8 @@ PYBIND11_MODULE(model_inference, m) {
         "Loads a JSON architecture file and a W1X1 binary weights file,\n"
         "then exposes a ``forward()`` method for running inference.\n\n"
         "Example (single input, float32 model)::\n\n"
-        "    import numpy as np, model_inference as mi\n"
+        "    import numpy as np\n"
+        "    from kitten_inference.tts08 import _engine as mi\n"
         "    model = mi.InferenceModel('model_defs/resnet50_fp32_arch.json',\n"
         "                              'weights/resnet50_fp32.bin')\n"
         "    x = np.zeros((224, 224, 3), dtype=np.float32)\n"
