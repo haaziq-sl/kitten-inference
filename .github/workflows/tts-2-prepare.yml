@@ -93,6 +93,20 @@ jobs:
             --report "$RUNNER_TEMP/s3gen.convert.json" > /dev/null
           python -m kt2n_assets.convert_s3gen --verify "$RUNNER_TEMP/s3gen.kt2n" "$S3GEN_SRC" \
             --report "$RUNNER_TEMP/s3gen.verify.json" > /dev/null
+          python - <<'PY'
+          import json, os, struct
+          # the file's metadata (all but the tensor table), for diagnosing a digest difference between runners
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "s3gen.kt2n"), "rb") as f:
+              _, _, _, meta_off, meta_len, *_ = struct.unpack("<8sIIQQQQQ8s", f.read(64))
+              f.seek(meta_off)
+              meta = json.loads(f.read(meta_len))
+          meta.pop("tensors")
+          os.makedirs("digests", exist_ok=True)
+          with open("digests/s3gen-meta.json", "w") as out:
+              json.dump(meta, out, indent=1, sort_keys=True)
+          crlf = open("kt2n_assets/s3gen_tensors.tsv", "rb").read().count(b"\r\n")
+          print("s3gen_tensors.tsv CRLF line ends in this checkout:", crlf)
+          PY
       - name: Convert the speech model and the voices
         working-directory: tts-2/tools
         run: |
@@ -147,6 +161,8 @@ jobs:
                     **{name: sha(name) for name in names}}
           print(json.dumps(result, indent=1))
           os.makedirs("digests", exist_ok=True)
+          with open("tts-2/tools/digests/s3gen-meta.json") as f:
+              result["s3gen_meta"] = json.load(f)
           with open("digests/digest.json", "w") as f:
               json.dump(result, f)
           assert verify["ok"], verify["problems"]
@@ -183,6 +199,17 @@ jobs:
           print(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
               f.write(summary + "\n")
+          def flat(d, prefix=""):
+              out = {}
+              for k, v in d.items():
+                  out.update(flat(v, prefix + k + ".") if isinstance(v, dict) else {prefix + k: v})
+              return out
+          good = next((r for r in rows if r["s3gen.kt2n"] == expected["s3gen.kt2n"]), None)
+          for r in rows:
+              if good is not None and r["s3gen.kt2n"] != expected["s3gen.kt2n"]:
+                  a, b = flat(good["s3gen_meta"]), flat(r["s3gen_meta"])
+                  print(f"{r['os']} numpy {r['numpy']}: s3gen.kt2n metadata differs:",
+                        {k: (a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)})
           ok = len(rows) == 6
           for f in files:
               values = {r[f] for r in rows}
