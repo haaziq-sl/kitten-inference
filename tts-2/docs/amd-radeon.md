@@ -118,7 +118,7 @@ python -m pip install -r requirements-prepare.txt
 python tools/prepare_assets.py --out models/kitten-tts-2
 ```
 
-This took 4 to 7 minutes (most of it the download) and at most 3.7 GB of RAM in our tests (47-voice revision).
+This took 1 to 2 minutes on two home PCs, more than half of it for the download (about 4.6 GB), and at most 4 GB of RAM.
 
 ## 4. Generate speech
 
