@@ -164,6 +164,33 @@ def resolved_backend(backend):
     return "metal" if sys.platform == "darwin" and platform.machine() == "arm64" else "cpu"
 
 
+def engine_load_with_default_c_locale(root, spec):
+    """Windows: the engine itself must open non-ASCII paths in the system's code page.
+
+    Through KittenTTS this is hidden: espeak-ng, which phonemizer starts before the engine loads, switches the
+    process's C locale to UTF-8, and then even narrow fopen() reads UTF-8 paths. So load the same files with the
+    engine directly while the C runtime uses the default locale (for example English_United States.1252).
+    """
+    import ctypes
+
+    ucrt = ctypes.CDLL("ucrtbase")
+    ucrt.setlocale.restype = ctypes.c_char_p
+    ucrt.setlocale.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    lc_ctype = 2
+    after_phonemizer = ucrt.setlocale(lc_ctype, None)
+    ucrt.setlocale(lc_ctype, b"")
+    try:
+        default = ucrt.setlocale(lc_ctype, None)
+        _engine.InferenceModel(str(root / spec["arch_file"]), str(root / spec["weights_file"]))
+    finally:
+        ucrt.setlocale(lc_ctype, after_phonemizer)
+    return {
+        "windows_ansi_code_page": ctypes.windll.kernel32.GetACP(),
+        "c_locale_after_phonemizer": after_phonemizer.decode(),
+        "c_locale_for_direct_engine_load": default.decode(),
+    }
+
+
 def unicode_path_check(cache_dir, backend):
     """Load nano from a folder whose path has non-ASCII characters; it must speak like the built-in nano."""
     gm = importlib.import_module("kitten_inference.tts08.get_model")
@@ -199,7 +226,10 @@ def unicode_path_check(cache_dir, backend):
         want = as_audio(builtin.generate(TEXT, voice="Bella"))
         validate_audio(got, f"nano from {root}")
         diff = check_same(f"nano from {root}", got, want, exact=resolved_backend(backend) == "cpu")
-        return [{"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}]
+        result = {"check": "unicode path", "path": str(root), "samples": int(len(got)), "max_diff": diff}
+        if sys.platform == "win32":
+            result.update(engine_load_with_default_c_locale(root, spec))
+        return [result]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
