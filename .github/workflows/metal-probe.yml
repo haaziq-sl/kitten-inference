@@ -1,0 +1,63 @@
+# Measurement only (this branch is never merged): Metal output with two Metal and two CPU threads, old vs new engine
+# gate, same runner, same tts08 wheel (the macOS arm64 wheels of run 40230647099).
+name: metal probe
+on:
+  push:
+    branches: ["ws/integ-metal-probe"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: tts08-wheels-macos-arm64
+          path: wheelhouse
+          run-id: 40230647099
+          github-token: ${{ github.token }}
+      - name: Install
+        run: |
+          python -m venv v
+          v/bin/python -m pip install -q wheelhouse/*-cp312-cp312-*.whl
+          site=$(v/bin/python -c "import kitten_inference.tts08, os; print(os.path.dirname(kitten_inference.tts08.__file__))")
+          echo "SITE=$site" >> "$GITHUB_ENV"
+          cp "$site/cpp_model.py" new_cpp_model.py
+          git show 3528dda:tts-0.8/kitten_inference/tts08/cpp_model.py > old_cpp_model.py
+          diff -q new_cpp_model.py old_cpp_model.py || true
+          sysctl -n machdep.cpu.brand_string; system_profiler SPDisplaysDataType | grep -E "Chipset|Metal" | head -3
+      - name: A/B (6 iterations per arm, interleaved)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            for arm in old new new-keep; do
+              src=new_cpp_model.py; [ "$arm" = old ] && src=old_cpp_model.py
+              cp "$src" "$SITE/cpp_model.py"
+              v/bin/python .github/probe/metal_probe.py "$arm" "$i" 2>/dev/null | tee -a probe.jsonl
+            done
+          done
+      - name: Summary
+        run: |
+          python3 - <<'PY'
+          import json, collections
+          rows = [json.loads(l) for l in open("probe.jsonl")]
+          by = collections.defaultdict(list)
+          for r in rows:
+              by[(r["arm"], r["backend"])].append(r)
+          for (arm, backend), rs in sorted(by.items()):
+              diffs = [r["max_diff"] for r in rs if r["max_diff"] is not None]
+              print(f"{arm:9s} {backend:5s} calls {len(rs):3d}  wrong length {sum(not r['same_length'] for r in rs)}  "
+                    f"exact {sum(d == 0.0 for d in diffs)}  max diff {max(diffs):.4g}  over 0.05 {sum(d > 0.05 for d in diffs)}  "
+                    f"max rms {max(r['rms_ratio'] for r in rs if r['rms_ratio'] is not None):.3g}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metal-probe
+          path: probe.jsonl
