@@ -642,7 +642,8 @@ jobs:
                           "licenses/GCC-exception-3.1.txt", "licenses/libc++.txt"):
                   if not any(n.endswith(".dist-info/licenses/" + lic) for n in names):
                       bad.append(f"{w.name}: licence file {lic} missing")
-              libs = [n for n in names if re.match(r"[^/]+\.libs/|.*/\.dylibs/", n) and not n.endswith("/")]
+              libs = [n for n in names if re.match(r"[^/]+\.libs/|.*/\.dylibs/", n)
+                      and re.search(r"\.(dll|dylib|so)(\.\d+)*$", n)]
               for lib in libs:
                   base = re.sub(r"-[0-9a-f]{8,}.*$", "", lib.rsplit("/", 1)[-1])
                   libs_seen.setdefault(base, set()).add(w.name.split("-")[-1][:-4])
