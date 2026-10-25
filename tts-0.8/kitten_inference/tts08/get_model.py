@@ -6,7 +6,8 @@ from .cpp_model import KittenTTS_1_Cpp
 from .preprocess import normalize_text
 
 
-DEFAULT_MODEL = "KittenML/kitten-tts-nano-0.1"
+# kittenml's default model (KittenTTS() there loads nano 0.8, with its speed priors).
+DEFAULT_MODEL = "KittenML/kitten-tts-nano-0.8"
 NATIVE_CONFIG_TYPES = {"CPP1", "NATIVE1", "MODEL_INFERENCE"}
 NATIVE_WEIGHTS_REPO = "KittenML/meownn-models"
 # Built-in models always load this exact revision of the native weights.
@@ -44,10 +45,12 @@ DEFAULT_VOICE_ALIASES = {
     "Leo": "expr-voice-5-m",
 }
 BUILTIN_NATIVE_MODELS = {
+    # An earlier name for the nano model: the same 0.8 weights and voices, so the same speed priors.
     "kittenml/kitten-tts-nano-0.1": {
         "arch_file": "kitten_fp32_15m_arch.json",
         "weights_file": "kitten_fp32_15m.bin",
         "voice_dir": "voices_kitten_15m",
+        "speed_priors": NANO_08_SPEED_PRIORS,
     },
     "kittenml/kitten-tts-nano-0.8": {
         "arch_file": "kitten_fp32_15m_arch.json",

@@ -83,6 +83,11 @@ class _EngineGate:
     Metal backend records all GPU work into one shared command buffer. So CPU calls may overlap (one model
     per thread), while a Metal call, or a call on another backend than the running ones, waits until the
     engine is idle. Each call sets its own model's backend first.
+
+    Calls get in in the order they arrive: a call waits while an earlier one is still waiting. So a Metal call
+    is not passed by CPU calls that come after it, and CPU calls are not held back for ever by Metal calls that
+    keep queuing (two threads generating on Metal always have one call waiting); CPU calls that arrive one
+    after another still run together.
     """
 
     def __init__(self):
@@ -90,37 +95,48 @@ class _EngineGate:
         self._running = 0
         self._exclusive = False
         self._backend = None
-        self._waiting_exclusive = 0
+        self._next_ticket = 0  # handed to each arriving call
+        self._serving = 0  # the earliest ticket still waiting
+        self._abandoned = set()  # tickets whose wait was interrupted
 
     def _must_wait(self, backend, exclusive):
-        if exclusive:
-            return self._running > 0
-        # A CPU call joins running CPU calls, but lets a waiting exclusive call go first.
-        return self._waiting_exclusive > 0 or (
-            self._running > 0 and (self._exclusive or self._backend != backend)
-        )
+        if self._running == 0:
+            return False
+        return exclusive or self._exclusive or self._backend != backend
+
+    def _advance(self):
+        self._serving += 1
+        while self._serving in self._abandoned:
+            self._abandoned.discard(self._serving)
+            self._serving += 1
+        self._cond.notify_all()
 
     @contextlib.contextmanager
     def use(self, engine, backend):
         exclusive = backend != "cpu"
         with self._cond:
-            if exclusive:
-                self._waiting_exclusive += 1
+            ticket = self._next_ticket
+            self._next_ticket += 1
             try:
-                while self._must_wait(backend, exclusive):
+                while ticket != self._serving or self._must_wait(backend, exclusive):
                     self._cond.wait()
+            except BaseException:  # e.g. KeyboardInterrupt while waiting: give up the place in the queue
+                if ticket == self._serving:
+                    self._advance()
+                else:
+                    self._abandoned.add(ticket)
+                raise
+            try:
+                if not self._running:
+                    if not engine.set_backend(backend):
+                        raise ValueError(
+                            f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
+                        )
+                    self._backend = backend
+                    self._exclusive = exclusive
+                self._running += 1
             finally:
-                if exclusive:
-                    self._waiting_exclusive -= 1
-            if not self._running:
-                if not engine.set_backend(backend):
-                    self._cond.notify_all()
-                    raise ValueError(
-                        f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
-                    )
-                self._backend = backend
-                self._exclusive = exclusive
-            self._running += 1
+                self._advance()
         try:
             yield
         finally:
@@ -192,6 +208,9 @@ class KittenTTS_1_Cpp:
             language="en-us", preserve_punctuation=True, with_stress=True
         )
         self.text_cleaner = TextCleaner()
+        # One call at a time per model: the engine model's forward reuses its own buffers and speed setting, and
+        # espeak (this model's phonemizer) is not thread-safe. Different models still run at the same time.
+        self._lock = threading.Lock()
 
         self._voices_npz = None
         self._voice_packs = {}
@@ -311,17 +330,18 @@ class KittenTTS_1_Cpp:
         voice = self._resolve_voice(voice)
         effective_speed = self._effective_speed(voice, speed)
 
-        ids = self._phoneme_ids(text)
-        style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
-        with _ENGINE_GATE.use(self._mi, self.backend):
-            self._set_native_speed(effective_speed)
-            outputs = self.session.forward(
-                {
-                    "phoneme_ids": ids,
-                    "style_dec": style_dec,
-                    "style_pred": style_pred,
-                }
-            )
+        with self._lock:
+            ids = self._phoneme_ids(text)
+            style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
+            with _ENGINE_GATE.use(self._mi, self.backend):
+                self._set_native_speed(effective_speed)
+                outputs = self.session.forward(
+                    {
+                        "phoneme_ids": ids,
+                        "style_dec": style_dec,
+                        "style_pred": style_pred,
+                    }
+                )
         audio = np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
         return audio[:-TAIL_TRIM_SAMPLES]
 

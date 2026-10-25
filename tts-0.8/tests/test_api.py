@@ -3,6 +3,7 @@ import importlib
 import importlib.metadata as metadata
 import re
 import threading
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -53,8 +54,12 @@ class ApiTests(unittest.TestCase):
             priors = gm.BUILTIN_NATIVE_MODELS[f"kittenml/kitten-tts-{name}"]["speed_priors"]
             self.assertEqual(priors["expr-voice-4-m"], 0.9)
             self.assertEqual(priors["expr-voice-2-f"], 0.8)
-        for name in ("micro-0.8", "mini-0.8", "nano-0.1"):
+        for name in ("micro-0.8", "mini-0.8"):
             self.assertNotIn("speed_priors", gm.BUILTIN_NATIVE_MODELS[f"kittenml/kitten-tts-{name}"])
+        # The default model is kittenml's default, nano 0.8 with its priors; the nano-0.1 name loads the same
+        # weights, so it gets the same priors.
+        self.assertEqual(gm.DEFAULT_MODEL, "KittenML/kitten-tts-nano-0.8")
+        self.assertIs(gm.BUILTIN_NATIVE_MODELS["kittenml/kitten-tts-nano-0.1"]["speed_priors"], gm.NANO_08_SPEED_PRIORS)
         self.assertEqual((cm.END_TOKEN, cm.TAIL_TRIM_SAMPLES), (10, 5000))
         stub = type("Stub", (), {})()
         stub.phonemizer = phonemizer.backend.EspeakBackend(
@@ -143,6 +148,73 @@ class EngineGateTests(unittest.TestCase):
         cpu.join(10)
         metal.join(10)
         self.assertEqual(self.engine.calls, ["cpu", "metal"])
+
+    def test_cpu_calls_get_in_while_two_threads_keep_calling_metal(self):
+        # Two threads generating on Metal always have one Metal call waiting; a CPU call must still get its turn.
+        stop = threading.Event()
+
+        def metal_loop():
+            while not stop.is_set():
+                with self.gate.use(self.engine, "metal"):
+                    time.sleep(0.005)
+
+        metals = [threading.Thread(target=metal_loop, daemon=True) for _ in range(2)]
+        for t in metals:
+            t.start()
+        time.sleep(0.1)
+        cpu_inside = threading.Event()
+        cpu = self.run_in_thread("cpu", cpu_inside)
+        try:
+            self.assertTrue(cpu_inside.wait(5), "a CPU call waited while two threads kept calling Metal")
+        finally:
+            stop.set()
+            for t in metals:
+                t.join(10)
+            cpu.join(10)
+
+    def test_a_waiting_metal_call_goes_before_later_cpu_calls(self):
+        inside, release = threading.Event(), threading.Event()
+        cpu1 = self.run_in_thread("cpu", inside, release)
+        self.assertTrue(inside.wait(10))
+        metal_inside, metal_release = threading.Event(), threading.Event()
+        metal = self.run_in_thread("metal", metal_inside, metal_release)
+        time.sleep(0.2)  # the Metal call is waiting for the running CPU call
+        cpu2_inside = threading.Event()
+        cpu2 = self.run_in_thread("cpu", cpu2_inside)
+        self.assertFalse(cpu2_inside.wait(0.3), "a later CPU call passed the waiting Metal call")
+        release.set()
+        self.assertTrue(metal_inside.wait(10))
+        self.assertFalse(cpu2_inside.is_set())
+        metal_release.set()
+        self.assertTrue(cpu2_inside.wait(10))
+        for t in (cpu1, metal, cpu2):
+            t.join(10)
+        self.assertEqual(self.engine.calls, ["cpu", "metal", "cpu"])
+
+    def test_an_interrupted_wait_gives_up_its_place(self):
+        inside, release = threading.Event(), threading.Event()
+        cpu = self.run_in_thread("cpu", inside, release)
+        self.assertTrue(inside.wait(10))
+
+        def interrupted(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        real_wait, self.gate._cond.wait = self.gate._cond.wait, interrupted
+        with self.assertRaises(KeyboardInterrupt):
+            with self.gate.use(self.engine, "metal"):
+                pass
+        self.gate._cond.wait = real_wait
+        release.set()
+        cpu.join(10)
+        done = threading.Event()
+        later = threading.Thread(target=lambda: self._use_and_set("metal", done), daemon=True)
+        later.start()
+        self.assertTrue(done.wait(5), "the interrupted call's place blocked the calls after it")
+        later.join(10)
+
+    def _use_and_set(self, backend, event):
+        with self.gate.use(self.engine, backend):
+            event.set()
 
     def test_an_unavailable_backend_raises_and_frees_the_gate(self):
         with self.assertRaises(ValueError):

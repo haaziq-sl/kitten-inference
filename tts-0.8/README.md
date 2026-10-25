@@ -47,7 +47,7 @@ Options:
 - `tts.generate_stream(text, voice=...)`: yields the audio one sentence at a time.
 - `KittenTTS(..., backend="cpu")` or `"metal"`: by default Apple Silicon uses Metal for the full-size
   models and the CPU for the int8 models. On the CPU, models in different threads generate at the same
-  time; Metal runs one call at a time.
+  time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
 
 Audio can differ slightly between: Metal and the CPU (clip lengths within about 3.5%), and, for the int8
 models, different CPU types (within about 2%).
