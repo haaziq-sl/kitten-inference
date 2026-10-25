@@ -1,7 +1,7 @@
 """Measurement only (branch ws/integ-metal-probe, never merged): how far Metal output moves from the same model run
 alone when two Metal threads and two CPU threads generate at once, per engine gate version.
 
-    python metal_probe.py ARM ITERATION   (ARM: old | new | new-keep; run with the matching cpp_model.py installed)
+    python metal_probe.py ARM ITERATION   (ARM: old | new | fixed | new-keep; run with the matching cpp_model.py installed)
 
 new-keep keeps every thread's model alive until all threads end (no model is destroyed while another thread's call
 runs). Prints one JSON line per Metal thread and round: max sample difference and RMS ratio vs the reference."""

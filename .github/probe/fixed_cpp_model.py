@@ -1,0 +1,388 @@
+import contextlib
+import json
+import os
+import platform
+import sys
+import threading
+
+import espeakng_loader
+import numpy as np
+import phonemizer
+import soundfile as sf
+from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
+from .preprocess import TextPreprocessor, chunk_text, normalize_text
+
+
+EspeakWrapper.set_library(espeakng_loader.get_library_path())
+os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
+
+SAMPLE_RATE = 24000
+STYLE_DIM = 256
+# The reference ONNX path (kittenml 0.9.6) ends the ids with "…" (10) then the pad (0), and drops the last
+# 5000 samples of every chunk. Both are copied here so the two paths give the same audio length.
+END_TOKEN = 10
+TAIL_TRIM_SAMPLES = 5000
+DEFAULT_VOICE = "expr-voice-5-m"
+DEFAULT_NATIVE_VOICE = "expr-voice-2-f"
+
+DEFAULT_VOICE_ALIASES = {
+    "Bella": "expr-voice-2-f",
+    "Jasper": "expr-voice-2-m",
+    "Luna": "expr-voice-3-f",
+    "Bruno": "expr-voice-3-m",
+    "Rosie": "expr-voice-4-f",
+    "Hugo": "expr-voice-4-m",
+    "Kiki": "expr-voice-5-f",
+    "Leo": "expr-voice-5-m",
+}
+
+
+def basic_english_tokenize(text):
+    """Basic English tokenizer that splits on whitespace and punctuation."""
+    import re
+
+    return re.findall(r"\w+|[^\w\s]", text)
+
+
+class TextCleaner:
+    def __init__(self, dummy=None):
+        _pad = "$"
+        _punctuation = ';:,.!?¡¿—…"«»"" '
+        _letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        _letters_ipa = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+
+        symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
+        self.word_index_dictionary = {symbols[i]: i for i in range(len(symbols))}
+
+    def __call__(self, text):
+        indexes = []
+        for char in text:
+            try:
+                indexes.append(self.word_index_dictionary[char])
+            except KeyError:
+                pass
+        return indexes
+
+
+def _import_engine():
+    try:
+        from . import _engine
+    except ImportError as exc:
+        raise ImportError(
+            "The native engine (kitten_inference.tts08._engine) is missing or does not match "
+            'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
+        ) from exc
+    return _engine
+
+
+class _EngineGate:
+    """Lets engine calls run at the same time only when that is safe.
+
+    The engine has one process-wide backend, which a model's kernels use while it loads and runs, and the
+    Metal backend records all GPU work into one shared command buffer. So CPU calls may overlap (one model
+    per thread), while a Metal call, or a call on another backend than the running ones, waits until the
+    engine is idle. Each call sets its own model's backend first.
+
+    Calls get in in the order they arrive: a call waits while an earlier one is still waiting. So a Metal call
+    is not passed by CPU calls that come after it, and CPU calls are not held back for ever by Metal calls that
+    keep queuing (two threads generating on Metal always have one call waiting); CPU calls that arrive one
+    after another still run together.
+
+    Engine models are also dropped through the gate (dispose), only while no engine call runs: a model freed
+    during another model's Metal call changed that call's output (on an Apple M1, 1 to 5 of 24 Metal calls by
+    more than 0.05 with two Metal and two CPU threads; none with every model kept alive).
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._running = 0
+        self._exclusive = False
+        self._backend = None
+        self._next_ticket = 0  # handed to each arriving call
+        self._serving = 0  # the earliest ticket still waiting
+        self._abandoned = set()  # tickets whose wait was interrupted
+        self._disposals = []  # engine models to drop once no call runs
+
+    def _must_wait(self, backend, exclusive):
+        if self._running == 0:
+            return False
+        return exclusive or self._exclusive or self._backend != backend
+
+    def dispose(self, holder, key):
+        """Drops holder[key] (an engine model) now if no engine call runs, else when the last running one ends.
+        Only the list here holds the model afterwards, so it is freed under the gate's lock."""
+        with self._cond:
+            self._disposals.append(holder.pop(key))
+            if self._running == 0:
+                self._drain()
+
+    def _drain(self):
+        # The caller holds self._cond and no call runs: no call can start while the models are freed.
+        while self._disposals:
+            self._disposals.pop()
+
+    def _advance(self):
+        self._serving += 1
+        while self._serving in self._abandoned:
+            self._abandoned.discard(self._serving)
+            self._serving += 1
+        self._cond.notify_all()
+
+    @contextlib.contextmanager
+    def use(self, engine, backend):
+        exclusive = backend != "cpu"
+        with self._cond:
+            ticket = self._next_ticket
+            self._next_ticket += 1
+            try:
+                while ticket != self._serving or self._must_wait(backend, exclusive):
+                    self._cond.wait()
+            except BaseException:  # e.g. KeyboardInterrupt while waiting: give up the place in the queue
+                if ticket == self._serving:
+                    self._advance()
+                else:
+                    self._abandoned.add(ticket)
+                raise
+            try:
+                if not self._running:
+                    if not engine.set_backend(backend):
+                        raise ValueError(
+                            f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
+                        )
+                    self._backend = backend
+                    self._exclusive = exclusive
+                self._running += 1
+            finally:
+                self._advance()
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._running -= 1
+                if self._running == 0:
+                    self._drain()
+                self._cond.notify_all()
+
+
+_ENGINE_GATE = _EngineGate()
+
+
+def _has_int8_layers(arch_path):
+    # int8 models use *_int8 layers (conv1d_int8, seqgemm_int8, attention_int8).
+    with open(arch_path, encoding="utf-8") as f:
+        nodes = json.load(f).get("nodes", [])
+    return any(str(node.get("op", "")).endswith("_int8") for node in nodes)
+
+
+def _default_backend(engine, arch_path):
+    # Apple Silicon: Metal when a Metal device is available, except for int8 models, which run several times
+    # faster on the CPU than on Metal. Everywhere else: the CPU.
+    if sys.platform == "darwin" and platform.machine() == "arm64" and not _has_int8_layers(arch_path):
+        try:
+            with _ENGINE_GATE.use(engine, "metal"):
+                return "metal"
+        except ValueError:
+            pass
+    return "cpu"
+
+
+def _coerce_voice_pack(values):
+    pack = np.asarray(values, dtype=np.float32)
+    if pack.size % STYLE_DIM != 0:
+        raise ValueError(
+            f"Voice style data has {pack.size} floats, which is not divisible by {STYLE_DIM}."
+        )
+    return pack.reshape(-1, STYLE_DIM)
+
+
+def _load_voice_bin(path):
+    return _coerce_voice_pack(np.fromfile(path, dtype=np.float32))
+
+
+class KittenTTS_1_Cpp:
+    def __init__(
+        self,
+        arch_path,
+        weights_path,
+        voices_path=None,
+        voice_paths=None,
+        speed_priors=None,
+        voice_aliases=None,
+        backend=None,
+        style_index="token_count",
+        sample_rate=SAMPLE_RATE,
+    ):
+        """Initialize KittenTTS with the native engine."""
+        self.arch_path = arch_path
+        self.weights_path = weights_path
+        self.sample_rate = sample_rate
+        self.style_index = style_index
+
+        aliases = dict(DEFAULT_VOICE_ALIASES)
+        aliases.update(voice_aliases or {})
+        self.voice_aliases = aliases
+        self.speed_priors = speed_priors or {}
+        self.preprocessor = TextPreprocessor(remove_punctuation=False)
+        self.phonemizer = phonemizer.backend.EspeakBackend(
+            language="en-us", preserve_punctuation=True, with_stress=True
+        )
+        self.text_cleaner = TextCleaner()
+        # One call at a time per model: the engine model's forward reuses its own buffers and speed setting, and
+        # espeak (this model's phonemizer) is not thread-safe. Different models still run at the same time.
+        self._lock = threading.Lock()
+
+        self._voices_npz = None
+        self._voice_packs = {}
+        self._load_voices(voices_path, voice_paths or {})
+        if self._voices_npz is None and not self._voice_packs:
+            raise ValueError(
+                "Native KittenTTS config must provide voices as a .npz file or voice_files."
+            )
+
+        self.available_voices = sorted(self._available_voice_names())
+        self.all_voice_names = [
+            alias for alias, target in self.voice_aliases.items()
+            if target in self.available_voices
+        ] or self.available_voices
+
+        self._mi = _import_engine()
+        if backend == "amd_gpu":
+            raise ValueError("The native engine does not support backend='amd_gpu'.")
+        self.backend = backend or _default_backend(self._mi, arch_path)
+        # The engine allocates and uploads the weights for the backend that is set while the model loads.
+        with _ENGINE_GATE.use(self._mi, self.backend):
+            self.session = self._mi.InferenceModel(arch_path, weights_path)
+
+    def __del__(self):
+        # The engine model is freed only while no engine call runs (see _EngineGate).
+        gate = _ENGINE_GATE
+        if gate is not None and "session" in self.__dict__:
+            try:
+                gate.dispose(self.__dict__, "session")
+            except Exception:  # interpreter shutdown: nothing else runs
+                pass
+
+    def _load_voices(self, voices_path, voice_paths):
+        if voices_path:
+            if str(voices_path).endswith(".npz"):
+                self._voices_npz = np.load(voices_path)
+            else:
+                self._voice_packs[DEFAULT_NATIVE_VOICE] = _load_voice_bin(voices_path)
+
+        for voice, path in voice_paths.items():
+            self._voice_packs[voice] = _load_voice_bin(path)
+
+    def _available_voice_names(self):
+        names = set(self._voice_packs.keys())
+        if self._voices_npz is not None:
+            names.update(self._voices_npz.files)
+        return names
+
+    def _resolve_voice(self, voice):
+        voice = self.voice_aliases.get(voice, voice)
+        if voice not in self.available_voices:
+            choices = sorted(set(self.all_voice_names) | set(self.available_voices))
+            raise ValueError(f"Voice {voice!r} not available. Choose from: {choices}")
+        return voice
+
+    def _phoneme_ids(self, text):
+        phonemes_list = self.phonemizer.phonemize([text])
+        phonemes = basic_english_tokenize(phonemes_list[0])
+        phonemes = " ".join(phonemes)
+        tokens = self.text_cleaner(phonemes)
+        tokens.insert(0, 0)
+        tokens.append(END_TOKEN)
+        tokens.append(0)
+        return np.asarray(tokens, dtype=np.float32)
+
+    def _style_row(self, text, n_ids, rows):
+        if rows <= 0:
+            return 0
+        if self.style_index == "text_length":
+            return min(len(text), rows - 1)
+        if self.style_index == "phoneme_count":
+            return min(max(0, n_ids - 2), rows - 1)
+        if self.style_index != "token_count":
+            raise ValueError(
+                "style_index must be one of: 'token_count', 'phoneme_count', 'text_length'."
+            )
+        return min(max(0, n_ids), rows - 1)
+
+    def _style_for_voice(self, voice, text, n_ids):
+        if voice in self._voice_packs:
+            pack = self._voice_packs[voice]
+        elif self._voices_npz is not None and voice in self._voices_npz:
+            pack = _coerce_voice_pack(self._voices_npz[voice])
+        else:
+            raise ValueError(f"Voice {voice!r} has no style data.")
+
+        row = self._style_row(text, n_ids, pack.shape[0])
+        style = pack[row]
+        return style[:128].copy(), style[128:].copy()
+
+    def _effective_speed(self, voice, speed):
+        return float(speed) * float(self.speed_priors.get(voice, 1.0))
+
+    def _set_native_speed(self, speed):
+        speed = float(speed)
+        if not np.isfinite(speed) or speed <= 0.0:
+            raise ValueError("speed must be a positive finite value")
+
+        set_speed = getattr(self.session, "set_speed", None)
+        if set_speed is None:
+            if np.isclose(speed, 1.0):
+                return
+            raise RuntimeError("This build of the native engine does not support speed control.")
+        set_speed(speed)
+
+    def normalize_text(self, text, locale="en-US", return_spans=False):
+        return normalize_text(text, locale=locale, return_spans=return_spans)
+
+    def generate(self, text, voice=DEFAULT_VOICE, speed=1.0, clean_text=True):
+        out_chunks = []
+        if clean_text:
+            text = self.preprocessor(text)
+        for text_chunk in chunk_text(text):
+            out_chunks.append(self.generate_single_chunk(text_chunk, voice, speed))
+        if not out_chunks:
+            return np.asarray([], dtype=np.float32)
+        return np.concatenate(out_chunks, axis=-1)
+
+    def generate_stream(self, text, voice=DEFAULT_VOICE, speed=1.0, clean_text=True):
+        if clean_text:
+            text = self.preprocessor(text)
+        for text_chunk in chunk_text(text):
+            yield self.generate_single_chunk(text_chunk, voice, speed)
+
+    def generate_single_chunk(self, text, voice=DEFAULT_VOICE, speed=1.0):
+        voice = self._resolve_voice(voice)
+        effective_speed = self._effective_speed(voice, speed)
+
+        with self._lock:
+            ids = self._phoneme_ids(text)
+            style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
+            with _ENGINE_GATE.use(self._mi, self.backend):
+                self._set_native_speed(effective_speed)
+                outputs = self.session.forward(
+                    {
+                        "phoneme_ids": ids,
+                        "style_dec": style_dec,
+                        "style_pred": style_pred,
+                    }
+                )
+        audio = np.asarray(outputs["t_audio"], dtype=np.float32).reshape(-1)
+        return audio[:-TAIL_TRIM_SAMPLES]
+
+    def generate_to_file(
+        self,
+        text,
+        output_path,
+        voice=DEFAULT_VOICE,
+        speed=1.0,
+        sample_rate=SAMPLE_RATE,
+        clean_text=True,
+    ):
+        audio = self.generate(text, voice, speed, clean_text=clean_text)
+        sf.write(output_path, audio, sample_rate)
+        print(f"Audio saved to {output_path}")
