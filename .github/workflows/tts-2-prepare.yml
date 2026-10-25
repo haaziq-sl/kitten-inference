@@ -225,7 +225,7 @@ jobs:
                   a, b = flat(good["s3gen_meta"]), flat(r["s3gen_meta"])
                   print(f"{r['os']} python {r['python']} numpy {r['numpy']}: s3gen.kt2n metadata differs:",
                         {k: (a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)})
-          runners = 10  # the convert matrix
+          runners = 12  # the convert matrix
           ok = len(rows) == runners
           for f in files:
               values = {r[f] for r in rows}

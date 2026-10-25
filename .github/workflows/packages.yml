@@ -155,8 +155,9 @@ jobs:
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders and a local index with 0.1.x, as on PyPI)
-        run: python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps --old stubs-old \
-          --version "${{ env.UMBRELLA_VERSION }}"
+        run: >-
+          python umbrella/tests/check_extras.py --upgrade-pip --find-links dist --find-links stubs --find-links deps
+          --old stubs-old --version "${{ env.UMBRELLA_VERSION }}"
       - name: Install kitten-inference[tts-2] for the unit tests (on macOS, which has no engine wheel, the two packages)
         shell: bash
         run: |
