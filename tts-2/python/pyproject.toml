@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kitten-inference-tts2"
+version = "0.2.0"
+description = "Kitten TTS 2 text-to-speech on NVIDIA and AMD GPUs: Python API and kitten-tts2 command"
+readme = "README.md"
+license = "Apache-2.0 AND MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "KittenML" }]
+keywords = ["tts", "text-to-speech", "speech", "kitten-tts", "cuda", "rocm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+# Runtime and first-use model preparation (no torch). The engine itself comes from kitten-inference-tts2-cu12 or
+# kitten-inference-tts2-rocm, installed with the umbrella's extras: pip install "kitten-inference[tts-2]".
+dependencies = [
+    "numpy>=1.24",
+    "huggingface-hub>=0.25,<2",
+    "tokenizers>=0.22,<0.23",
+    "filelock>=3.12",
+]
+
+[project.scripts]
+kitten-tts2 = "kitten_inference.tts2._cli:main"
+
+[project.urls]
+Homepage = "https://github.com/KittenML/kitten-inference"
+Source = "https://github.com/KittenML/kitten-inference/tree/main/tts-2"
+Issues = "https://github.com/KittenML/kitten-inference/issues"
+
+[tool.hatch.build.targets.wheel]
+# kitten_inference/__init__.py belongs to the umbrella distribution (kitten-inference): only tts2/ ships here.
+only-include = ["kitten_inference/tts2"]
+exclude = ["__pycache__", "*.pyc"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["kitten_inference/tts2", "tests", "hatch_build.py", "README.md", "LICENSE"]
+exclude = ["__pycache__", "*.pyc"]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "hatch_build.py"
