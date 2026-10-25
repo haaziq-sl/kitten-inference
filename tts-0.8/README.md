@@ -36,8 +36,8 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
 (116, 71 and 19 MB). They are faster only on Linux ARM64 and on the CPU of Apple Silicon Macs. Elsewhere
-they are slower than the full-size weights: 1.3 to 2 times on x86_64, about 2.4 times with Metal and
-about 8 times on Windows ARM64.
+they are slower than the full-size weights: 1.3 to 2 times on x86_64, about 3.5 times with Metal and
+about 8 times on Windows ARM64. On a Mac, run them with `backend="cpu"`.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -71,8 +71,8 @@ models, different CPU types (within about 2%).
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
-  CPU core, about 3 times slower than 4 cores of the same CPU (measured with the Linux build). This
-  affects macOS Intel, where the CPU is the only backend, and `backend="cpu"` on Apple Silicon.
+  CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
+  macOS Intel, where the CPU is the only backend, and `backend="cpu"` on Apple Silicon.
 
 ## Upgrading from kitten-inference 0.1.x
 

@@ -41,8 +41,10 @@ Linux wheels (in kitten_inference_tts08.libs/):
 
 - libgomp-*.so.*: libgomp, the GNU OpenMP runtime library from GCC, copied
   unchanged (apart from its file name and dynamic-section entries set by
-  auditwheel) from the build image: AlmaLinux 8 libgomp 8.5.0 in the
-  manylinux_2_28 wheels, CentOS 7 libgomp 4.8.5 in the manylinux2014 wheels.
+  auditwheel) from the build image: AlmaLinux 8 libgomp 8.5.0 (8.5.0-28 or
+  -29.el8_10.alma.1) in the manylinux_2_28 wheels, CentOS 7 libgomp 4.8.5
+  (4.8.5-44.el7) in the manylinux2014 wheels; the software bill of materials
+  in each wheel's .dist-info names the exact package.
   Copyright (C) Free Software Foundation, Inc. Licensed under the GNU General
   Public License, version 3 or later, with the GCC Runtime Library Exception,
   version 3.1: licenses/GPL-3.0.txt and licenses/GCC-exception-3.1.txt.
