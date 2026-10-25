@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kitten-inference"
+version = "0.2.0"
+description = "Kitten TTS inference engines: TTS 0.8 on the CPU, TTS 2 on NVIDIA and AMD GPUs"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+authors = [{ name = "KittenML" }]
+keywords = ["tts", "text-to-speech", "speech", "kitten-tts"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+[project.optional-dependencies]
+"tts-0.8"    = ["kitten-inference-tts08>=0.2.0,<0.3"]
+"tts-2"      = ["kitten-inference-tts2>=0.2.0,<0.3", "kitten-inference-tts2-cu12>=0.2.0,<0.3"]
+"tts-2-rocm" = ["kitten-inference-tts2>=0.2.0,<0.3", "kitten-inference-tts2-rocm>=0.2.0,<0.3"]
+
+[project.urls]
+Homepage = "https://github.com/KittenML/kitten-inference"
+Source = "https://github.com/KittenML/kitten-inference"
+Issues = "https://github.com/KittenML/kitten-inference/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kitten_inference"]
+
+[tool.hatch.build.targets.sdist]
+include = ["kitten_inference", "tests", "README.md", "LICENSE"]
