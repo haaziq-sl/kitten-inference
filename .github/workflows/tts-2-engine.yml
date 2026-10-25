@@ -1,0 +1,83 @@
+# Kitten TTS 2 engine for NVIDIA GPUs: the kitten-inference-tts2-cu12 wheels (Linux manylinux_2_28 and Windows),
+# built with the scripts in tts-2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
+# The runners have no GPU: speech generation is tested on GPU machines (tts-2/packaging/smoke_wheel.py --assets).
+name: tts-2 engine wheels
+
+on:
+  push:
+    branches: ["ws/engine", "feat/tts-0.8-and-tts-2"]
+    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux wheel (manylinux_2_28 x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build (CUDA 12.8 in the manylinux_2_28 container)
+        run: JOBS=4 tts-2/packaging/build_linux_docker.sh "$PWD/dist"
+      - name: Size check
+        run: python3 tts-2/packaging/size_check.py dist/*.whl
+      - name: Install into a fresh virtual environment and smoke test
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/python -m pip install dist/*.whl
+          cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tts2-cu12-linux
+          path: dist/
+          if-no-files-found: error
+
+  windows:
+    name: Windows wheel (win_amd64)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CUDA 12.8.1 (compiler, runtime, cuRAND headers)
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\cuda_12.8.1_windows_network.exe"
+          Invoke-WebRequest -Uri https://developer.download.nvidia.com/compute/cuda/12.8.1/network_installers/cuda_12.8.1_windows_network.exe -OutFile $installer
+          $p = Start-Process -FilePath $installer -ArgumentList '-s nvcc_12.8 crt_12.8 nvvm_12.8 cudart_12.8 curand_dev_12.8 thrust_12.8 cuobjdump_12.8 visual_studio_integration_12.8' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "CUDA installer failed with exit code $($p.ExitCode)" }
+          $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          & "$cuda\bin\nvcc.exe" --version
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build tools
+        run: python -m pip install ninja==1.13.0
+      - name: Build
+        shell: pwsh
+        run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
+      - name: Size check
+        shell: pwsh
+        run: python tts-2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
+      - name: Install into a fresh virtual environment and smoke test
+        shell: pwsh
+        run: |
+          python -m venv "$env:RUNNER_TEMP\venv"
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -m pip install (Get-ChildItem dist\*.whl).FullName
+          if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+          Set-Location $env:RUNNER_TEMP
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\tts-2\packaging\smoke_wheel.py"
+          if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tts2-cu12-windows
+          path: dist/
+          if-no-files-found: error
