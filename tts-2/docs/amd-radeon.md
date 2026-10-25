@@ -85,6 +85,23 @@ Do not install AMD's kernel driver package (`amdgpu-dkms`) in WSL2: WSL2 uses th
   run the `export` line again.
 - `rocminfo` prints `Cannot load librocdxg.so`: the `rocdxg-roct` package is missing; run its two lines again.
 
+## Install with pip instead of building
+
+After step 1, pip can install the engine, in place of steps 2 to 4:
+
+```sh
+sudo apt-get install -y python3-venv
+python3 -m venv ~/kitten-tts
+. ~/kitten-tts/bin/activate
+pip install "kitten-inference[tts-2-rocm]"
+kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
+```
+
+The engine package (`kitten-inference-tts2-rocm`, Linux x86_64 with glibc 2.28 or newer) is built for gfx1100,
+gfx1101, gfx1102, gfx1200 and gfx1201, the same GPU code as the `hip` build below. It does not include ROCm: it uses
+`libamdhip64.so.7` from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first
+run downloads and prepares the model. It has no voice cloning.
+
 ## 2. Get the source and build
 
 In the Ubuntu terminal:
