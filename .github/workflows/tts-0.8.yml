@@ -404,6 +404,29 @@ jobs:
             venv-plain/bin/python tts-0.8/tests/probe_timing.py --backend metal --label metal $models KittenML/kitten-tts-mini-0.8-int8
           fi
 
+  crt-paths-probe:
+    # Measurement only: the C runtime's narrow fopen() and a UTF-8 non-ASCII path, per Windows version.
+    name: CRT paths probe ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025-vs2026, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Probe (normal Python, then a copy with code page 1252)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tts-0.8/tests/crt_paths_probe.py
+          legacy=$(cygpath -u "$(python tts-0.8/tests/code_page_python.py --locale en-US 2>/dev/null)")
+          echo "== $legacy"
+          "$legacy" tts-0.8/tests/crt_paths_probe.py
+
   oldest-linux:
     if: false
     # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
