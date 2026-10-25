@@ -50,19 +50,24 @@ CAPS = {caps!r}
 
 README = """# kitten-inference-tts2-cu12
 
-The Kitten TTS 2 native engine for NVIDIA GPUs: first audio in under 10 ms when streaming, and complete files 6 to 10
-times faster than Kitten TTS 2 on vLLM or llama.cpp.
+The Kitten TTS 2 native engine for NVIDIA GPUs, with its command-line tool. On an RTX 4090 with the current model,
+this package streams its first audio after **19 ms** (median of 5 runs). Complete files take 6 to 10 times less time
+than with Kitten TTS 2 on vLLM or llama.cpp (one request at a time on an RTX PRO 6000, earlier 47-voice model).
 
-This package holds the compiled engine (CUDA 12.8, with the CUDA runtime built in) and its command-line tool. It needs
-an NVIDIA GPU with compute capability 6.1, 7.5 or 8.0 and newer, and NVIDIA driver R570 or newer. Install it with the
-Python API:
+Install it with the Python API, which uses it:
 
 ```sh
+python -m pip install -U pip                 # older pip versions can skip an extra with only a warning
 pip install "kitten-inference[tts-2]"
 ```
 
-Voice cloning reads the reference audio with the `ffmpeg` program (`sudo apt-get install -y ffmpeg`, or on Windows
-`winget install --id Gyan.FFmpeg -e`).
+| NVIDIA GPU | Status |
+|---|---|
+| Compute capability 8.0 or newer (GeForce RTX 30 series and newer) | supported |
+| GeForce GTX 10, GTX 16 and RTX 20 series (compute capability 6.1 and 7.5) | supported, not optimal: no bf16 tensor cores, so part of the math runs in software. Real-time factor 0.22 to 0.76 with `--stream false`, against 0.03 to 0.17 for RTX 30 series and newer. The audio is close to, not bit for bit the same as, a newer GPU's |
+
+It needs NVIDIA driver R570 or newer; the CUDA 12.8 runtime is built in. Voice cloning reads the reference audio with
+the `ffmpeg` program (`sudo apt-get install -y ffmpeg`, or on Windows `winget install --id Gyan.FFmpeg -e`).
 """
 
 
@@ -127,7 +132,7 @@ def main() -> int:
         "Classifier: Programming Language :: Python :: 3",
         "Classifier: Operating System :: " + ("Microsoft :: Windows" if windows else "POSIX :: Linux"),
         "Classifier: Topic :: Multimedia :: Sound/Audio :: Speech",
-        "Requires-Python: >=3.8",
+        "Requires-Python: >=3.9",
         "Description-Content-Type: text/markdown",
         "", README])
     entries[f"{distinfo}/METADATA"] = (metadata.encode(), False)
