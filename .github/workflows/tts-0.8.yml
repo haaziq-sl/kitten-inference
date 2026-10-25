@@ -694,7 +694,7 @@ jobs:
       needs.lowest-deps.result == 'success' &&
       needs.wheel-list.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 330
     environment: pypi
     permissions:
       contents: read
@@ -719,7 +719,7 @@ jobs:
       - name: Wait until the TTS 2 engine wheels are on PyPI
         if: steps.files.outputs.upload == 'true'
         run: |
-          python3 .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 120 \
+          python3 .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 300 \
             --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
 
       - name: Publish to PyPI (trusted publishing)

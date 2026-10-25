@@ -13,7 +13,7 @@ publish job runs only in KittenML/kitten-inference.
 | `kitten-inference` | `packages.yml` | `publish-umbrella` | `publish-tts2`, then every distribution its extras name on PyPI |
 
 So PyPI gets the engine wheels first, then `kitten-inference-tts2` and `kitten-inference-tts08`, then the umbrella. An
-umbrella published first would point its extras at nothing. Each wait gives up after 2 hours; once the missing
+umbrella published first would point its extras at nothing. Each wait gives up after 5 hours; once the missing
 distributions are on PyPI, re-run the failed job.
 
 ## Once: trusted publishers and the `pypi` environment
@@ -54,8 +54,8 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
    that is not the engine's (or a post release of it).
 2. `git tag -a v0.2.0 -m "kitten-inference 0.2.0"` on that commit, then `git push origin v0.2.0`.
 3. Watch the four runs. The CUDA wheel jobs fail unless their GPU code is the reference's; their logs say
-   `SASS check: IDENTICAL`. The Windows CUDA wheel takes 40 minutes to about 2 hours: its build compiles the CUDA-core
-   decode kernels again until their GPU code is the reference's.
+   `SASS check: IDENTICAL`. The Windows CUDA wheel takes about 40 minutes (36 and 38 in two runs; at most about 2.5
+   hours): its build compiles the CUDA-core decode kernels again until their GPU code is the reference's.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
    the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. Then remove the lines
    about 0.1.1 from `umbrella/README.md` and `tts-2/python/README.md`.
