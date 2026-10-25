@@ -85,30 +85,86 @@ def test_original_clone_tensor_contract_is_complete():
     assert all(not key.startswith("bank.") for key in clone_assets.CONTRACTS["pyannote"])
 
 
-@pytest.mark.parametrize("download", [False, True])
-def test_automatic_export_uses_authorized_pinned_source(exports, tmp_path, monkeypatch, download):
-    import huggingface_hub
-    from kt2n_assets import export_clone, prepare
-    import shutil
+def _bundle(tmp_path, monkeypatch):
+    from kt2n_assets import prepare
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     (bundle / "voices.kt2n").write_bytes(b"catalogue")
     monkeypatch.setattr(prepare.voices, "read", lambda _: SimpleNamespace(
         voices=[{"id": "Bruno", "kind": "builtin"}],
         arrays={"Bruno": {"raw_speaker": np.ones(512, dtype="f4")}}))
+    manifest = {"voices": {"file": "voices.kt2n"},
+                "source": {"model_repo": "KittenML/kitten-tts-2", "revision": "c" * 40}}
+    return bundle, manifest
+
+
+def test_default_cloning_uses_the_model_repository_weights_without_login(exports, tmp_path, monkeypatch):
+    import huggingface_hub
+    import shutil
+    from kt2n_assets import prepare
+    bundle, manifest = _bundle(tmp_path, monkeypatch)
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "speaker").mkdir(parents=True)
+    (snapshot / "speaker" / "model.safetensors").write_bytes(b"public weights")
+    calls = []
+
+    def snapshot_download(repo, **kwargs):
+        calls.append((repo, kwargs["revision"], kwargs["token"], kwargs["allow_patterns"]))
+        return str(snapshot)
+
+    def public_exports(speaker, acoustic, destination):
+        assert speaker == snapshot / "speaker" / "model.safetensors" and acoustic == exports[0]
+        destination.mkdir()
+        shutil.copyfile(exports[1], destination / "voicebuild_consts.safetensors")
+        shutil.copyfile(exports[2], destination / "voicebuild_pyannote.safetensors")
+        return {"pyannote_weights_sha256": "w", "pyannote_access": "none"}
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **k: pytest.fail("no gated download"))
+    monkeypatch.setattr(clone_assets, "public_clone_exports", public_exports)
+    monkeypatch.setitem(sys.modules, "torch", None)
+    args = SimpleNamespace(out=bundle, clone_consts=None, clone_pyannote=None, pyannote_model=None,
+                           cache_dir=tmp_path / "cache", offline=False)
+    result = prepare.prepare_cloning(args, exports[0], manifest)
+    assert calls == [("KittenML/kitten-tts-2", "c" * 40, False, ["speaker/model.safetensors"])]
+    assert result["version"] == 1 and result["speaker_bank_voices"] == 1 and len(result["files"]) == 3
+    assert result["source"]["pyannote_access"] == "none"
+    assert result["source"]["pyannote_source"] == f"KittenML/kitten-tts-2@{'c' * 40}/speaker/model.safetensors"
+
+
+def test_model_dir_cloning_reads_the_local_speaker_file(exports, tmp_path, monkeypatch):
+    import shutil
+    from kt2n_assets import prepare
+    bundle, manifest = _bundle(tmp_path, monkeypatch)
+    model = tmp_path / "model"
+    (model / "speaker").mkdir(parents=True)
+    (model / "speaker" / "model.safetensors").write_bytes(b"public weights")
+    seen = []
+
+    def public_exports(speaker, acoustic, destination):
+        seen.append(speaker)
+        destination.mkdir()
+        shutil.copyfile(exports[1], destination / "voicebuild_consts.safetensors")
+        shutil.copyfile(exports[2], destination / "voicebuild_pyannote.safetensors")
+        return {}
+
+    monkeypatch.setattr(clone_assets, "public_clone_exports", public_exports)
+    args = SimpleNamespace(out=bundle, clone_consts=None, clone_pyannote=None, pyannote_model=None,
+                           cache_dir=None, offline=True)
+    prepare.prepare_cloning(args, exports[0], manifest, model)
+    assert seen == [model / "speaker" / "model.safetensors"]
+
+
+def test_pyannote_model_override_uses_the_torch_exporter(exports, tmp_path, monkeypatch):
+    import shutil
+    from kt2n_assets import export_clone, prepare
+    bundle, manifest = _bundle(tmp_path, monkeypatch)
     checkpoint_dir = tmp_path / "authorized-model"
     checkpoint_dir.mkdir()
     checkpoint = checkpoint_dir / "pytorch_model.bin"
     checkpoint.write_bytes(b"approved pinned model fixture")
     calls = []
-    def download_model(repo, filename, **kwargs):
-        assert repo == clone_assets.PYANNOTE_REPO
-        assert filename == "pytorch_model.bin"
-        assert kwargs["revision"] == clone_assets.PYANNOTE_REVISION
-        assert kwargs["token"] is True and kwargs["local_files_only"] is True
-        calls.append("download")
-        return str(checkpoint)
-    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download_model)
+
     def export_model(source, acoustic, destination):
         assert source == checkpoint and acoustic == exports[0]
         calls.append("export")
@@ -116,10 +172,62 @@ def test_automatic_export_uses_authorized_pinned_source(exports, tmp_path, monke
         shutil.copyfile(exports[1], destination / "voicebuild_consts.safetensors")
         shutil.copyfile(exports[2], destination / "voicebuild_pyannote.safetensors")
         return {}
+
     monkeypatch.setattr(export_clone, "export", export_model)
-    args = SimpleNamespace(out=bundle, clone_consts=None, clone_pyannote=None,
-        pyannote_model=None if download else checkpoint_dir, cache_dir=tmp_path / "cache", offline=True)
-    result = prepare.prepare_cloning(args, exports[0], {"voices": {"file": "voices.kt2n"}})
-    assert calls == (["download", "export"] if download else ["export"])
-    assert result["version"] == 1 and result["speaker_bank_voices"] == 1
-    assert len(result["files"]) == 3
+    args = SimpleNamespace(out=bundle, clone_consts=None, clone_pyannote=None, pyannote_model=checkpoint_dir,
+                           cache_dir=tmp_path / "cache", offline=True)
+    result = prepare.prepare_cloning(args, exports[0], manifest)
+    assert calls == ["export"] and len(result["files"]) == 3
+
+
+def _speaker_file(path, tensors):
+    write_safetensors(path, {name: ("F32", value.shape, value.astype("<f4").tobytes()) for name, value in tensors.items()}
+                      | {"layer.num_batches_tracked": ("I64", (), b"\0" * 8)})
+
+
+@pytest.fixture
+def speaker_pins(monkeypatch):
+    values = {"layer.weight": np.arange(6, dtype="<f4").reshape(2, 3), "layer.bias": np.ones(2, "<f4"),
+              "derived.filters": np.full(4, 0.5, "<f4")}
+    pins = {name: (list(v.shape), hashlib.sha256(v.tobytes()).hexdigest()) for name, v in values.items()}
+    monkeypatch.setattr(clone_assets, "CONTRACTS", {"consts": {}, "pyannote": pins})
+    monkeypatch.setattr(clone_assets, "DERIVED_PYANNOTE", ("derived.filters",))
+    monkeypatch.setattr(clone_assets, "reference_sincnet", lambda: {"derived.filters": values["derived.filters"]})
+    return values
+
+
+def test_public_speaker_weights_are_checked_and_completed(speaker_pins, tmp_path):
+    path = tmp_path / "model.safetensors"
+    _speaker_file(path, {k: v for k, v in speaker_pins.items() if k != "derived.filters"})
+    out = clone_assets.public_speaker_tensors(path)
+    assert list(out) == list(clone_assets.CONTRACTS["pyannote"])  # pinned order; batch counter dropped
+    assert all(np.array_equal(out[k], v) for k, v in speaker_pins.items())
+
+
+@pytest.mark.parametrize("change", ["value", "missing", "extra"])
+def test_public_speaker_weights_must_match_the_pins(speaker_pins, tmp_path, change):
+    tensors = {k: v.copy() for k, v in speaker_pins.items() if k != "derived.filters"}
+    if change == "value":
+        tensors["layer.bias"][0] = 2
+    elif change == "missing":
+        del tensors["layer.bias"]
+    else:
+        tensors["other.weight"] = np.zeros(1, "<f4")
+    path = tmp_path / "model.safetensors"
+    _speaker_file(path, tensors)
+    with pytest.raises(ValueError, match="pinned pyannote/embedding"):
+        clone_assets.public_speaker_tensors(path)
+
+
+def test_shipped_sincnet_reference_matches_its_pins():
+    values = clone_assets.reference_sincnet()
+    assert list(values) == list(clone_assets.DERIVED_PYANNOTE)
+    assert [list(v.shape) for v in values.values()] == [[1, 125], [125], [80, 1, 251]]
+
+
+def test_public_frontend_constants_check_the_acoustic_checksum_without_torch(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "torch", None)
+    acoustic = tmp_path / "s3gen.safetensors"
+    acoustic.write_bytes(b"not the pinned decoder")
+    with pytest.raises(ValueError, match="acoustic checkpoint checksum"):
+        clone_assets.public_frontend_tensors(acoustic)
