@@ -121,7 +121,7 @@ def test_weight_norm_device_without_cuda_explains_the_fix(monkeypatch):
         prepare.check_weight_norm_device("cuda")
     message = str(exc.value.code)
     assert "cannot use CUDA" in message and "CUDA build of torch 2.7.1" in message
-    assert "requirements-prepare.txt" in message and "--weight-norm-device cpu" in message
+    assert "leave out --weight-norm-device" in message
     prepare.check_weight_norm_device("cpu")  # a CPU fold only needs torch itself
     monkeypatch.setitem(sys.modules, "torch", _fake_torch(True, "12.8"))
     prepare.check_weight_norm_device("cuda")
@@ -133,7 +133,7 @@ def test_weight_norm_device_refuses_rocm_torch(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         prepare.check_weight_norm_device("cuda")
     message = str(exc.value.code)
-    assert "ROCm (AMD) build" in message and "--weight-norm-device cpu" in message
+    assert "ROCm (AMD) build" in message and "leave out --weight-norm-device" in message.lower()
     prepare.check_weight_norm_device("cpu")  # a CPU fold is still allowed
 
 
@@ -141,7 +141,38 @@ def test_weight_norm_device_without_torch(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(SystemExit) as exc:
         prepare.check_weight_norm_device("cpu")
-    assert "requirements-prepare.txt" in str(exc.value.code)
+    message = str(exc.value.code)
+    assert "torch 2.7.1" in message and "default numpy fold needs no torch" in message
+
+
+def test_default_numpy_fold_needs_no_torch(monkeypatch):
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch would raise
+    prepare.check_weight_norm_device("numpy")
+
+
+def test_cli_defaults_and_contract_flags(tmp_path, monkeypatch):
+    seen = {}
+
+    def stop(device):
+        seen["device"] = device
+        raise SystemExit(3)
+
+    monkeypatch.setattr(prepare, "find_text_converter", lambda explicit: seen.setdefault("tool", explicit))
+    monkeypatch.setattr(prepare, "check_weight_norm_device", stop)
+    tool = _executable(tmp_path / "bin" / prepare.TEXT_CONVERTER)
+    with pytest.raises(SystemExit) as exc:
+        prepare.main(["--out", str(tmp_path / "bundle"), "--text-data-tool", str(tool)])
+    assert exc.value.code == 3 and seen == {"tool": tool, "device": "numpy"}
+
+
+def test_installed_package_has_no_source_tree_root(tmp_path, monkeypatch):
+    # In the wheel the package lives at kitten_inference/tts2/_assets: no tools/ or CMakeLists.txt above it.
+    monkeypatch.setattr(prepare, "ROOT", None)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    assert prepare.find_text_converter(None) is None
+    in_cwd = _executable(tmp_path / "build/default/bin" / prepare.TEXT_CONVERTER)
+    assert prepare.find_text_converter(None) == in_cwd
 
 
 def test_summary_prints_size_and_next_command(tmp_path, capsys):
