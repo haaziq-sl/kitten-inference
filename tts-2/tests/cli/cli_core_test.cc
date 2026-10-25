@@ -235,7 +235,7 @@ TEST(CliArgs, VoiceCacheAndMemoryDefaults) {
   // Without the options the engine keeps its defaults: every voice resident, default buffers, no limits.
   const Options o = parse_args(with_base({}));
   EXPECT_EQ(o.voice_cache, VoiceCacheMode::kAll);
-  EXPECT_FALSE(o.voice_cache_given);  // kitten_tts_native.cc then uses lru with one voice per stream for a built-in voice
+  EXPECT_FALSE(o.voice_cache_given);  // kitten_tts_native.cc then uses lru with one voice per stream (also when cloning)
   EXPECT_FALSE(o.voice_cache_voices);
   EXPECT_FALSE(o.voice_cache_mib);
   EXPECT_EQ(o.memory_profile, MemoryProfile::kAuto);  // the default profile when it fits, otherwise low
@@ -243,6 +243,9 @@ TEST(CliArgs, VoiceCacheAndMemoryDefaults) {
   for (const char* option : {"--voice-cache all|lru|none", "--voice-cache-voices N", "--voice-cache-mib N",
                              "--memory-profile auto|default|low"})
     EXPECT_NE(help.find(option), std::string::npos) << option;
+  // The tool's own default (kitten_tts_native.cc), the same for built-in, cloned and loaded voices.
+  EXPECT_NE(help.find("Default: lru with one voice per stream"), std::string::npos);
+  EXPECT_EQ(help.find("all for a cloned or loaded voice"), std::string::npos);
 }
 
 TEST(CliArgs, VoiceCacheModes) {

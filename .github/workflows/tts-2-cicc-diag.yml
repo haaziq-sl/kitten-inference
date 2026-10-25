@@ -1,0 +1,129 @@
+# Diagnostic (branch ws/engine-diag only): is nvcc's device front end (cicc) deterministic for the kernels whose SASS
+# varied between builds? Repeat compiles of the same file with the build's own command on Linux (address-space layout
+# randomisation on and off) and on Windows; and the reference-audio ffmpeg tests (CPU only) on both systems.
+name: tts-2 cicc determinism (diagnostic)
+
+on:
+  push:
+    branches: ["ws/engine-diag"]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: CUDA 12.8 (nvcc 12.8.93, the version of the gate's build image)
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ninja-build \
+            cuda-nvcc-12-8=12.8.93-1 cuda-crt-12-8=12.8.93-1 cuda-nvvm-12-8=12.8.93-1 cuda-cudart-12-8=12.8.90-1 \
+            cuda-cudart-dev-12-8=12.8.90-1 cuda-driver-dev-12-8=12.8.90-1 cuda-cccl-12-8=12.8.90-1 \
+            libcurand-12-8=10.3.9.90-1 libcurand-dev-12-8=10.3.9.90-1 cuda-cuobjdump-12-8=12.8.90-1
+          echo /usr/local/cuda-12.8/bin >> "$GITHUB_PATH"
+          /usr/local/cuda-12.8/bin/nvcc --version | tail -2; gcc --version | head -1; setarch x86_64 -R true && echo "setarch -R works"
+      - name: Configure (for the compile commands)
+        working-directory: tts-2
+        run: cmake --preset no-cloning -DKT2N_BUILD_TEXT=OFF -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc
+      - name: Repeat compiles
+        run: |
+          D=.github/diag/cicc_repeat.py; B=tts-2/build/no-cloning
+          python3 $D $B src/render/hift/hift.cu sm_90 24 out/linux-hift-sm90-aslr-on
+          python3 $D $B src/render/hift/hift.cu sm_90 24 out/linux-hift-sm90-aslr-off --wrapper "setarch x86_64 -R"
+          python3 $D $B src/cuda/legacy/tern_dec_cc.cu sm_75 24 out/linux-decc-sm75-aslr-on
+          python3 $D $B src/cuda/legacy/tern_dec_cc.cu sm_75 24 out/linux-decc-sm75-aslr-off --wrapper "setarch x86_64 -R"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cicc-linux
+          path: out/
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CUDA 12.8.1 (compiler, runtime, cuRAND headers, cuobjdump)
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\cuda_12.8.1_windows_network.exe"
+          Invoke-WebRequest -Uri https://developer.download.nvidia.com/compute/cuda/12.8.1/network_installers/cuda_12.8.1_windows_network.exe -OutFile $installer
+          $p = Start-Process -FilePath $installer -ArgumentList '-s nvcc_12.8 cudart_12.8 curand_12.8 curand_dev_12.8 thrust_12.8 cuobjdump_12.8 visual_studio_integration_12.8' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "CUDA installer failed with exit code $($p.ExitCode)" }
+          $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          & "$cuda\bin\nvcc.exe" --version
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build tools
+        run: python -m pip install ninja==1.13.0
+      - name: Configure (for the compile commands)
+        working-directory: tts-2
+        run: cmake --preset wheel-windows -DKT2N_BUILD_TEXT=OFF
+      - name: Repeat compiles
+        run: |
+          python .github/diag/cicc_repeat.py tts-2/build/wheel-windows src/cuda/legacy/tern_dec_cc.cu sm_75 16 out/windows-decc-sm75 --jobs 4
+          python .github/diag/cicc_repeat.py tts-2/build/wheel-windows src/cuda/legacy/tern_dec_cc.cu sm_61 16 out/windows-decc-sm61 --jobs 4
+          python .github/diag/cicc_repeat.py tts-2/build/wheel-windows src/render/hift/hift.cu sm_90 8 out/windows-hift-sm90 --jobs 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cicc-windows
+          path: out/
+
+  cli-ffmpeg:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Build the CLI's CPU tests (no CUDA)
+        shell: bash
+        run: |
+          python -m pip install -q ninja==1.13.0 numpy
+          extra=(); [ "$RUNNER_OS" = Windows ] && extra=(-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
+          cmake -S tts-2 -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DKT2N_CUDA=OFF -DKT2N_BUILD_TESTS=ON \
+            -DKT2N_BUILD_TEXT=OFF -DKT2N_BUILD_CLONING=OFF -DKT2N_VOICE_AV=OFF -DKT2N_AV=OFF \
+            -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" "${extra[@]}"
+          cmake --build build-cli --target test_cli_ffmpeg test_cli_core
+      - name: Without ffmpeg on PATH
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'ffmpeg')) -and -not (Test-Path (Join-Path $_ 'ffmpeg.exe')) }) -join [IO.Path]::PathSeparator
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { throw "ffmpeg is still on PATH" }
+          $x = if ($IsWindows) { '.exe' } else { '' }
+          & "build-cli/bin/test_cli_ffmpeg$x"
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
+      - name: Install ffmpeg
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then choco install ffmpeg -y --no-progress > /dev/null; else sudo apt-get update -q && sudo apt-get install -y -q ffmpeg > /dev/null; fi
+          ffmpeg -version | head -1
+      - name: With ffmpeg
+        shell: pwsh
+        run: |
+          $x = if ($IsWindows) { '.exe' } else { '' }
+          & "build-cli/bin/test_cli_ffmpeg$x"
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
+          & "build-cli/bin/test_cli_core$x" --gtest_filter='CliArgs.*'
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_core failed" }

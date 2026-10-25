@@ -3293,7 +3293,7 @@ constexpr uint64_t kAutoDefaultMargin = uint64_t(2) << 30;
 constexpr uint64_t kDefaultCheckBelow = uint64_t(22) << 30;
 thread_local AutoProbe* g_auto_probe = nullptr;
 
-static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
+static int32_t engine_create_attempt(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
   if (!cfg || !out || cfg->struct_size < offsetof(kt2n_engine_config, voice_build_dir)) {
     set_err(err, KT2N_ERR_INVALID_ARGUMENT, "config is NULL or too small");
     return KT2N_ERR_INVALID_ARGUMENT;
@@ -4448,6 +4448,19 @@ static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** o
   return KT2N_OK;
 }
 
+// One create attempt on the caller's thread, starting and (when it fails) ending with no CUDA error pending on that
+// thread. The CUDA runtime keeps the last error per host thread, and a failed create can leave one there (an
+// out-of-memory cudaMalloc, e.g. "decoder: cudaMalloc(render arena)"). The next create on the same thread would read it
+// at its first kernel-launch check (cudaGetLastError) and fail with an unrelated message ("LM: kt2n_pf_model_load:
+// repack qkv failed (rc 2)"): the automatic profile's low-profile retry, or a caller retrying with other settings. A
+// failed create's error is reported through kt2n_error, so nothing is lost by clearing it.
+static int32_t engine_create_impl(const kt2n_engine_config* cfg, kt2n_engine** out, kt2n_error* err) {
+  (void)cudaGetLastError();
+  const int32_t rc = engine_create_attempt(cfg, out, err);
+  if (rc != KT2N_OK) (void)cudaGetLastError();
+  return rc;
+}
+
 // KT2N_MEMORY_PROFILE_AUTO: the default profile exactly as before when it fits, otherwise the low profile (which fits
 // itself to the GPU). Each attempt is an ordinary DEFAULT or LOW create of the same config:
 //   1. a LOW create with the probe set: when its fit has to shrink the sizes, the default profile cannot fit, and that
@@ -4612,10 +4625,7 @@ KT2N_API int32_t kt2n_engine_create(const kt2n_engine_config* cfg, kt2n_engine**
     (*out)->auto_profile = "default";
     return KT2N_OK;
   }
-  c.memory_profile = KT2N_MEMORY_PROFILE_LOW;
-  // The failed default-profile create leaves its last CUDA error (out of memory) to be read: clear it, or the low
-  // profile's first kernel launch check reads it and fails ("repack qkv failed (rc 2)").
-  (void)cudaGetLastError();
+  c.memory_profile = KT2N_MEMORY_PROFILE_LOW;  // engine_create_impl clears the failed attempt's CUDA error
   rc = engine_create_impl(&c, out, err);
   if (rc == KT2N_OK) {
     (*out)->auto_profile = "low";

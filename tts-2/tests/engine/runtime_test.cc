@@ -1150,6 +1150,88 @@ TEST(Runtime, GpuAutoMemoryProfile) {
   kt2n_engine_destroy(e);
 }
 
+// A create that fails on a GPU allocation leaves no CUDA error behind for the next create on the same thread. The
+// first create asks for a decoder pool far larger than any GPU (render_pages: 1.65 TB), so it fails in
+// cudaMalloc(render arena), after the language model has loaded; the CUDA runtime keeps that out-of-memory error as the
+// thread's last error. Before the fix the next create read it at its first kernel-launch check and failed ("LM:
+// kt2n_pf_model_load: repack qkv failed (rc 2)"); now the low, automatic and default profiles all start after it, with
+// the same seeded audio as without the failed create. Needs KT2N_TEST_GPU=1 and KT2N_TEST_ASSETS; skipped otherwise.
+TEST(Runtime, GpuCreateAfterAFailedCreate) {
+  const char* root = std::getenv("KT2N_TEST_ASSETS");
+  if (!std::getenv("KT2N_TEST_GPU") || !root || !*root) GTEST_SKIP() << "set KT2N_TEST_GPU=1 and KT2N_TEST_ASSETS";
+  const std::string n = std::string(root) + "/native/";
+  const std::string lm = n + "model.kt2n", s3 = n + "s3gen.kt2n", vo = n + "voices.kt2n", tok = n + "tokenizer.json",
+                    txt = n + "text";
+  auto make = [&](int profile, int render_pages, kt2n_engine** e, kt2n_error* err) {
+    kt2n_engine_config cfg{};
+    cfg.struct_size = sizeof cfg;
+    cfg.abi_version = KT2N_ABI_VERSION;
+    cfg.flags = KT2N_CFG_INFERENCE_ONLY;
+    cfg.max_streams = 1;
+    cfg.lm_file = lm.c_str();
+    cfg.s3gen_file = s3.c_str();
+    cfg.voices_file = vo.c_str();
+    cfg.tokenizer_json = tok.c_str();
+    cfg.text_data_dir = txt.c_str();
+    cfg.memory_profile = profile;
+    cfg.render_pages = render_pages;
+    cfg.voice_cache_mode = KT2N_VOICE_CACHE_LRU;
+    cfg.voice_cache_max_voices = 1;
+    return kt2n_engine_create(&cfg, e, err);
+  };
+  auto pcm = [](kt2n_engine* e) {
+    kt2n_voice_id voice = 0;
+    kt2n_error err{};
+    if (kt2n_voice_lookup(e, "Bruno", &voice, &err) != KT2N_OK) return std::string("no voice");
+    const std::string text = "A second engine on the same thread.";
+    kt2n_request_params p{};
+    p.struct_size = sizeof p;
+    p.flags = KT2N_REQ_SEED;
+    p.seed = 11;
+    p.text = text.data();
+    p.text_len = text.size();
+    p.voice = voice;
+    p.speed = 1.0;
+    p.format = KT2N_FORMAT_PCM;
+    p.output = KT2N_OUTPUT_COMPLETE;
+    kt2n_request_id id = 0;
+    if (kt2n_submit(e, &p, &id, &err) != KT2N_OK) return std::string("submit failed");
+    std::string bytes;
+    int status = -2;
+    const auto t0 = std::chrono::steady_clock::now();
+    while (status == -2 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(120)) {
+      kt2n_event ev[32];
+      int32_t k = 0;
+      kt2n_poll(e, ev, 32, 200, &k);
+      for (int i = 0; i < k; ++i) {
+        if (ev[i].id != id) continue;
+        if (ev[i].kind == KT2N_EVENT_AUDIO) bytes.append(reinterpret_cast<const char*>(ev[i].data), ev[i].data_len);
+        if (ev[i].kind == KT2N_EVENT_DONE) status = ev[i].status;
+      }
+      kt2n_events_release(e, ev, k);
+    }
+    kt2n_release(e, id);
+    return status == KT2N_OK ? bytes : std::string("request failed");
+  };
+  for (int profile : {int(KT2N_MEMORY_PROFILE_LOW), int(KT2N_MEMORY_PROFILE_AUTO), int(KT2N_MEMORY_PROFILE_DEFAULT)}) {
+    kt2n_engine* e = nullptr;
+    kt2n_error err{};
+    ASSERT_EQ(make(profile, 0, &e, &err), KT2N_OK) << "profile " << profile << ": " << err.message;
+    const std::string clean = pcm(e);  // this profile's audio without a failed create before it
+    kt2n_engine_destroy(e);
+    e = nullptr;
+    ASSERT_GT(clean.size(), 1000u) << clean;
+    ASSERT_NE(make(KT2N_MEMORY_PROFILE_DEFAULT, 100000, &e, &err), KT2N_OK) << "a 1.65 TB decoder pool started";
+    ASSERT_EQ(e, nullptr);
+    EXPECT_NE(std::string(err.message).find("render arena"), std::string::npos) << err.message;
+    err = kt2n_error{};
+    ASSERT_EQ(make(profile, 0, &e, &err), KT2N_OK) << "profile " << profile << " after a failed create: " << err.message;
+    const std::string audio = pcm(e);
+    kt2n_engine_destroy(e);
+    EXPECT_EQ(audio, clean) << "profile " << profile;
+  }
+}
+
 // An explicit KT2N_MEMORY_PROFILE_DEFAULT on a GPU too small for it (simulated free memory, KT2N_LOW_FIT_FREE_MB) is
 // refused with KT2N_ERR_TOO_SMALL and how much it needs, before any model memory is allocated, instead of failing in
 // whichever allocation runs out first: a 4 GB card (the low profile has to fit itself), a 16 GB card with every voice

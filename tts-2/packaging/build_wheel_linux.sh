@@ -33,13 +33,6 @@ WHL=$(ls -t "$OUT"/kitten_inference_tts2_cu12-*-py3-none-manylinux_2_28_x86_64.w
 "$PY" -m pip install -q "auditwheel>=6,<7"
 "$PY" -m auditwheel show "$WHL" | tee "$OUT/auditwheel-show.txt"
 # auditwheel names the oldest policy the files satisfy; manylinux_2_28 must be at least as new as that.
-"$PY" - "$OUT/auditwheel-show.txt" <<'PY'
-import re, sys
-text = open(sys.argv[1]).read()
-m = re.search(r'consistent with the following platform tag: "manylinux_2_(\d+)_x86_64"', text)
-if not m or int(m.group(1)) > 28:
-    sys.exit("auditwheel: the wheel does not satisfy manylinux_2_28_x86_64")
-print(f"auditwheel: OK (satisfies manylinux_2_{m.group(1)}_x86_64, tagged manylinux_2_28_x86_64)")
-PY
+"$PY" packaging/auditwheel_tag.py "$OUT/auditwheel-show.txt" manylinux_2_28_x86_64
 echo "timings: deps+toolchain $((t1 - t0)) s, engine build $((t2 - t1)) s, total $(( $(date +%s) - t0 )) s"
 ls -l "$WHL" build/wheel-stage/lib/libkt2n_engine.so
