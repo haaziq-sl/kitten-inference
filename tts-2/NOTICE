@@ -190,6 +190,16 @@ numpy.random module these follow is dual-licensed (NCSA and 3-Clause BSD) by
 Kevin Sheppard; that notice is retained in licenses/NumPy-random.txt.
 
 
+Microsoft Visual C++ runtime
+----------------------------
+The Windows build of kitten-inference-tts2-cu12 links the static Microsoft
+Visual C++ runtime (CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, /MT) into
+kt2n_engine.dll, kitten-tts-native.exe and kt2n_prepare_text_data.exe, so
+they need no Visual C++ redistributable. That code is distributed under
+Microsoft's licence terms for distributable code
+(https://learn.microsoft.com/visualstudio/releases/2026/redistribution).
+Copyright (c) Microsoft Corporation.
+
 NVIDIA CUDA runtime
 -------------------
 The NVIDIA CUDA Toolkit is installed separately for builds. The CUDA build
