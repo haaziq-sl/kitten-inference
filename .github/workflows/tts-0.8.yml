@@ -203,7 +203,7 @@ jobs:
         if: matrix.arch == 'aarch64'
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -u  # the runs below are expected to fail: their exit statuses are checked one by one
           sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user > /dev/null
           qemu-aarch64 --version | head -1
           py=venv-cp312/bin/python
