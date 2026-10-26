@@ -80,8 +80,6 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
     tuned yet (on the AMD and Arm CPUs we tested they are faster than ONNX Runtime);
   - the Mac CPU (int8 models on Apple Silicon, every model on Intel Macs): the macOS build uses one CPU core, so int8
     on an Apple M4 takes 1.4 to 1.8 times the ONNX Runtime time;
-  - Intel CPUs with performance and efficiency cores: the work is spread evenly over all cores, so a Core i9-12900
-    was slower than ONNX Runtime for 5 of 6 models; on its performance cores only it took 0.64 to 0.75 times as long;
   - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64.
 
 Both engines in one environment: `pip install "kitten-inference[tts-0.8,tts-2]"` (Linux x86-64 and Windows x64,
