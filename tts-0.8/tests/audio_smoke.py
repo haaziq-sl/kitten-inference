@@ -381,28 +381,38 @@ def process_memory_mb():
         return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
 
 
-def memory_check(cache_dir, backend, model_name=NANO, warmup=10, calls=100, limit_mb=8.0):
+def memory_check(cache_dir, backend, model_name=NANO, warmup=100, calls=100, limit_mb=8.0):
     """The same short text again and again: once warm, memory must stay level (a leak of a few MB per call adds up
-    in a long-running program). Without an emptied autorelease pool, Metal grew 0.17 MB per call on the CI's
-    virtual M1 (6.3 MB per call on an Apple M4); with it, by at most 0.1 MB over 100 calls."""
+    in a long-running program).
+
+    The macOS runner drops its footprint once, by a fixed ~160 MB, partway through a run (a one-time compaction
+    unrelated to the engine, seen in every run). Measuring growth as last-minus-first then reads that drop as
+    negative growth and hides a real leak underneath it (a +17 MB-per-100-calls leak still shows as about -147 MB
+    and passes). So two things: a long warm-up (100 calls) puts the one-time drop before the measured calls, and
+    growth is measured from the LOWEST sampled footprint to the last, sampled finely, so a one-time downward step
+    cannot mask a steady upward leak. Without an emptied autorelease pool Metal grew 0.17 MB per call on the CI's
+    virtual M1 (6.3 MB per call on an Apple M4); with it, by at most about 0.1 MB over 100 calls."""
     model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
     for _ in range(warmup):
         model.generate(TEXT, voice="Jasper")
     before = process_memory_mb()
     samples = [before]
+    every = max(1, calls // 10)
     for i in range(calls):
         audio = as_audio(model.generate(TEXT, voice="Jasper"))
-        if (i + 1) % 25 == 0:
+        if (i + 1) % every == 0:
             samples.append(process_memory_mb())
     validate_audio(audio, f"{model_name} memory check")
-    growth = samples[-1] - before
+    growth = samples[-1] - min(samples)  # rise from the lowest point: immune to a one-time compaction drop
     result = {"model": model_name, "backend": backend or "default", "active_backend": _engine.active_backend(),
-              "calls": calls, "memory_mb": [round(m, 1) for m in samples], "growth_mb": round(growth, 1),
+              "calls": calls, "warmup": warmup, "memory_mb": [round(m, 1) for m in samples],
+              "min_mb": round(min(samples), 1), "last_mb": round(samples[-1], 1), "growth_mb": round(growth, 1),
               "growth_mb_per_call": round(growth / calls, 3), "limit_mb": limit_mb}
     print(json.dumps(result))
     if growth > limit_mb:
-        raise AssertionError(f"{model_name} on {result['active_backend']}: memory grew {growth:.0f} MB over {calls} "
-                             f"calls after warm-up ({growth / calls:.2f} MB per call; limit {limit_mb:.0f} MB)")
+        raise AssertionError(f"{model_name} on {result['active_backend']}: memory grew {growth:.0f} MB from its "
+                             f"lowest point over {calls} calls after warm-up ({growth / calls:.2f} MB per call; "
+                             f"limit {limit_mb:.0f} MB)")
     return [result]
 
 
