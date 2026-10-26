@@ -132,6 +132,38 @@ def _windows() -> bool:
     return sys.platform == "win32"
 
 
+def _under_profile(root: Path) -> bool:
+    """Whether ``root`` is the default cache or sits inside the user's home profile, which Windows already keeps
+    private to this user. Such a folder must NOT get the OWNER-RIGHTS private descriptor: a run in an elevated
+    window owns new objects as Administrators, and OWNER RIGHTS would then lock the same user out in a normal
+    window. The profile's own access list keeps the user's full control whoever owns the files."""
+    try:
+        return root == DEFAULT_CACHE or root.is_relative_to(Path.home())
+    except (ValueError, OSError):
+        return False
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Whether ``path`` is a reparse point (a junction or symbolic link). GetNamedSecurityInfoW and the owner/ACL
+    checks follow such a link, so another user's junction that points at a folder of the victim's would pass them
+    and could be re-pointed later; a model folder must be a real directory."""
+    if not _windows():
+        try:
+            return path.is_symlink()
+        except OSError:
+            return False
+    attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    return attrs != 0xFFFFFFFF and bool(attrs & 0x400)  # INVALID_FILE_ATTRIBUTES; FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _reject_reparse(path: Path, what: str) -> None:
+    """Refuses a model folder that is a reparse point (Windows junction/symlink)."""
+    if _windows() and path.exists() and _is_reparse_point(path):
+        raise PrepareError(f"the model {what} {path} is a reparse point (a junction or symbolic link); it could "
+                           "point to another user's folder. Delete it, or pass a new folder as cache_dir "
+                           "(KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir)")
+
+
 def _win32():
     """advapi32, kernel32 and wintypes, with the prototypes used here."""
     from ctypes import wintypes
@@ -284,6 +316,7 @@ def _check_folder_is_yours(root: Path) -> None:
     private; anything else is refused. Folders that do not exist yet are made private when they are created."""
     if not _windows() or not root.exists():
         return
+    _reject_reparse(root, "folder")
     try:
         mine = _owned_by_me(root)
         others = _other_writers(root) if mine else []
@@ -305,7 +338,11 @@ def _make_root(root: Path) -> None:
     if root.is_dir():
         return
     root.parent.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "win32":
+    # Only folders outside the user profile need the private descriptor (one made under C:\ or on another drive
+    # otherwise lets every signed-in user replace the model files). The default cache and other folders inside the
+    # profile are already private to this user; giving them the OWNER-RIGHTS descriptor would lock the same user out
+    # after a run in an elevated window (see _under_profile).
+    if sys.platform == "win32" and not _under_profile(root):
         with contextlib.suppress(FileExistsError):
             _private_mkdir(root)
     else:
@@ -569,6 +606,11 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
     root = cache_root(cache_dir, log)
     sha = resolve_revision(repo, revision, root, log)
     final = root / sha
+    if cache_dir is not None:
+        # resolve_revision may have waited on Hugging Face; a folder or junction another user planted in that window
+        # must not be trusted. Re-check the folder now that it exists, and refuse a <sha> reached through a junction.
+        _check_folder_is_yours(root)
+        _reject_reparse(final, "folder")
     if is_prepared(final, with_cloning):
         _record_ref(root, repo, revision, sha)
         return final
@@ -596,6 +638,8 @@ def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_d
              with_cloning: bool, repo: str, log: Callable[[str], None]) -> None:
     """Downloads and prepares ``sha`` into ``final`` under the revision's lock (see ensure)."""
     _make_root(root)
+    if cache_dir is not None:
+        _check_folder_is_yours(root)  # a folder planted while the root was being created is caught here
     with _locked(root / f".{sha}.lock"):
         if not is_prepared(final, with_cloning):
             prepare = _assets()

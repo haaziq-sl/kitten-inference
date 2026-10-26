@@ -454,6 +454,32 @@ def test_an_empty_cache_dir_of_this_user_is_made_private(monkeypatch, tmp_path):
     assert _prepare.cache_root(tmp_path / "new") == tmp_path / "new" and acl.made_private == []
 
 
+def test_default_cache_is_not_made_private_on_windows(monkeypatch, tmp_path):
+    # Under the user profile Windows already keeps the folder private; giving it the OWNER-RIGHTS descriptor would
+    # lock the same user out of it after a run in an elevated window. A folder outside the profile is still private.
+    monkeypatch.setattr(_prepare.sys, "platform", "win32")
+    default = tmp_path / "home" / ".cache" / "kitten-inference" / "tts2"
+    monkeypatch.setattr(_prepare, "DEFAULT_CACHE", default)
+    private = []
+    monkeypatch.setattr(_prepare, "_private_mkdir", lambda p: private.append(p))
+    _prepare._make_root(default)
+    assert default.is_dir() and private == []
+    custom = tmp_path / "C" / "kitten-tts2"
+    _prepare._make_root(custom)
+    assert private == [custom]  # outside the profile: made private
+
+
+def test_a_reparse_point_cache_dir_is_refused(monkeypatch, tmp_path):
+    # A junction another user owns that points at the victim's folder would pass the owner/ACL checks (they follow
+    # the link) and could be re-pointed later; a model folder must be a real directory.
+    folder = tmp_path / "kitten-tts2"
+    folder.mkdir()
+    monkeypatch.setattr(_prepare, "_windows", lambda: True)
+    monkeypatch.setattr(_prepare, "_is_reparse_point", lambda p: p == folder)
+    with pytest.raises(_prepare.PrepareError, match="reparse point"):
+        _prepare._check_folder_is_yours(folder)
+
+
 def test_the_default_folder_is_not_checked(monkeypatch, tmp_path):
     # It is in the user's own profile, which Windows keeps private.
     _Acl(monkeypatch, owner_is_me=False)
