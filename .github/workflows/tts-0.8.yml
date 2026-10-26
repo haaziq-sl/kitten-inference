@@ -395,6 +395,8 @@ jobs:
       # kitten_inference is a namespace package, so delvewheel must not create its __init__.py. delvewheel is pinned
       # and runs on its own Python, so every wheel (cp38 included) is repaired by the same version. Then
       # add_msvc_runtime.py adds the runtime under its own names for espeak-ng (loaded only when Windows has none).
+      # macOS: delocate is pinned the same way. Left to cibuildwheel, each build venv installs its own delocate, and
+      # the cp38 one (0.12, the last for Python 3.8) retagged the wheel macosx_10_9 -> 11_0 without updating RECORD.
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
@@ -404,6 +406,9 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            uvx --python 3.12 --from delocate==0.13.0 delocate-wheel --require-archs {delocate_archs}
+            -w {dest_dir} -v {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
             uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
             --namespace-pkg kitten_inference -w {dest_dir} {wheel} &&
@@ -424,6 +429,9 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            uvx --python 3.12 --from delocate==0.13.0 delocate-wheel --require-archs {delocate_archs}
+            -w {dest_dir} -v {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
             uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
             --namespace-pkg kitten_inference -w {dest_dir} {wheel} &&
@@ -651,7 +659,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import hashlib, json, pathlib, re, struct, sys, zipfile
+          import base64, csv, hashlib, io, json, pathlib, re, struct, sys, zipfile
 
           def linker_version(pe):  # PE optional header: MajorLinkerVersion, MinorLinkerVersion
               off = struct.unpack_from("<I", pe, 0x3C)[0]
@@ -669,6 +677,20 @@ jobs:
           for w in wheels:
               z = zipfile.ZipFile(w)
               names = z.namelist()
+              # Every file must match its RECORD entry (sha256 and size): a repair tool that rewrites a file has to
+              # update RECORD too (delocate 0.12, which pip gave the cp38 build, retagged WHEEL without doing so).
+              record = next((n for n in names if n.endswith(".dist-info/RECORD")), None)
+              listed = {r[0]: r[1:] for r in csv.reader(io.StringIO(z.read(record).decode()))} if record else {}
+              if record is None:
+                  bad.append(f"{w.name}: no RECORD")
+              for n in names:
+                  if n.endswith("/") or n == record:
+                      continue
+                  data = z.read(n)
+                  want = "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                  if listed.get(n) != [want, str(len(data))]:
+                      bad.append(f"{w.name}: {n} does not match its RECORD entry")
+              bad += [f"{w.name}: RECORD lists {n}, which the wheel lacks" for n in listed if n not in names]
               if "kitten_inference/__init__.py" in names:
                   bad.append(f"{w.name}: ships kitten_inference/__init__.py")
               if not any(n.startswith("kitten_inference/tts08/_engine") for n in names):

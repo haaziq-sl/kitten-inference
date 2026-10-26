@@ -1,9 +1,13 @@
 [build-system]
 # Pinned exactly (like hatchling==1.27.0 for the pure-Python distributions), so the wheel a release tag builds is
 # built with the same backend as the one the gates tested; an unpinned range would let these drift between runs.
+# scikit-build-core 1.1 and pybind11 3.1 need Python 3.9, so the cp38 wheels keep the last releases for 3.8 (the
+# versions the cp38 wheels were built and tested with before the pin).
 requires = [
-    "scikit-build-core==1.1.1",
-    "pybind11==3.1.0",
+    "scikit-build-core==1.1.1; python_version >= '3.9'",
+    "scikit-build-core==1.0.3; python_version < '3.9'",
+    "pybind11==3.1.0; python_version >= '3.9'",
+    "pybind11==3.0.4; python_version < '3.9'",
 ]
 build-backend = "scikit_build_core.build"
 
