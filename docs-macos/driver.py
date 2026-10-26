@@ -110,6 +110,11 @@ def session_env(home, path_kind, shell):
     env['SHELL'] = '/bin/zsh' if shell.startswith('zsh') else '/bin/bash'
     if path_kind == 'system':
         env['PATH'] = SYSTEM_PATH
+    if os.environ.get('SESSION_PIP_FIND_LINKS'):
+        # Allowed deviation for this test release: the TTS 0.8 test wheels come from a folder, everything else from pypi.org.
+        env['PIP_FIND_LINKS'] = os.environ['SESSION_PIP_FIND_LINKS']
+        print('@@INFO deviation: PIP_FIND_LINKS=' + env['PIP_FIND_LINKS'], flush=True)
+    env.pop('SESSION_PIP_FIND_LINKS', None)
     for k in ('DIST', 'GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'):
         env.pop(k, None)
     return env

@@ -65,6 +65,8 @@ for d in sorted({Path(x) for x in [str(p.parent) for p in root.rglob('hello.wav'
         u['import'] = {'rc': rc, 'out': txt[-400:]}
     res['units'][u['dir']] = u
 
+log = (out / 'session.log').read_bytes().decode('utf-8', 'replace') if (out / 'session.log').exists() else ''
+res['wheel_files_in_log'] = sorted(set(re.findall(re.escape(dist.replace('-', '_')) + r'[A-Za-z0-9_]*-[0-9][^\s/\'"]*\.whl', log)))
 hub = home / '.cache' / 'huggingface' / 'hub'
 res['hf_cache'] = {}
 if hub.exists():

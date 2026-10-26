@@ -15,6 +15,21 @@ on:
         required: false
         default: ""
         type: string
+      wheels_run:
+        description: "CI run whose tts08-wheels-macos-arm64 artifact is rebuilt into the test-release TTS 0.8 wheels (PIP_FIND_LINKS)"
+        required: false
+        default: ""
+        type: string
+      desc_sha:
+        description: "commit whose tts-0.8/README.md is the TTS 0.8 wheels' long description"
+        required: false
+        default: ""
+        type: string
+      sums:
+        description: "expected sha256 of the rebuilt wheels: 'sha256  file' lines"
+        required: false
+        default: ""
+        type: string
   push:
     branches: [ws/vb-macos]
     paths: [".github/workflows/docs-macos.yml"]
@@ -33,7 +48,7 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/harness/doc"
           base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
-          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+          for f in driver.py post.py claims.py retag.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
             curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
           done
           shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
@@ -80,7 +95,7 @@ jobs:
           test -n "$DIST"
           mkdir -p "$RUNNER_TEMP/harness/doc" "$RUNNER_TEMP/out"
           base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
-          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+          for f in driver.py post.py claims.py retag.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
             curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
           done
           shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
@@ -103,6 +118,39 @@ jobs:
           echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
           curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))'
           curl -sS "https://pypi.org/pypi/$DIST-tts08/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("tts08 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]][:12])'
+      - name: CI wheels for TTS 0.8 (macOS arm64)
+        if: inputs.wheels_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.wheels_run }}
+          github-token: ${{ github.token }}
+          name: tts08-wheels-macos-arm64
+          path: ${{ runner.temp }}/ci-wheels
+      - name: Test-release TTS 0.8 wheels for PIP_FIND_LINKS, checked against the release sha256
+        if: inputs.wheels_run != ''
+        env:
+          DESC_SHA: ${{ inputs.desc_sha }}
+          SUMS: ${{ inputs.sums }}
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/desc" "$RUNNER_TEMP/out/retag"
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$DESC_SHA/tts-0.8/README.md" -o "$RUNNER_TEMP/desc/tts08.md"
+          shasum -a 256 "$RUNNER_TEMP/desc/tts08.md" "$RUNNER_TEMP"/ci-wheels/*.whl
+          export TEST_PREFIX="${DIST%kitten-inference}"
+          py=python3; for c in python3.13 python3.12 python3.11; do command -v $c >/dev/null && { py=$c; break; }; done
+          $py -I "$RUNNER_TEMP/harness/retag.py" retag "$RUNNER_TEMP"/ci-wheels/*.whl --out "$RUNNER_TEMP/tts08-wheels" \
+            --description "kitten-inference-tts08=$RUNNER_TEMP/desc/tts08.md" | tail -3
+          cp "$RUNNER_TEMP/tts08-wheels/retag-report.json" "$RUNNER_TEMP/out/retag/"
+          rm -f "$RUNNER_TEMP/tts08-wheels/retag-report.json"
+          (cd "$RUNNER_TEMP/tts08-wheels" && shasum -a 256 *.whl) | sort -k2 > "$RUNNER_TEMP/out/retag/got.txt"
+          printf '%s\n' "$SUMS" | tr ';' '\n' | grep -v '^[[:space:]]*$' | sort -k2 > "$RUNNER_TEMP/out/retag/expected.txt"
+          if diff "$RUNNER_TEMP/out/retag/expected.txt" "$RUNNER_TEMP/out/retag/got.txt"; then
+            echo "SHA256 CHECK: all $(wc -l < "$RUNNER_TEMP/out/retag/got.txt") wheels identical to the release" | tee "$RUNNER_TEMP/out/retag/result.txt"
+          else
+            echo "SHA256 CHECK: MISMATCH (kept for comparison)" | tee "$RUNNER_TEMP/out/retag/result.txt"
+            cp "$RUNNER_TEMP"/tts08-wheels/*.whl "$RUNNER_TEMP/out/retag/"
+          fi
+          echo "SESSION_PIP_FIND_LINKS=$RUNNER_TEMP/tts08-wheels" >> "$GITHUB_ENV"
       - name: Shell check (no doc lines)
         run: |
           for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
@@ -113,49 +161,49 @@ jobs:
         timeout-minutes: 25
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S1-bash "$RUNNER_TEMP/out/S1-bash" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S1-bash" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S1-bash" || echo "post rc $?"
       - name: S2 bash, tts-0.8/README.md Install and Use, then the README's options
         if: matrix.group == 'bash'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S2-bash-pkg "$RUNNER_TEMP/out/S2-bash-pkg" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S2-bash-pkg" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S2-bash-pkg" || echo "post rc $?"
       - name: S3 bash, README.md TTS 0.8 block in a deep folder with a non-ASCII name
         if: matrix.group == 'bash'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S3-bash-deep "$RUNNER_TEMP/out/S3-bash-deep" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S3-bash-deep" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S3-bash-deep" || echo "post rc $?"
       - name: S4 replay of the whole path in one interactive bash (pseudo-terminal)
         if: matrix.group == 'bash'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S4-bash-pty-replay "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "post rc $?"
       - name: S5 interactive zsh (macOS default shell), lines as pasted
         if: matrix.group == 'zsh'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S5-zsh-pty "$RUNNER_TEMP/out/S5-zsh-pty" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S5-zsh-pty" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S5-zsh-pty" || echo "post rc $?"
       - name: S6 zsh login shell with the stock macOS PATH (python3 from Apple), lines as pasted
         if: matrix.group == 'zsh'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S6-zsh-login-system "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "post rc $?"
       - name: S7 bash with the stock macOS PATH, README.md TTS 0.8 block
         if: matrix.group == 'zsh'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S7-bash-system "$RUNNER_TEMP/out/S7-bash-system" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S7-bash-system" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S7-bash-system" || echo "post rc $?"
       - name: S8 bash with the stock macOS PATH, the "[tts-0-8]" line for a pip you cannot upgrade
         if: matrix.group == 'zsh'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S8-bash-system-oldpip "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "driver rc $?"
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "post rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "post rc $?"
       - name: Results
         if: always()
         uses: actions/upload-artifact@v4
