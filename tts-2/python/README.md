@@ -56,4 +56,12 @@ the voice with `KittenTTS2(revision="...")` or `kitten-tts2 --revision ...`: `tt
 `clone_voice()`, each request starts about 14 ms later (33 ms instead of 19 ms on an RTX 4090): supported, not
 optimal. The engine then keeps no voice ready between requests, so that building a voice still fits a 12 GB GPU.
 
+## Model license
+
+The package code is Apache-2.0. The Kitten TTS 2 model this downloads on first use is under the
+[Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md), not Apache or
+MIT: commercial use needs registration, the license ends once your revenue or funding passes US$1M, training on or
+distilling from the outputs is not allowed, and redistribution must include the agreement, a notice file and
+"Powered by KittenML". Read it before you build on this.
+
 Docs and numbers: https://github.com/KittenML/kitten-inference/tree/main/tts-2

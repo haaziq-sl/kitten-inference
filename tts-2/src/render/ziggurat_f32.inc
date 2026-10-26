@@ -2,6 +2,8 @@
 // from numpy 1.26.4 numpy/random/src/distributions/ziggurat_constants.h
 // (sdist sha256 2a02aba9ed12e4ac4eb3ea9421c420301a0c6460d9830d74a9df87efa4912010).
 // numpy is BSD-3-Clause licensed (Copyright (c) 2005-2023, NumPy Developers).
+// The ziggurat tables and method were derived, via numpy, from Julia (MIT); see NOTICE,
+// licenses/Julia.txt and licenses/NumPy-random.txt.
 // Included only by src/render/rng.cc.
 static const uint32_t ki_float[] = {
     0x007799ECUL, 0x00000000UL, 0x006045F5UL, 0x006D1AA8UL, 0x00728FB4UL,

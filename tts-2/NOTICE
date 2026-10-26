@@ -132,6 +132,15 @@ licenses in licenses/Python.txt, licenses/Unicode.txt and licenses/Tokenizers.tx
 They are compact tables extracted from the named versions; they do not
 include a Python interpreter or the tokenizers runtime.
 
+src/voice/consent_phrase.cc also contains a C++ port of CPython's
+difflib.SequenceMatcher (used for the voice-cloning consent-phrase check),
+under the Python Software Foundation License retained in licenses/Python.txt.
+Summary of the changes made to Python (PSF License section 3): the pure-Python
+class is rewritten in C++ over byte strings; only __chain_b (with autojunk),
+find_longest_match, get_matching_blocks and ratio are ported; isjunk is not
+supported (always None); the public SequenceMatcher API, the quick-ratio
+shortcuts and Differ/HtmlDiff are omitted.
+
 
 Audio processing and random numbers
 -----------------------------------
@@ -164,10 +173,16 @@ Support. The notice is also in licenses/fdlibm.txt.
 
 The float32 ziggurat constants in src/render/ziggurat_f32.inc are copied from
 NumPy 1.26.4, Copyright (c) 2005-2023, NumPy Developers, under BSD-3-Clause.
-The full license is retained in licenses/NumPy.txt.
+The full license is retained in licenses/NumPy.txt. Those tables and the
+standard-normal ziggurat method ported in src/render/rng.cc were derived, via
+NumPy, from Julia (Copyright (c) 2009-2019 Jeff Bezanson, Stefan Karpinski,
+Viral B. Shah and other contributors), under the MIT license; that notice is
+retained in licenses/Julia.txt.
 The PCG64 and SeedSequence implementation in src/render/rng.cc follows
 NumPy 1.26.4 and Melissa E. O'Neill's reference algorithms. Their MIT notices
-are retained in licenses/PCG64.txt and licenses/SeedSequence.txt.
+are retained in licenses/PCG64.txt and licenses/SeedSequence.txt. The
+numpy.random module these follow is dual-licensed (NCSA and 3-Clause BSD) by
+Kevin Sheppard; that notice is retained in licenses/NumPy-random.txt.
 
 
 NVIDIA CUDA runtime

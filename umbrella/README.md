@@ -13,3 +13,5 @@ Kitten TTS 2 needs Python 3.9 or newer on Linux x86-64 or Windows x64 (AMD: Linu
 Python: `from kitten_inference.tts08 import KittenTTS`, `from kitten_inference.tts2 import KittenTTS2`. Docs, speed numbers and examples: https://github.com/KittenML/kitten-inference
 
 Version 0.1.x of this package was the TTS 0.8 engine itself (`import model_inference`); code that uses it pins `kitten-inference==0.1.1`.
+
+Licenses: the package code is Apache-2.0. The models each engine downloads keep their own licenses: the Kitten TTS 0.8 weights are Apache-2.0, while the Kitten TTS 2 model is under the [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md) (commercial use needs registration; the license ends above US$1M revenue or funding; no training on or distilling from outputs; redistribution carries the agreement, a notice file and "Powered by KittenML"). Read it before using TTS 2.
