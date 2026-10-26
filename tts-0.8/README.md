@@ -80,41 +80,17 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
 
 | Platform | Python | |
 |---|---|---|
-| Linux x86_64 | 3.8–3.14¹ | tested |
-| Linux ARM64 | 3.8–3.14¹ | tested |
-| Windows x64 | 3.8–3.14¹ | tested |
-| macOS Apple Silicon | 3.8–3.14¹ | tested |
-| macOS Intel | 3.8–3.14¹ | built; passes an automated audio check, not tested by hand |
-| Windows ARM64 | 3.11–3.14¹ | built; passes an automated audio check, not tested by hand |
+| Linux x86_64 and ARM64 | 3.8–3.14 | tested |
+| Windows x64 | 3.8–3.14 | tested |
+| macOS Apple Silicon | 3.8–3.14 | tested |
+| macOS Intel | 3.8–3.14 | automated tests only |
+| Windows ARM64 | 3.11–3.14 | automated tests only; about 9 times slower than Linux ARM64 |
 | Android ARM64 (experimental) | 3.13 | built, not tested |
 
-¹ Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages.
-
-- Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later. macOS needs version 11 or newer.
-- x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2
-  CPU with dot-product instructions, such as a Raspberry Pi 5 (a Raspberry Pi 4 is not supported).
-  On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
-- Deep folders and, on Windows, folder names with non-ASCII letters (for example a user folder named José) work:
-  if the text front end's (espeak-ng) data path is too long or not plain ASCII, TTS 0.8 keeps one copy of that data in
-  a short folder (`~/.cache/kitten-inference/espeak`, on Windows `%LOCALAPPDATA%\kitten-inference\espeak` or
-  `C:\ProgramData\kitten-inference-espeak-<id>`); you can delete it at any time. On Windows, a virtual environment path
-  of about 150 characters or more can stop the install or the import, with an error that says so: use a shorter folder for the
-  virtual environment.
-- Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
-  9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
-  slower again. Use the full-size models there.
-- Intel CPUs with performance and efficiency cores: by default the engine runs on the performance
-  cores' threads and lets the faster threads take more of its main matrix work, instead of splitting
-  it evenly over every core (`OMP_NUM_THREADS` still sets the thread count). A short sentence (nano)
-  took 0.12 s instead of 0.30 s on a Core i9-12900, and 0.09 s instead of 2.0 s on a Core i9-14900K.
-  If you set `OMP_NUM_THREADS` to every thread on such a CPU, also set `OMP_WAIT_POLICY=passive`: otherwise
-  calls can stall for seconds.
-- The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
-  CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
-  macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
-- Windows: the wheel brings the Microsoft Visual C++ runtime that the text front end (espeak-ng)
-  needs, and uses it only when Windows has none. If `KittenTTS()` still reports "espeak not installed",
-  install the Microsoft Visual C++ Redistributable: `winget install Microsoft.VCRedist.2015+.x64`.
+- Linux needs glibc 2.29 or newer (Ubuntu 20.04, Debian 11, RHEL 9 or later); macOS needs version 11 or newer.
+- The CPU needs AVX2 on x86-64, or dot-product instructions on ARM64 (a Raspberry Pi 5 works, a Raspberry Pi 4 does not).
+- On Windows, keep the virtual environment's path under about 150 characters. If `KittenTTS()` reports "espeak not
+  installed", install the Microsoft Visual C++ Redistributable: `winget install Microsoft.VCRedist.2015+.x64`.
 
 ## Upgrading from kitten-inference 0.1.x
 
@@ -134,3 +110,7 @@ Apache-2.0 ([nano](https://huggingface.co/KittenML/kitten-tts-nano-0.8),
 [micro](https://huggingface.co/KittenML/kitten-tts-micro-0.8),
 [mini](https://huggingface.co/KittenML/kitten-tts-mini-0.8)); this package downloads them converted to its
 engine's format from [KittenML/meownn-models](https://huggingface.co/KittenML/meownn-models).
+
+## Work in progress
+
+Kitten TTS 0.8 support is still being improved. Next: a faster GPU path and faster int8 models.
