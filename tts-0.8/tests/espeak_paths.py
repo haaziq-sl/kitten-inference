@@ -94,6 +94,32 @@ def make_venv(venv, wheels, overlay, env):
     return py, out[-1]
 
 
+def short_name(path):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, len(buf))
+    return buf.value if 0 < n < len(buf) else str(path)
+
+
+def make_short_named(folder):
+    """Creates ``folder`` (a non-ASCII name on C:) with an ASCII 8.3 short name, as Windows 10/11 usually gives
+    folders on the system drive. Turns 8.3 names on first (the runner is an administrator), else sets one."""
+    for cmd in (["fsutil", "8dot3name", "set", "0"], ["fsutil", "8dot3name", "set", "C:", "0"]):
+        rc, out = run(cmd)
+        print(" ".join(cmd), "->", rc, " ".join(out[-2:]), flush=True)
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.mkdir()
+    if not short_name(folder).isascii():
+        rc, out = run(["fsutil", "file", "setshortname", str(folder), "LUKASZ8"])
+        print("fsutil file setshortname ->", rc, " ".join(out[-2:]), flush=True)
+    short = short_name(folder)
+    if not short.isascii():
+        raise RuntimeError(f"could not give {folder!r} an ASCII 8.3 name (got {short!r})")
+    return short
+
+
 def judge(expect, kind, rc, lines):
     """(passed, what happened)"""
     text = "\n".join(lines)
@@ -115,6 +141,7 @@ def judge(expect, kind, rc, lines):
         ("broken", "engine-too-long"): "misleading error: native engine missing",
         ("broken", "windows-ok"): "speaks",
         ("fixed", "windows-ok"): "speaks",
+        ("fixed", "short-name"): "speaks",
     }[(expect, kind)]
     return got == want, got, result
 
@@ -152,6 +179,13 @@ def main():
             local = root / "AppData" / "Local"
             env = {"TEMP": str(local / "Temp"), "TMP": str(local / "Temp"), "LOCALAPPDATA": str(local)}
             cases.append((f"venv under {label}", root / "venv", "speak", env))
+        if args.expect == "fixed":
+            # The 8.3 route (_espeak_path.short_path): a non-ASCII folder with an ASCII short name. Last, because it
+            # turns on 8.3 names for the runner's drives.
+            root = Path("C:\\") / "ep-short" / "\u0141ukasz8"
+            local = root / "AppData" / "Local"
+            env = {"TEMP": str(local / "Temp"), "TMP": str(local / "Temp"), "LOCALAPPDATA": str(local)}
+            cases.append(("venv under \u0141ukasz8 (ASCII 8.3 name)", root / "venv", "short-name", env))
 
     rows, failed = [], 0
     for label, venv, kind, extra in cases:
@@ -161,6 +195,10 @@ def main():
                 Path(extra[key]).mkdir(parents=True, exist_ok=True)
         row = {"case": label, "kind": kind, "venv": str(venv), "venv_len": len(str(venv))}
         try:
+            if kind == "short-name":
+                row["short_name"] = make_short_named(venv.parent)
+                for key in ("TEMP", "LOCALAPPDATA"):
+                    Path(extra[key]).mkdir(parents=True, exist_ok=True)
             py, data_path = make_venv(venv, wheels, args.overlay, env)
             row["data_path"], row["data_path_len"] = data_path, len(data_path)
             if WIN and args.case == "names":
@@ -175,6 +213,8 @@ def main():
             row["ok"] = all(r["ok"] for r in runs)
             if row["ok"] and len(runs) == 2 and runs[0]["result"] and runs[1]["result"]:
                 row["ok"] = runs[0]["result"]["data_path"] == runs[1]["result"]["data_path"]
+            if kind == "short-name":  # espeak-ng must have loaded through the short name, not a copy
+                row["ok"] = row["ok"] and all((r["result"] or {}).get("how") == "short-name" for r in runs)
         except Exception as exc:
             row["error"] = f"{type(exc).__name__}: {exc}"[:800]
             row["ok"] = False
