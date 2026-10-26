@@ -503,6 +503,22 @@ def _snapshot(repo: str, sha: str, patterns: List[str], cache_dir: Optional[os.P
         raise PrepareError(f"downloading {repo} at {sha[:12]} failed: {exc}") from exc
 
 
+def _pinned_inputs(prepare, cache_dir: Optional[os.PathLike]):
+    """Downloads the small pinned text-processing inputs (the NeMo data wheel from PyPI, the grammar files from
+    GitHub) before the 4.6 GB model snapshot, so a network that blocks either host fails in a few seconds rather
+    than after the large download. Returns (grammar_dir, nemo_wheel) to hand the child, which then does not fetch
+    them again. The cache path matches the child's (prepare.main: ``<cache-dir or ~/.cache/kitten-tts>``)."""
+    conv = (_download_cache(cache_dir) or Path.home() / ".cache" / "kitten-tts") / "native-conversion"
+    try:
+        prepare.pinned_wheel(conv, False)
+        grammar = prepare.pinned_grammar(conv, False)
+    except Exception as exc:
+        raise PrepareError(f"downloading the pinned text-processing files failed: {exc}. First use needs PyPI "
+                           "(files.pythonhosted.org) and GitHub (raw.githubusercontent.com) reachable, besides "
+                           "Hugging Face") from exc
+    return Path(grammar), prepare.nemo_wheel_path(conv)
+
+
 def _acoustic(prepare, cache_dir: Optional[os.PathLike]) -> Path:
     """The pinned decoder weights, downloaded here so that every large download shows its progress in stage 1
     (prepare checks their SHA-256 again)."""
@@ -590,9 +606,13 @@ def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_d
             if not is_prepared(final):
                 patterns = list(prepare.MODEL_ALLOW_PATTERNS) + (list(prepare.CLONING_ALLOW_PATTERNS)
                                                                  if with_cloning else [])
+                # Small pinned inputs first (a few MB from PyPI and GitHub), so a network that blocks either host
+                # fails here rather than after the 4.6 GB model download (prepare.main's own order).
+                grammar_dir, nemo_wheel = _pinned_inputs(prepare, cache_dir)
                 log(f"[1/3] downloading {repo} at {sha[:12]} and the decoder weights (first use only)")
                 snapshot = _snapshot(repo, sha, patterns, cache_dir)
-                common += ["--acoustic-source", str(_acoustic(prepare, cache_dir))]
+                common += ["--acoustic-source", str(_acoustic(prepare, cache_dir)),
+                           "--grammar-dir", str(grammar_dir), "--nemo-wheel", str(nemo_wheel)]
                 downloaded = time.monotonic()
                 partial = root / f".partial-{sha}"
                 shutil.rmtree(partial, ignore_errors=True)

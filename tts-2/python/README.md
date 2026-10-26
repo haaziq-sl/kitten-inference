@@ -29,7 +29,9 @@ kitten-tts2 --list-voices
 
 First use checks the GPU driver, then downloads about 4.6 GB (the latest model revision on Hugging Face unless
 `revision=` / `--revision` pins one) and prepares it once per revision: 35 to 100 s of preparation on our test
-machines, plus the download time. No PyTorch and no Hugging Face account are needed. The downloads stay in the
+machines, plus the download time. No PyTorch and no Hugging Face account are needed. First use also fetches a few
+small pinned files from PyPI (`files.pythonhosted.org`) and GitHub (`raw.githubusercontent.com`); these are checked
+first, so a network that blocks either host fails in seconds rather than after the large download. The downloads stay in the
 Hugging Face cache (`~/.cache/huggingface`); the prepared model (2 GB) is in `~/.cache/kitten-inference/tts2/`.
 `cache_dir=` / `--cache-dir` keeps both in one folder instead; on Windows it must be a new folder or one only you can
 change. When a newer revision cannot be prepared (for example for lack of disk space), the one prepared before is

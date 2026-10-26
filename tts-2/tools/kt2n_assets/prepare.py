@@ -133,9 +133,17 @@ def download(url: str) -> bytes:
         return response.read()
 
 
+NEMO_WHEEL_NAME = "nemo_text_processing-1.2.0.whl"
+
+
+def nemo_wheel_path(cache: Path) -> Path:
+    """Where pinned_wheel keeps the cached NeMo data wheel (so a caller can pass it back as --nemo-wheel)."""
+    return cache / NEMO_WHEEL_NAME
+
+
 def pinned_wheel(cache: Path, offline: bool, fetch=download) -> bytes:
     """The NeMo data wheel, downloaded once into ``cache`` and sha256-checked; a bad cached copy is downloaded again."""
-    path = cache / "nemo_text_processing-1.2.0.whl"
+    path = nemo_wheel_path(cache)
     if path.is_file():
         data = path.read_bytes()
         if hashlib.sha256(data).hexdigest() == NEMO_WHEEL_SHA256:

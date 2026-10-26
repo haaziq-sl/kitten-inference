@@ -59,6 +59,25 @@ class FakePrepare:
     def __init__(self):
         self.runs = []
         self.fail_with = None
+        self.pinned = []          # ("wheel"/"grammar", cache) in the order fetched
+        self.pinned_fail = None   # when set, pinned_wheel raises it (a blocked PyPI/GitHub)
+
+    def pinned_wheel(self, cache, offline, fetch=None):
+        if self.pinned_fail is not None:
+            raise ValueError(self.pinned_fail)
+        self.pinned.append(("wheel", Path(cache)))
+        return b"wheel"
+
+    def pinned_grammar(self, cache, offline, fetch=None):
+        if self.pinned_fail is not None:
+            raise ValueError(self.pinned_fail)
+        self.pinned.append(("grammar", Path(cache)))
+        d = Path(cache) / "grammar"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def nemo_wheel_path(self, cache):
+        return Path(cache) / "nemo_text_processing-1.2.0.whl"
 
     def run(self, argv, log_path):  # replaces _prepare._run_prepare
         log_path.write_text("Next: kitten-tts-native --assets ...\n")
@@ -120,8 +139,21 @@ def test_first_use_prepares_once(env, capsys):
     snapshot = [c for c in env.hub.calls if c[0] == "snapshot"][0]
     assert snapshot[2] == SHA and snapshot[3] == tuple(FakePrepare.MODEL_ALLOW_PATTERNS)
     assert snapshot[5] is False  # no token is ever sent
+    # the small pinned inputs were fetched and handed to the child, so it does not download them again
+    assert [kind for kind, _ in env.prep.pinned] == ["wheel", "grammar"]
+    assert argv[argv.index("--grammar-dir") + 1].endswith("grammar")
+    assert argv[argv.index("--nemo-wheel") + 1].endswith("nemo_text_processing-1.2.0.whl")
     env.lines.clear()
     assert env.run() == d and len(env.prep.runs) == 1 and env.lines == []
+
+
+def test_pinned_inputs_are_fetched_before_the_big_download(env):
+    # A network that blocks PyPI or GitHub must fail before the 4.6 GB Hugging Face snapshot, not after it.
+    env.prep.pinned_fail = "the grammar host is unreachable"
+    with pytest.raises(_prepare.PrepareError, match="pinned text-processing files failed.*GitHub"):
+        env.run()
+    assert [c for c in env.hub.calls if c[0] == "snapshot"] == []  # the big download never started
+    assert env.prep.runs == []
 
 
 def test_pinned_revision_needs_no_network(env):
