@@ -80,9 +80,10 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
   On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
 - Deep folders and, on Windows, folder names with non-ASCII letters (for example a user folder named José) work:
   if the text front end's (espeak-ng) data path is too long or not plain ASCII, TTS 0.8 keeps one copy of that data in
-  a short folder (`~/.cache/kitten-inference/espeak`, on Windows `C:\ProgramData\kitten-inference\espeak-<id>`); you can
-  delete it at any time. On Windows, a virtual environment path longer than about 180 characters still stops the
-  import, with an error that says so: use a shorter folder or enable long paths.
+  a short folder (`~/.cache/kitten-inference/espeak`, on Windows `%LOCALAPPDATA%\kitten-inference\espeak` or
+  `C:\ProgramData\kitten-inference-espeak-<id>`); you can delete it at any time. On Windows, a virtual environment path
+  of about 168 characters or more still stops the import, with an error that says so: use a shorter folder for the
+  virtual environment.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.

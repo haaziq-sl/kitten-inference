@@ -77,7 +77,7 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
   `winget install Microsoft.VCRedist.2015+.x64`.
 - With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
   23.2.1 install no engine for `[tts-0.8]` and still report success.
-- On Windows, keep the virtual environment's path under about 180 characters; longer paths stop TTS 0.8 with an error
+- On Windows, keep the virtual environment's path under about 168 characters; longer paths stop TTS 0.8 with an error
   that says so ([details](tts-0.8/README.md#platforms)).
 - **Supported, not optimal:**
   - int8 models on Intel CPUs: 1.6 to 2.2 times the ONNX Runtime time on an Intel Xeon, and 1.7 to 2.4 times on a
