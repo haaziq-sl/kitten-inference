@@ -42,7 +42,7 @@ SESSIONS = {
 
 def doc_lines(name):
     out = []
-    for line in (DOC / name).read_text().splitlines():
+    for line in (DOC / name).read_text(encoding='utf-8').splitlines():
         if line.startswith('pip install "kitten-inference['):
             line = line.replace('pip install "kitten-inference[', f'pip install "{DIST}[', 1)
         out.append(line)
@@ -58,7 +58,7 @@ def units_to_steps(units, root):
         d = root / u
         if u == 'top':
             d.mkdir(parents=True)
-            (d / 'use_from_python.py').write_text((DOC / 'top_use_from_python_tts08.py').read_text())
+            (d / 'use_from_python.py').write_text((DOC / 'top_use_from_python_tts08.py').read_text(encoding='utf-8'), encoding='utf-8')
             if active:
                 steps.append(('setup', 'deactivate', d))
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
@@ -67,7 +67,7 @@ def units_to_steps(units, root):
             active = True
         elif u == 'pkg':
             d.mkdir(parents=True)
-            (d / 'use.py').write_text((DOC / 'pkg_use.py').read_text())
+            (d / 'use.py').write_text((DOC / 'pkg_use.py').read_text(encoding='utf-8'), encoding='utf-8')
             if active:
                 steps.append(('setup', 'deactivate', d))
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
@@ -76,11 +76,11 @@ def units_to_steps(units, root):
             active = True
         elif u == 'claims':
             d = root / 'pkg'
-            (d / 'claims.py').write_text((HERE / 'claims.py').read_text())
+            (d / 'claims.py').write_text((HERE / 'claims.py').read_text(encoding='utf-8'), encoding='utf-8')
             steps.append(('check', 'python claims.py', d))
         elif u == 'deep':
             # tts-0.8/README.md "Platforms": deep folders work. A user folder with a long path and a non-ASCII name.
-            d = root / 'deep' / 'José projects' / ('x' * 60) / ('y' * 60) / ('z' * 60) / ('w' * 60)
+            d = root / 'deep' / 'José' / ('x' * 60) / ('y' * 60) / ('z' * 60) / ('w' * 60)
             d.mkdir(parents=True)
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps += [('doc', l, d) for l in top]
@@ -132,7 +132,7 @@ def run_script(steps, env, out, stop):
         if (stop and kind in ('doc', 'check')) or kind == 'setup':
             lines.append(f'[ $__rc -eq 0 ] || exit 100')
     script = out / 'session.sh'
-    script.write_text('\n'.join(lines) + '\n')
+    script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     with open(out / 'session.log', 'wb') as fh:
         p = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', str(script)], env=env, cwd=env['HOME'],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -224,6 +224,7 @@ def run_pty(argv, steps, env, out, stop):
 
 
 def main():
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     name, out = sys.argv[1], Path(sys.argv[2]).resolve()
     shell, path_kind, units, stop = SESSIONS[name]
     root = Path(os.environ['RUNNER_TEMP']) / 'docs' / name
@@ -247,7 +248,7 @@ def main():
     summary = {'session': name, 'shell': shell, 'path': path_kind, 'units': units, 'stop_on_fail': stop,
                'home': str(home), 'root': str(root), 'steps': res,
                'all_ran': len(res) == len(steps), 'first_failure': first_fail}
-    (out / 'steps.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False))
+    (out / 'steps.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding='utf-8')
     print('\n@@RESULT ' + json.dumps({'session': name, 'first_failure': first_fail,
                                       'rcs': [r['rc'] for r in res], 'n_steps': len(steps)}, ensure_ascii=False))
 

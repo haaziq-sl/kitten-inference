@@ -7,8 +7,9 @@ import hashlib, json, os, re, subprocess, sys, wave
 from array import array
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 out = Path(sys.argv[1])
-S = json.loads((out / 'steps.json').read_text())
+S = json.loads((out / 'steps.json').read_text(encoding='utf-8'))
 root, home = Path(S['root']), Path(S['home'])
 dist = os.environ['DIST']
 norm = lambda n: re.sub(r'[-_.]+', '-', n).lower()
@@ -75,5 +76,5 @@ if hub.exists():
 ki = home / '.cache' / 'kitten-inference'
 res['kitten_inference_cache'] = {str(p.relative_to(ki)): sum(1 for _ in p.rglob('*')) for p in ki.glob('*')} if ki.exists() else None
 res['home_top'] = sorted(str(p.relative_to(home)) for p in home.glob('*')) + sorted(str(p.relative_to(home)) for p in home.glob('.*'))
-(out / 'post.json').write_text(json.dumps(res, indent=1, ensure_ascii=False))
+(out / 'post.json').write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding='utf-8')
 print(json.dumps(res, indent=1, ensure_ascii=False)[:6000])
