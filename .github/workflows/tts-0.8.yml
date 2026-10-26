@@ -462,7 +462,8 @@ jobs:
 
       # One Python per platform: micro and mini (fp32 and int8; on Apple Silicon on Metal, then on the CPU,
       # compared), two backends in one process, several models generating at once from different threads, and
-      # memory over 100 calls (on Apple Silicon on both backends). Every check runs; the step fails if any did.
+      # memory over 100 calls (on Apple Silicon on both backends, plus 20 bit-identical Metal repeats). Every check
+      # runs; the step fails if any did.
       - name: Every model, two backends, threads, memory (CPython 3.12)
         shell: bash
         run: |
@@ -485,6 +486,8 @@ jobs:
             run --mode models --out-dir models-cpu --backend cpu --expect-backend cpu --compare-to models-metal
             run --mode memory --out-dir memory-metal --backend metal --expect-backend metal
             run --mode memory --out-dir memory-cpu --backend cpu --expect-backend cpu
+            # Metal output must repeat bit for bit in one process (a missing barrier in the norm kernels broke that).
+            run --mode repeat --out-dir repeat-metal --backend metal --expect-backend metal
           else
             run --mode models --out-dir models --expect-backend cpu
             run --mode memory --out-dir memory --expect-backend cpu

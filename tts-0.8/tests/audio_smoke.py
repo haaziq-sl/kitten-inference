@@ -78,11 +78,19 @@ THREAD_PLAN = [
 ]
 # A Latin-1, a Latin-2 and a CJK letter: no Windows ANSI code page has all three.
 UNICODE_DIR_PREFIX = "kitten-é-Ł-猫-"
-# Metal output is not bit-for-bit repeatable (differences up to 7e-4 seen), so Metal is compared loosely: the same
-# length, the difference at most 1% of the signal (RMS) and no sample off by more than 0.05. A race between calls
-# gave a wrong length or differences of 0.9.
+# Metal output is compared loosely: the same length, the difference at most 1% of the signal (RMS) and no sample off
+# by more than 0.05. A race between calls gave a wrong length or differences of 0.9. Within one process Metal output
+# now repeats bit for bit (see repeat_check); the loose comparison stays for outputs of separate model instances.
 METAL_MAX_DIFF = 0.05
 METAL_RMS_RATIO = 0.01
+# The repeat check: the medium text of the TTS 0.8 benchmark (three sentences, so three engine passes of different
+# lengths per call) on micro, whose wider layers showed the Metal race most often.
+REPEAT_MODEL = "KittenML/kitten-tts-micro-0.8"
+REPEAT_TEXT = (
+    "This small model turns written text into natural speech on an ordinary computer. It runs quickly without a "
+    "graphics card, so you can add a voice to small devices, desktop apps and servers. Try a few voices and pick "
+    "your favourite."
+)
 
 
 def validate_audio(audio, label):
@@ -366,6 +374,36 @@ def threads_check(cache_dir, rounds=2, timeout=900):
     return [dict(o, rounds=rounds, wall_seconds=seconds) for o in outcomes]
 
 
+def repeat_check(cache_dir, backend, repeats=20, model_name=REPEAT_MODEL):
+    """The medium text `repeats` times in one process, with a short call before each repeat so that GPU memory is
+    reused in between: every output must be bit-identical to the first, on every backend.
+
+    On Metal, four normalisation kernels (layer norm, AdaLayerNorm, AdaIN with and without folded weights) used to
+    read the mean from threadgroup memory and then overwrite it with no barrier in between. Now and then one SIMD
+    group read the overwritten value and normalised its elements with a wrong mean: on an Apple M4 about one engine
+    pass in 30, and the waveform then drifted out of phase for the rest of that sentence (differences up to 1.3)."""
+    model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
+    first = as_audio(model.generate(REPEAT_TEXT, voice="Bella"))
+    validate_audio(first, f"{model_name} repeat 0")
+    diffs, differing = [], []
+    for i in range(1, repeats):
+        model.generate(TEXT, voice="Jasper")
+        audio = as_audio(model.generate(REPEAT_TEXT, voice="Bella"))
+        diff = difference(audio, first)
+        diffs.append(diff)
+        if diff != 0.0:
+            differing.append(i)
+    result = {"check": "repeat", "model": model_name, "backend": backend or "default",
+              "active_backend": _engine.active_backend(), "repeats": repeats, "samples": int(len(first)),
+              "differing_repeats": differing, "max_diff": max((d for d in diffs if d is not None), default=0.0)}
+    print(json.dumps(result))
+    if differing:
+        raise AssertionError(f"{model_name} on {result['active_backend']}: repeats {differing} of {repeats - 1} "
+                             f"differ from the first output (largest difference {result['max_diff']}; "
+                             f"None = a different length)")
+    return [result]
+
+
 def process_memory_mb():
     """This process's memory in MB: the footprint on macOS (it counts GPU memory too), private bytes on Windows,
     resident memory elsewhere."""
@@ -449,12 +487,13 @@ def main():
     parser.add_argument("--compare-to", default=None, help="Output dir of a run on another backend to compare with.")
     parser.add_argument(
         "--mode",
-        choices=["quick", "release", "speed", "models", "paths", "mix", "threads", "auto", "memory"],
+        choices=["quick", "release", "speed", "models", "paths", "mix", "threads", "auto", "memory", "repeat"],
         default="release",
         help="quick: one WAV; release: nano voices, speeds and int8; speed: the speed check only; "
         "models: micro and mini, fp32 and int8; paths: a model folder with non-ASCII characters in its path; "
         "mix: CPU and default-backend models in one process; threads: several models generating at once, and the dynamic work split gives the same audio; "
-        "auto: the default backend of every model, with warm timings; memory: memory stays level over 100 calls.",
+        "auto: the default backend of every model, with warm timings; memory: memory stays level over 100 calls; "
+        "repeat: the same medium text 20 times in one process, every output bit-identical.",
     )
     args = parser.parse_args()
 
@@ -481,6 +520,8 @@ def main():
         results.extend(auto_backend_check(cache_dir))
     elif args.mode == "memory":
         results.extend(memory_check(cache_dir, args.backend))
+    elif args.mode == "repeat":
+        results.extend(repeat_check(cache_dir, args.backend))
     else:
         if args.mode == "release":
             results.extend(

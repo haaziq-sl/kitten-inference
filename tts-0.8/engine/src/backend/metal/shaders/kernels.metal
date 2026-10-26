@@ -319,6 +319,10 @@ kernel void layernorm_k(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     float mean = tg[0] / float(C);
+    // Every thread must have read tg[0] (the mean) before tg[] is reused for the variance below: without this
+    // barrier, a thread that reaches "tg[lid] = ..." first overwrites tg[0] while another SIMD group may still be
+    // about to read it, and that group then normalises its elements with a wrong mean.
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     float lv = 0.f;
     for (uint i = lid; i < (uint)C; i += TGS) {
@@ -832,6 +836,10 @@ kernel void ada_layernorm_k(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     float mean = tg[0] / float(C);
+    // Every thread must have read tg[0] (the mean) before tg[] is reused for the variance below: without this
+    // barrier, a thread that reaches "tg[lid] = ..." first overwrites tg[0] while another SIMD group may still be
+    // about to read it, and that group then normalises its elements with a wrong mean.
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     float lv = 0.f;
     for (uint i = lid; i < (uint)C; i += TGS) {
@@ -884,6 +892,10 @@ kernel void ada_in1d_k(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     float mean = tg[0] / float(T);
+    // Every thread must have read tg[0] (the mean) before tg[] is reused for the variance below: without this
+    // barrier, a thread that reaches "tg[lid] = ..." first overwrites tg[0] while another SIMD group may still be
+    // about to read it, and that group then normalises its elements with a wrong mean.
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Pass 2: centered variance
     float lsq = 0.f;
@@ -943,6 +955,10 @@ kernel void ada_in1d_fold_k(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     float mean = tg[0] / float(T);
+    // Every thread must have read tg[0] (the mean) before tg[] is reused for the variance below: without this
+    // barrier, a thread that reaches "tg[lid] = ..." first overwrites tg[0] while another SIMD group may still be
+    // about to read it, and that group then normalises its elements with a wrong mean.
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Pass 2: centered variance
     float lsq = 0.f;
