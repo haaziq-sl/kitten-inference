@@ -54,8 +54,8 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
    that is not the engine's (or a post release of it).
 2. `git tag -a v0.2.0 -m "kitten-inference 0.2.0"` on that commit, then `git push origin v0.2.0`.
 3. Watch the four runs. The CUDA wheel jobs fail unless their GPU code is the reference's; their logs say
-   `SASS check: IDENTICAL`. The Windows CUDA wheel takes 35 to 55 minutes (36, 38 and 52 in three runs; at most about
-   4 hours): its build compiles the CUDA-core decode kernels again until their GPU code is the reference's.
+   `SASS check: IDENTICAL`. The Windows CUDA wheel takes 35 to 60 minutes (36, 38, 52 and 57 in four runs; at most
+   about 4 hours): its build compiles the CUDA-core decode kernels again until their GPU code is the reference's.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
    the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. Then remove the lines
    about 0.1.1 from `umbrella/README.md` and `tts-2/python/README.md`.
