@@ -48,7 +48,7 @@ A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce
 | 3 GB | Not tested. |
 | 2 GB | Not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start. |
 
-The model comes from the latest revision on Hugging Face, which has 115 built-in voices. The figures on this page were measured with it, except the per-GPU speed figures (from [docs/consumer-gpus.md](docs/consumer-gpus.md)), which were measured with an earlier revision with 47 voices. The tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
+The model comes from the latest revision on Hugging Face, which has 115 built-in voices. The figures on this page were measured with it, except the speed and word error rate figures in [Supported GPUs](#supported-gpus) and [GPU memory](#gpu-memory) (from [docs/consumer-gpus.md](docs/consumer-gpus.md)), which were measured with an earlier revision with 47 voices. The tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
 
 ## Requirements
 
