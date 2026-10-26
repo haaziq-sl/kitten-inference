@@ -23,12 +23,13 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 ## Install
 
 Each block starts a Python virtual environment and upgrades pip in it. On Ubuntu and Debian, `python3 -m venv` needs
-`sudo apt-get install -y python3-venv` first.
+`sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt; in PowerShell, run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once before activating.
 
 ### Kitten TTS 2: NVIDIA and AMD GPUs
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
 python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
 pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Windows x64, driver R570 or newer
 kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
@@ -36,13 +37,14 @@ kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 
 - Python 3.9 or newer. First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
   our test machines (57 s with a 1 Gbit/s connection, 160 s on Windows). Later starts reuse the prepared model.
-- **AMD Radeon RX 7000 and RX 9000** on Linux x86-64: install ROCm 7 first (step 1 of
-  [AMD Radeon](tts-2/docs/amd-radeon.md)), then `pip install "kitten-inference[tts-2-rocm]"` in place of `[tts-2]`.
-  Real-time factor about 0.06 on an RX 9070 XT (10 s of speech in about 0.6 s). No voice cloning. Tested inside WSL2
-  on Windows; not tested on Linux without WSL2.
+- **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
+  ROCm 7 first (WSL2: step 1 of [AMD Radeon](tts-2/docs/amd-radeon.md); Linux without WSL2:
+  [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution), then
+  `pip install "kitten-inference[tts-2-rocm]"` in place of `[tts-2]`. Real-time factor about 0.06 on an RX 9070 XT
+  (10 s of speech in about 0.6 s). That package has no voice cloning.
 - **Voice cloning** (NVIDIA only) needs FFmpeg (`sudo apt-get install -y ffmpeg`; on Windows
-  `winget install Gyan.FFmpeg`, where Windows 10 and 11 include winget and Windows Server 2022 needs it installed
-  first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a 12 GB card, other programs may
+  `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and activate the venv again; Windows 10 and 11
+  include winget, Windows Server 2022 needs it installed first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a 12 GB card, other programs may
   use at most about 500 MiB.
 - **GeForce GTX 10, GTX 16 and RTX 20 series:** supported, not optimal: they have no bf16 tensor cores, so part of the
   math runs in software (real-time factor 0.22 to 0.28 on an RTX 2060, GTX 1660 Ti and GTX 1080 Ti, against 0.05 to
@@ -63,7 +65,7 @@ The package picks its memory settings from the free GPU memory:
 ### Kitten TTS 0.8: the CPU
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
 python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
 pip install "kitten-inference[tts-0.8]"
 python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kitten-tts-nano-0.8').generate_to_file('Hello from Kitten TTS.', 'hello.wav', voice='Jasper')"
@@ -75,9 +77,12 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
   `winget install Microsoft.VCRedist.2015+.x64`.
 - With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
   23.2.1 install no engine for `[tts-0.8]` and still report success.
+- Keep the virtual environment's full path short: under about 100 characters on Linux and macOS, under about 180 on
+  Windows, and on Windows without non-ASCII letters. Otherwise TTS 0.8 cannot start ([details](tts-0.8/README.md#platforms)).
 - **Supported, not optimal:**
-  - int8 models on Intel CPUs: 1.6 to 2.4 times the ONNX Runtime time, because the int8 kernels for x86 are not
-    tuned yet (on the AMD and Arm CPUs we tested they are faster than ONNX Runtime);
+  - int8 models on Intel CPUs: 1.6 to 2.2 times the ONNX Runtime time on an Intel Xeon, and 1.7 to 2.4 times on a
+    Core i9-12900 (measured before this release's fix for hybrid Intel CPUs, which made it faster), because the int8
+    kernels for x86 are not tuned yet (on the AMD and Arm CPUs we tested they are faster than ONNX Runtime);
   - the Mac CPU (int8 models on Apple Silicon, every model on Intel Macs): the macOS build uses one CPU core, so int8
     on an Apple M4 takes 1.4 to 1.8 times the ONNX Runtime time;
   - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64.

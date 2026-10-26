@@ -31,14 +31,14 @@ On smaller GPUs the same comparison gives a smaller lead, because the native eng
 |---|---|
 | NVIDIA GeForce RTX 30 series and newer, and other NVIDIA GPUs with compute capability 8.0 or newer | supported |
 | NVIDIA GeForce GTX 10, GTX 16 and RTX 20 series (compute capability 6.1 and 7.5) | supported, not optimal: these GPUs have no bf16 tensor cores, so part of the math runs in software. Real-time factor 0.22 to 0.76 with `--stream false` on the cards we measured, against 0.03 to 0.17 for RTX 30 series and newer. The audio is close to, not bit for bit the same as, a newer GPU's |
-| AMD Radeon RX 7000 and RX 9000 | supported with a separate build, tested inside WSL2 on Windows (RX 7600 and RX 7600 XT: builds, not tested); no voice cloning; the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
+| AMD Radeon RX 7000 and RX 9000 | supported with a separate build, tested inside WSL2 on Windows (RX 7600 and RX 7600 XT: builds, not tested); no voice cloning in the pip package (the source build includes it, not tested on Radeon); the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
 | Other GPUs: NVIDIA compute capability 6.0, 7.0 or older; AMD RX 6000 and older, Instinct | not supported: the engine stops at start and says so |
 
 A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce.
 
 ### GPU memory
 
-`kitten-tts-native` and the pip package pick their memory settings from the free GPU memory, so they start without options on supported GPUs with 4 GB or more. Smaller GPUs give up some speed or features:
+`kitten-tts-native` and the pip package pick their memory settings from the free GPU memory, so they start without options on supported GPUs with 4 GB or more (the command-line tool was tested this way from 4 GB up with the earlier 47-voice revision; the pip package on 12 GB and larger cards). Smaller GPUs give up some speed or features:
 
 | GPU memory | What you get |
 |---|---|
@@ -48,7 +48,7 @@ A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce
 | 3 GB | Not tested. |
 | 2 GB | Not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start. |
 
-The model comes from the latest revision on Hugging Face, which has 115 built-in voices. The figures on this page were measured with it, except the speed and word error rate figures in [Supported GPUs](#supported-gpus) and [GPU memory](#gpu-memory) (from [docs/consumer-gpus.md](docs/consumer-gpus.md)), which were measured with an earlier revision with 47 voices. The tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
+The model comes from the latest revision on Hugging Face, which has 115 built-in voices. The figures on this page were measured with it, except these, which were measured with an earlier revision with 47 voices: the speed and word error rate figures in [Supported GPUs](#supported-gpus) and [GPU memory](#gpu-memory) (from [docs/consumer-gpus.md](docs/consumer-gpus.md)), the 2,583 MiB minimum, the 1.5% for cards with about 8 GB or less, the start without options on 4 GB cards, and the CUDA 13 comparison in the Quick start. The tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
 
 ## Requirements
 
