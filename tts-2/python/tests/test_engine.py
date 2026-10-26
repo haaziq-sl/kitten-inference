@@ -266,3 +266,40 @@ def test_destroy_wakes_a_waiting_thread():
     assert not any(t.is_alive() for t in threads)
     assert lib.destroyed == [0x1234] and sorted(lib.cancelled) == [a, b]
     assert errors and all("closed" in e for e in errors)
+
+
+class NoisyLib(FakeLib):
+    """An engine that writes its developer line and a line for users to file descriptor 2 while it starts."""
+
+    def __init__(self, status=0):
+        super().__init__()
+        self.status = status
+
+    def kt2n_engine_create(self, config, handle, err):
+        import os
+        os.write(2, b"[decoder] config: CUDA_DEVICE_MAX_CONNECTIONS=unset(8) aux_rows=0 aux_auto=1\n"
+                    b"kt2n: a line for users\n")
+        handle._obj.value = 0x1234 if self.status == 0 else 0
+        return self.status
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32",
+                    reason="platform: on Windows the engine's C runtime keeps its own stderr")
+def test_engine_start_is_quiet(capfd, monkeypatch):
+    # The Python API shows no developer output by default; KITTEN_TTS2_VERBOSE=1 shows it, and a failed start shows
+    # everything the engine said.
+    monkeypatch.delenv("KITTEN_TTS2_VERBOSE", raising=False)
+    _engine_with(NoisyLib())
+    err = capfd.readouterr().err
+    assert "[decoder] config" not in err and "kt2n: a line for users" in err, err
+    monkeypatch.setenv("KITTEN_TTS2_VERBOSE", "1")
+    _engine_with(NoisyLib())
+    assert "[decoder] config: CUDA_DEVICE_MAX_CONNECTIONS" in capfd.readouterr().err
+    monkeypatch.delenv("KITTEN_TTS2_VERBOSE")
+    with pytest.raises(_engine.EngineError):
+        _engine_with(NoisyLib(status=7))
+    err = capfd.readouterr().err
+    assert "[decoder] config" in err and "kt2n: a line for users" in err, err
+    import os
+    os.write(2, b"after\n")  # file descriptor 2 is back where it was
+    assert capfd.readouterr().err == "after\n"

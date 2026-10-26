@@ -56,6 +56,8 @@ def fake_backend(tmp_path, monkeypatch):
         monkeypatch.setitem(sys.modules, module.__name__, module)
         return module
     monkeypatch.delenv("KITTEN_TTS2_BACKEND", raising=False)
+    from kitten_inference.tts2 import _cli
+    monkeypatch.setattr(_cli, "_load", lambda name: object())  # the fake engine's GPU runtime is there
     return install
 
 
