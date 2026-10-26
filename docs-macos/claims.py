@@ -21,7 +21,7 @@ def check(name, fn):
         out[name] = fn()
     except Exception as e:
         out[name] = {'error': f'{type(e).__name__}: {e}', 'trace': traceback.format_exc()[-1500:]}
-    print(f'{name} ({time.time() - t:.1f} s):', json.dumps(out[name])[:600], flush=True)
+    print(f'{name} ({time.time() - t:.1f} s):', json.dumps(out[name]), flush=True)
 
 
 def timed(tts, text, voice, n=5):

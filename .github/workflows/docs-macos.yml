@@ -30,6 +30,11 @@ on:
         required: false
         default: '["all"]'
         type: string
+      sessions:
+        description: "space-separated session names to run instead of the full list (empty = all)"
+        required: false
+        default: ""
+        type: string
       runner:
         description: "runner label"
         required: false
@@ -156,53 +161,65 @@ jobs:
             /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" || echo "harness rc $?"
           done
       - name: S1 bash, README.md TTS 0.8 block and Python example
-        if: matrix.group != 'zsh'
+        if: inputs.sessions == '' && matrix.group != 'zsh'
         timeout-minutes: 25
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S1-bash "$RUNNER_TEMP/out/S1-bash" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S1-bash" || echo "post rc $?"
       - name: S2 bash, tts-0.8/README.md Install and Use, then the README's options
-        if: matrix.group != 'zsh'
+        if: inputs.sessions == '' && matrix.group != 'zsh'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S2-bash-pkg "$RUNNER_TEMP/out/S2-bash-pkg" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S2-bash-pkg" || echo "post rc $?"
       - name: S3 bash, README.md TTS 0.8 block in a deep folder with a non-ASCII name
-        if: matrix.group != 'zsh'
+        if: inputs.sessions == '' && matrix.group != 'zsh'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S3-bash-deep "$RUNNER_TEMP/out/S3-bash-deep" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S3-bash-deep" || echo "post rc $?"
       - name: S4 replay of the whole path in one interactive bash (pseudo-terminal)
-        if: matrix.group != 'zsh'
+        if: inputs.sessions == '' && matrix.group != 'zsh'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S4-bash-pty-replay "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "post rc $?"
       - name: S5 interactive zsh (macOS default shell), lines as pasted
-        if: matrix.group != 'bash'
+        if: inputs.sessions == '' && matrix.group != 'bash'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S5-zsh-pty "$RUNNER_TEMP/out/S5-zsh-pty" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S5-zsh-pty" || echo "post rc $?"
       - name: S6 interactive zsh with the stock macOS PATH (python3 from Apple), lines as pasted
-        if: matrix.group != 'bash'
+        if: inputs.sessions == '' && matrix.group != 'bash'
         timeout-minutes: 30
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S6-zsh-system "$RUNNER_TEMP/out/S6-zsh-system" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-system" || echo "post rc $?"
       - name: S7 bash with the stock macOS PATH, README.md TTS 0.8 block
-        if: matrix.group != 'bash'
+        if: inputs.sessions == '' && matrix.group != 'bash'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S7-bash-system "$RUNNER_TEMP/out/S7-bash-system" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S7-bash-system" || echo "post rc $?"
       - name: S8 bash with the stock macOS PATH, the "[tts-0-8]" line for a pip you cannot upgrade
-        if: matrix.group != 'bash'
+        if: inputs.sessions == '' && matrix.group != 'bash'
         timeout-minutes: 20
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S8-bash-system-oldpip "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "post rc $?"
+      - name: Selected sessions
+        if: inputs.sessions != ''
+        timeout-minutes: 60
+        env:
+          SESSIONS: ${{ inputs.sessions }}
+        run: |
+          for s in $SESSIONS; do
+            echo "::group::$s"
+            /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" || echo "driver rc $?"
+            PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/$s" || echo "post rc $?"
+            echo "::endgroup::"
+          done
       - name: Results
         if: always()
         uses: actions/upload-artifact@v4

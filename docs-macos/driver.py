@@ -33,6 +33,9 @@ SESSIONS = {
     'S6-zsh-system':       ('zsh-pty',       'system', ['top', 'pkg'], False),
     'S7-bash-system':      ('bash-script',   'system', ['top'], True),
     'S8-bash-system-oldpip': ('bash-script', 'system', ['oldpip'], True),
+    # the README.md TTS 0.8 block pasted into Terminal as one paste (bracketed paste), then Enter
+    'S9-zsh-paste-system': ('zsh-pty',       'system', ['top-paste'], False),
+    'S10-zsh-paste':       ('zsh-pty',       'runner', ['top-paste'], False),
     # machine check before the release exists: no doc lines
     'P0-smoke-zsh':        ('zsh-pty',       'runner', ['smoke'], False),
     'P0-smoke-zsh-login':  ('zsh-login-pty', 'system', ['smoke'], False),
@@ -84,6 +87,11 @@ def units_to_steps(units, root):
             d.mkdir(parents=True)
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps += [('doc', l, d) for l in top]
+        elif u == 'top-paste':
+            d.mkdir(parents=True)
+            steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
+            steps.append(('paste', '\n'.join(top), d))
+            active = True
         elif u == 'smoke':
             for l in ['echo one # two', 'setopt 2>/dev/null | tr "\\n" " "; echo', 'echo "$PATH"', 'tty']:
                 steps.append(('info', l, root))
@@ -243,9 +251,14 @@ def run_pty(argv, steps, env, out, stop):
     for i, (kind, line, d) in enumerate(steps, 1):
         log(fh, f'\n@@STEP {i} {kind}: {line}\n')
         t = time.time()
-        send(line)
+        if kind == 'paste':
+            os.write(fd, b'\x1b[200~' + line.encode() + b'\x1b[201~')
+            pump(r'(?!)', 1)
+            send('')
+        else:
+            send(line)
         send(f'echo "@@EXIT {i} $?"')
-        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT if kind in ('doc', 'check') else 60)
+        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT if kind in ('doc', 'check', 'paste') else 60)
         rc = int(m.group(1)) if m else None
         res.append({'i': i, 'kind': kind, 'line': line, 'rc': rc, 'seconds': round(time.time() - t)})
         if rc is None:

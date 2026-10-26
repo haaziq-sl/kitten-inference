@@ -78,5 +78,7 @@ if hub.exists():
 ki = home / '.cache' / 'kitten-inference'
 res['kitten_inference_cache'] = {str(p.relative_to(ki)): sum(1 for _ in p.rglob('*')) for p in ki.glob('*')} if ki.exists() else None
 res['home_top'] = sorted(str(p.relative_to(home)) for p in home.glob('*')) + sorted(str(p.relative_to(home)) for p in home.glob('.*'))
+for c in root.rglob('claims.json'):
+    (out / 'claims.json').write_bytes(c.read_bytes())
 (out / 'post.json').write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding='utf-8')
 print(json.dumps(res, indent=1, ensure_ascii=False)[:6000])
