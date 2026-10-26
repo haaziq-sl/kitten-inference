@@ -82,9 +82,10 @@ one run to the next.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
-- Intel CPUs with performance and efficiency cores: the engine lets the faster cores take more of its
-  main matrix work, instead of giving every core an equal share. That made it 1.3 to 1.6 times faster
-  on a Core i9-12900 and 3.6 to 4.9 times faster on a Core i9-14900K, with the same audio.
+- Intel CPUs with performance and efficiency cores: by default the engine runs on the performance
+  cores' threads and lets the faster threads take more of its main matrix work, instead of splitting it
+  evenly over every core. A short sentence took 0.12 s instead of 0.26 s on a Core i9-12900, and 0.09 s
+  instead of 1.99 s on a Core i9-14900K.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
   CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
   macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
