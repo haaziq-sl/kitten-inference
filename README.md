@@ -23,7 +23,7 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 ## Install
 
 Each block starts a Python virtual environment and upgrades pip in it. On Ubuntu and Debian, `python3 -m venv` needs
-`sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt; in PowerShell, run
+`sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt; in PowerShell, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once before activating.
 
 ### Kitten TTS 2: NVIDIA and AMD GPUs
@@ -42,7 +42,7 @@ kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
   [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution), then
   `pip install "kitten-inference[tts-2-rocm]"` in place of `[tts-2]`. Real-time factor about 0.06 on an RX 9070 XT
   (10 s of speech in about 0.6 s). That package has no voice cloning.
-- **Voice cloning** (NVIDIA only) needs FFmpeg (`sudo apt-get install -y ffmpeg`; on Windows
+- **Voice cloning** (NVIDIA only) needs FFmpeg (`sudo apt-get update && sudo apt-get install -y ffmpeg`; on Windows
   `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and activate the venv again; Windows 10 and 11
   include winget, Windows Server 2022 needs it installed first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a 12 GB card, other programs may
   use at most about 500 MiB.

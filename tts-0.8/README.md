@@ -19,7 +19,7 @@ python -m pip install -U pip                    # pip older than 23.3 skips "[tt
 pip install "kitten-inference[tts-0.8]"
 ```
 
-- On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-venv` first.
+- On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 - With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
   23.2.1 install no engine for `[tts-0.8]` and still report success.
 

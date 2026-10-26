@@ -14,7 +14,7 @@ python -m pip install -U pip                    # pip older than 23.3 skips "[tt
 pip install "kitten-inference[tts-0.8]"         # Kitten TTS 0.8 on the CPU (kitten-inference-tts08)
 ```
 
-On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-venv` first.
+On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 
 For Kitten TTS 2, install `"kitten-inference[tts-2]"` instead (NVIDIA, driver R570 or newer: kitten-inference-tts2 +
 kitten-inference-tts2-cu12) or `"kitten-inference[tts-2-rocm]"` (AMD Radeon with ROCm 7: kitten-inference-tts2 +

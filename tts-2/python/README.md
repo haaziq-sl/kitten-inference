@@ -12,7 +12,7 @@ python -m pip install -U pip                    # pip older than 23.3 skips the 
 pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Windows x64, driver R570 or newer
 ```
 
-- On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-venv` first.
+- On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 - AMD Radeon RX 7000 and RX 9000, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
   ROCm 7.x first (WSL2: step 1 of [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md); Linux
   without WSL2: [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution),
@@ -55,7 +55,7 @@ non-ASCII characters can move the model to a folder of yours in `C:\ProgramData\
 optimal (with the usual Windows code page the engine opens only ASCII paths; the command says where the model went).
 
 Voice cloning (NVIDIA only) needs about 11,300 MiB (11 GB) of free GPU memory while the voice is built, and the
-system `ffmpeg`: `sudo apt-get install -y ffmpeg` on Ubuntu, `winget install --id Gyan.FFmpeg -e` on Windows (then open
+system `ffmpeg`: `sudo apt-get update && sudo apt-get install -y ffmpeg` on Ubuntu, `winget install --id Gyan.FFmpeg -e` on Windows (then open
 a new Command Prompt and activate the venv again; Windows 10 and 11 include winget, Windows Server 2022 needs it installed
 first). On a 12 GB card other programs may then use at most about 500 MiB of it: cloning worked with
 11,285 MiB free and failed with 11,157 MiB free. The first clone adds 1.1 GB to the prepared model.
