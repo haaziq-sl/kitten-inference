@@ -49,8 +49,8 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
 (116, 71 and 19 MB). On the AMD and Linux ARM64 machines we tested they are faster than kittenml. Supported, not
 optimal on Intel CPUs and on the Mac CPU, because the int8 kernels for x86 are not tuned yet and the macOS build uses
-one CPU core: 1.6 to 2.2 times the kittenml time on an Intel Xeon, 1.7 to 2.4 times on a Core i9-12900 (measured
-before this release's fix for hybrid Intel CPUs, which made it faster), and 1.4 to 1.8 times on an Apple M4. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
+one CPU core: 1.6 to 2.2 times the kittenml time on an Intel Xeon, 1.2 to 1.5 times on a Core i9-12900, and 1.4 to 1.8
+times on an Apple M4. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -61,6 +61,9 @@ Options:
 - `KittenTTS(..., backend="cpu")` or `"metal"`: by default Apple Silicon uses Metal for the full-size
   models and the CPU for the int8 models. On the CPU, models in different threads generate at the same
   time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
+- On Metal, create each model once and reuse it. Creating it again is supported, not optimal: every new
+  `KittenTTS` keeps about 290 MB (nano) to 470 MB (mini) until the process ends, because the engine does not free
+  its GPU copies of the weights yet (Apple M4; the CPU backend does not do this).
 
 Audio can differ slightly between Metal and the CPU (clip lengths within about 3.5%), between CPU types, and with
 the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
@@ -74,7 +77,7 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
 | Windows x64 | 3.8–3.14¹ | tested |
 | macOS Apple Silicon | 3.8–3.14¹ | tested |
 | macOS Intel | 3.8–3.14¹ | built; passes an automated audio check, not tested by hand |
-| Windows ARM64 | 3.11–3.15 | built; passes an automated audio check, not tested by hand |
+| Windows ARM64 | 3.11–3.14¹ | built; passes an automated audio check, not tested by hand |
 | Android ARM64 (experimental) | 3.13 | built, not tested |
 
 ¹ Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages.

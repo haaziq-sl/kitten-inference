@@ -23,8 +23,8 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 ## Install
 
 Each block starts a Python virtual environment and upgrades pip in it (pip older than 23.3 skips the `[tts-0.8]` extra with only a warning). On Ubuntu and Debian, `python3 -m venv` needs
-`sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line; in PowerShell, run
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once before activating.
+`sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt (in PowerShell, type `cmd` first), with `py -m venv .venv` and then
+`.venv\Scripts\activate.bat` in place of the first line.
 
 ### Kitten TTS 2: NVIDIA and AMD GPUs
 
@@ -35,7 +35,8 @@ pip install "kitten-inference[tts-2]"
 kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 ```
 
-- NVIDIA GPU on Linux x86-64 or Windows x64, with driver R570 or newer.
+- NVIDIA GPU on Linux x86-64 (glibc 2.28 or newer: Ubuntu 20.04, Debian 10, RHEL 8 or later) or Windows x64, with
+  driver R570 or newer.
 - Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
   our test machines (57 s with a 1 Gbit/s connection, 160 s on Windows). Later starts reuse the prepared model.
 - **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
@@ -82,12 +83,15 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
 - On Windows, keep the virtual environment's path under about 150 characters; longer paths stop TTS 0.8 with an error
   that says so ([details](tts-0.8/README.md#platforms)).
 - **Supported, not optimal:**
-  - int8 models on Intel CPUs: 1.6 to 2.2 times the ONNX Runtime time on an Intel Xeon, and 1.7 to 2.4 times on a
-    Core i9-12900 (measured before this release's fix for hybrid Intel CPUs, which made it faster), because the int8
-    kernels for x86 are not tuned yet (on the AMD and Arm CPUs we tested they are faster than ONNX Runtime);
+  - int8 models on Intel CPUs: 1.6 to 2.2 times the ONNX Runtime time on an Intel Xeon, and 1.2 to 1.5 times on a
+    Core i9-12900, because the int8 kernels for x86 are not tuned yet (on the AMD and Arm CPUs we tested they are
+    faster than ONNX Runtime);
   - the Mac CPU (int8 models on Apple Silicon, every model on Intel Macs): the macOS build uses one CPU core, so int8
     on an Apple M4 takes 1.4 to 1.8 times the ONNX Runtime time;
-  - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64.
+  - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64;
+  - creating a model again on the Mac GPU (Metal): each new `KittenTTS` keeps about 290 MB (nano) to 470 MB (mini)
+    until the process ends, because the engine does not free its GPU copies of the weights yet. Create each model
+    once and reuse it.
 
 Both engines in one environment: `pip install "kitten-inference[tts-0.8,tts-2]"` (Linux x86-64 and Windows x64,
 Python 3.9 to 3.14).

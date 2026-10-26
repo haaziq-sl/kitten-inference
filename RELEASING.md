@@ -88,11 +88,14 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
      diff tested.txt tagged.txt
      ```
 
-     Approve only if no line differs, or only these do: `METADATA` when its text changed between the two commits,
-     and on Windows the CUDA engine's binaries under `kitten_inference/_tts2_cuda/lib/` and `bin/`, whose host code is
-     not reproducible (after `SASS check: IDENTICAL`). For any other difference, run the GPU tests with the tagged
-     wheels first (`python -m pytest tts-2/python/tests/gpu` on an NVIDIA GPU, or an AMD GPU for the ROCm wheel;
-     `KT2N_TEST_CLONING=1` adds cloning).
+     Approve only if no line differs, or only these do: `METADATA` when its text changed between the two commits;
+     on Windows the CUDA engine's binaries under `kitten_inference/_tts2_cuda/lib/` and `bin/`, whose host code is
+     not reproducible (after `SASS check: IDENTICAL`); and in the Windows TTS 0.8 wheels the engine
+     `kitten_inference/tts08/_engine*.pyd` (the linker writes the build time into it) and the Microsoft runtime DLLs
+     the wheel bundles (copied from the runner image, which GitHub updates), after that wheel's audio test in the tag
+     run passed. For any other difference, test the tagged wheels first: for TTS 2, `python -m pytest
+     tts-2/python/tests/gpu` on an NVIDIA GPU, or an AMD GPU for the ROCm wheel (`KT2N_TEST_CLONING=1` adds cloning);
+     for TTS 0.8, `python tts-0.8/tests/audio_smoke.py --mode release` with the wheel installed, on that platform.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
    the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. The package READMEs are
    worded to stay true after the yank (pip then stops with "No matching distribution"), so they need no change.

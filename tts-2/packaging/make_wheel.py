@@ -64,10 +64,13 @@ Kitten TTS 2 on vLLM or llama.cpp (one request at a time).
 Install it with the Python API, which uses it:
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\\Scripts\\activate
-python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
 pip install "kitten-inference[tts-2]"
 ```
+
+On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\\Scripts\\activate.bat` in
+place of the first line.
 
 | NVIDIA GPU | Status |
 |---|---|
@@ -75,7 +78,7 @@ pip install "kitten-inference[tts-2]"
 | GeForce GTX 10, GTX 16 and RTX 20 series (compute capability 6.1 and 7.5) | supported, not optimal: no bf16 tensor cores, so part of the math runs in software. Real-time factor 0.22 to 0.76 with `--stream false`, against 0.03 to 0.17 for RTX 30 series and newer. The audio is close to, not bit for bit the same as, a newer GPU's |
 
 It needs NVIDIA driver R570 or newer; the CUDA 12.8 runtime is built in. Voice cloning reads the reference audio with
-the `ffmpeg` program (`sudo apt-get install -y ffmpeg`, or on Windows `winget install --id Gyan.FFmpeg -e`).
+the `ffmpeg` program (`sudo apt-get update && sudo apt-get install -y ffmpeg`, or on Windows `winget install --id Gyan.FFmpeg -e`).
 """
 
 
