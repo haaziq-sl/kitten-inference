@@ -4,8 +4,8 @@ Kitten TTS 2 native runs on AMD Radeon RX 7000 (RDNA3) and RX 9000 (RDNA4) GPUs 
 up ROCm inside WSL2 (the Linux subsystem of Windows), then build and run the engine there. Measured numbers are in
 [Consumer GPUs](consumer-gpus.md#amd-radeon).
 
-Tested inside WSL2 on Windows desktops with an RX 7900 XTX, RX 7900 XT, RX 7800 XT, RX 9070 XT and RX 9060 XT. Linux
-without WSL2 (bare metal) was not tested.
+Tested inside WSL2 on Windows desktops with RX 7000 and RX 9000 cards. Linux without WSL2 (bare metal) was not
+tested.
 
 ## What works, and what does not yet
 
@@ -96,6 +96,7 @@ After step 1, pip can install the engine, in place of steps 2 to 4:
 sudo apt-get install -y python3-venv
 python3 -m venv ~/kitten-tts
 . ~/kitten-tts/bin/activate
+python -m pip install -U pip                 # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
 pip install "kitten-inference[tts-2-rocm]"
 kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
 ```
@@ -105,8 +106,9 @@ gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. Its audio is the same as that of
 builds our numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding
 (about -60 to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7`
 from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first run downloads and
-prepares the model (a 4.4 GB download; 1 to 8 minutes in our tests, most of it the download); later runs start in a few
-seconds. It has no voice cloning.
+prepares the model (about a 4.6 GB download; 55 to 168 s in our tests); later runs start in a few seconds. On an RX
+9070 XT the real-time factor was 0.06 (10 s of speech in about 0.6 s) and the first streamed audio came after 46 to
+50 ms. It has no voice cloning.
 
 ## 2. Get the source and build
 
