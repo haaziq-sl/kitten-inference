@@ -5,6 +5,8 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <initializer_list>
+#include <stdexcept>
 #include "utils/json.hpp"
 #include "backend/backend.hpp"
 
@@ -77,6 +79,57 @@ using ReadTensorFn = std::function<bool(const std::string&,
                                         std::vector<uint8_t>&)>;
 
 // ── Shared weight-reading helpers ─────────────────────────────
+// A model file can come from any Hugging Face repository or folder. A tensor that is missing, has a size that is not
+// a whole number of values, or does not match the layer's sizes in the architecture file is refused with an error,
+// so that no layer reads or writes past a weight array.
+
+[[noreturn]] inline void bad_weights(const std::string& what) {
+    throw std::runtime_error("model weights do not match the architecture: " + what);
+}
+
+// The raw bytes of a tensor as values of type T.
+template <class T>
+inline void tensor_values(const std::vector<uint8_t>& data, std::vector<T>& out, const std::string& key) {
+    if (data.size() % sizeof(T) != 0)
+        bad_weights(key + " has " + std::to_string(data.size()) + " bytes, not a whole number of " +
+                    std::to_string(sizeof(T)) + "-byte values");
+    out.resize(data.size() / sizeof(T));
+    if (!data.empty()) memcpy(out.data(), data.data(), data.size());
+}
+
+// The product of a layer's sizes from the architecture file; each must be at least 1.
+inline size_t layer_elems(const std::string& layer, std::initializer_list<long long> dims) {
+    size_t n = 1;
+    for (long long d : dims) {
+        if (d < 1 || d > (1LL << 31))
+            bad_weights(layer + ": a layer size in the architecture is " + std::to_string(d));
+        if (n > ((size_t)1 << 40) / (size_t)d) bad_weights(layer + ": layer sizes too large");
+        n *= (size_t)d;
+    }
+    return n;
+}
+
+// A tensor the layer needs, with exactly n values.
+template <class T>
+inline void need_values(const std::vector<T>& v, size_t n, const std::string& key) {
+    if (v.empty()) bad_weights(key + " is missing");
+    if (v.size() != n)
+        bad_weights(key + " has " + std::to_string(v.size()) + " values; the layer needs " + std::to_string(n));
+}
+
+// An optional tensor (a bias): absent, or exactly n values.
+template <class T>
+inline void allow_values(const std::vector<T>& v, size_t n, const std::string& key) {
+    if (!v.empty()) need_values(v, n, key);
+}
+
+// At run time: a weight array indexed by an input's size (channels, token ids, positions) must cover it.
+template <class T>
+inline void covers(const std::vector<T>& v, size_t n, const std::string& layer, const char* what) {
+    if (v.size() < n)
+        throw std::runtime_error("model weights do not match the input: " + layer + "." + what + " has " +
+                                 std::to_string(v.size()) + " values, the input needs " + std::to_string(n));
+}
 
 // Reads a float32 tensor by name; returns false if not found.
 inline bool read_f32_tensor(const ReadTensorFn& read, const std::string& key,
@@ -85,8 +138,7 @@ inline bool read_f32_tensor(const ReadTensorFn& read, const std::string& key,
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
     if (!read(key, shape, data)) return false;
-    out.resize(data.size() / sizeof(float));
-    memcpy(out.data(), data.data(), data.size());
+    tensor_values(data, out, key);
     return true;
 }
 
@@ -98,11 +150,15 @@ inline bool read_f32_or_i8_tensor(const ReadTensorFn& read, const std::string& k
     std::vector<int32_t> shape;
     std::vector<uint8_t> data_i8, data_sc;
     if (read(key + "_i8", shape, data_i8) && read(scales_key, shape, data_sc)) {
+        std::vector<float> sc;
+        tensor_values(data_sc, sc, scales_key);
         const int8_t*  wi8 = reinterpret_cast<const int8_t*>(data_i8.data());
-        const float*   sc  = reinterpret_cast<const float*>(data_sc.data());
         size_t total = data_i8.size();
-        size_t C_out = data_sc.size() / sizeof(float);
-        size_t K     = (C_out > 0) ? total / C_out : total;
+        size_t C_out = sc.size();
+        if (C_out == 0 || total % C_out != 0)
+            bad_weights(key + "_i8 has " + std::to_string(total) + " values, not a whole number of rows for " +
+                        std::to_string(C_out) + " scales");
+        size_t K     = total / C_out;
         out.resize(total);
         for (size_t c = 0; c < C_out; ++c)
             for (size_t k = 0; k < K; ++k)

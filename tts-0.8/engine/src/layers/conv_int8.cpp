@@ -13,21 +13,16 @@ void ConvInt8::load_weights(const ReadTensorFn& read)
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
 
-    if (read(base + ".weight", shape, data)) {
-        weight.resize(data.size());
-        memcpy(weight.data(), data.data(), data.size());
-    }
-    if (read(base + ".req_scale", shape, data)) {
-        req_scale.resize(data.size() / 4);
-        memcpy(req_scale.data(), data.data(), data.size());
-    }
-    if (read(base + ".eff_bias", shape, data)) {
-        eff_bias.resize(data.size() / 8);
-        memcpy(eff_bias.data(), data.data(), data.size());
-    }
+    if (read(base + ".weight", shape, data)) tensor_values(data, weight, base + ".weight");
+    if (read(base + ".req_scale", shape, data)) tensor_values(data, req_scale, base + ".req_scale");
+    if (read(base + ".eff_bias", shape, data)) tensor_values(data, eff_bias, base + ".eff_bias");
 
     int C_in_g = C_in / (groups > 0 ? groups : 1);
+    if (groups > 1 && C_in % groups != 0) bad_weights(name + ": C_in is not a multiple of groups");
     K = C_in_g * kH * kW;
+    need_values(weight, layer_elems(name, {C_out, kH, kW, C_in_g}), base + ".weight");
+    need_values(req_scale, (size_t)C_out, base + ".req_scale");
+    need_values(eff_bias, (size_t)C_out, base + ".eff_bias");
 
     // Pre-compute Q31 multipliers
     req_mult.resize(C_out);

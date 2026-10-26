@@ -26,9 +26,10 @@ void EmbeddingFp32::load_weights(const ReadTensorFn& read)
             num_embeddings = shape[0];
             embedding_dim  = shape[1];
         }
-        weight.resize(data.size() / sizeof(float));
-        memcpy(weight.data(), data.data(), data.size());
+        tensor_values(data, weight, name + ".weight");
     }
+    // The lookup clamps token ids to [0, num_embeddings).
+    need_values(weight, layer_elems(name, {num_embeddings, embedding_dim}), name + ".weight");
 }
 
 Shape EmbeddingFp32::forward(const TensorView* inputs, int n_inputs,
@@ -62,6 +63,14 @@ void BertEmbeddingsFp32::load_weights(const ReadTensorFn& read)
     rd(name + ".type_weight",      type_weight);
     rd(name + ".layernorm.weight", ln_weight);
     rd(name + ".layernorm.bias",   ln_bias);
+    const size_t E = layer_elems(name, {emb_size});
+    if (word_weight.empty() || word_weight.size() % E != 0)
+        bad_weights(name + ".word_weight is not a whole number of rows of " + std::to_string(E));
+    if (pos_weight.empty() || pos_weight.size() % E != 0)
+        bad_weights(name + ".pos_weight is not a whole number of rows of " + std::to_string(E));
+    allow_values(type_weight, E, name + ".type_weight");
+    allow_values(ln_weight, E, name + ".layernorm.weight");
+    allow_values(ln_bias, E, name + ".layernorm.bias");
 }
 
 Shape BertEmbeddingsFp32::forward(const TensorView* inputs, int n_inputs,
@@ -71,6 +80,14 @@ Shape BertEmbeddingsFp32::forward(const TensorView* inputs, int n_inputs,
     Shape sh       = inputs[0].shape;
     (void)n_inputs;
     const int T = sh.d1 * sh.d2;
+    // Token ids index the word table and positions the position table (no clamping in the kernel).
+    covers(pos_weight, (size_t)T * emb_size, name, "pos_weight (one row per position)");
+    const float* ids = in1.as<float>();
+    const size_t words = word_weight.size() / emb_size;
+    for (int t = 0; t < T; ++t)
+        if (!(ids[t] >= 0.f && ids[t] < (float)words))
+            throw std::runtime_error("model weights do not match the input: token id " + std::to_string(ids[t]) +
+                                     " is outside " + name + ".word_weight (" + std::to_string(words) + " rows)");
     bert_embeddings_fp32(in1.as<float>(),
                          out.as<float>(), T, emb_size,
                          word_weight.data(), pos_weight.data(),

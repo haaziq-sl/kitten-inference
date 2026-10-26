@@ -51,6 +51,9 @@ void StftFp32::load_weights(const ReadTensorFn& read)
     // Stored as [K, n_fft] (row-major), K = n_fft/2+1.
     read_f32_tensor(read, name + ".w_real", w_real);
     read_f32_tensor(read, name + ".w_imag", w_imag);
+    const size_t taps = layer_elems(name, {n_fft / 2 + 1, n_fft});
+    allow_values(w_real, taps, name + ".w_real");
+    allow_values(w_imag, taps, name + ".w_imag");
     // If weights not found in bin, stft_fp32() falls back to computing them.
 }
 

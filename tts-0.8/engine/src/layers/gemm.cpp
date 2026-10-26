@@ -12,18 +12,12 @@ void GemmInt8::load_weights(const ReadTensorFn& read)
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
 
-    if (read(base + ".weight", shape, data)) {
-        weight.resize(data.size());
-        memcpy(weight.data(), data.data(), data.size());
-    }
-    if (read(base + ".req_scale", shape, data)) {
-        req_scale.resize(data.size() / 4);
-        memcpy(req_scale.data(), data.data(), data.size());
-    }
-    if (read(base + ".eff_bias", shape, data)) {
-        eff_bias.resize(data.size() / 8);
-        memcpy(eff_bias.data(), data.data(), data.size());
-    }
+    if (read(base + ".weight", shape, data)) tensor_values(data, weight, base + ".weight");
+    if (read(base + ".req_scale", shape, data)) tensor_values(data, req_scale, base + ".req_scale");
+    if (read(base + ".eff_bias", shape, data)) tensor_values(data, eff_bias, base + ".eff_bias");
+    need_values(weight, layer_elems(name, {C_out, C_in}), base + ".weight");
+    need_values(req_scale, (size_t)C_out, base + ".req_scale");
+    need_values(eff_bias, (size_t)C_out, base + ".eff_bias");
 
     // Pre-compute Q31 multipliers
     req_mult.resize(C_out);
@@ -85,14 +79,10 @@ void GemmFp32::load_weights(const ReadTensorFn& read)
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
 
-    if (read(base + ".weight", shape, data)) {
-        weight_fp32.resize(data.size() / 4);
-        memcpy(weight_fp32.data(), data.data(), data.size());
-    }
-    if (read(base + ".bias", shape, data)) {
-        bias_fp32.resize(data.size() / 4);
-        memcpy(bias_fp32.data(), data.data(), data.size());
-    }
+    if (read(base + ".weight", shape, data)) tensor_values(data, weight_fp32, base + ".weight");
+    if (read(base + ".bias", shape, data)) tensor_values(data, bias_fp32, base + ".bias");
+    need_values(weight_fp32, layer_elems(name, {C_out, C_in}), base + ".weight");
+    allow_values(bias_fp32, (size_t)C_out, base + ".bias");
 
     // Pack weights for SGEMM
     auto* _be = active_backend();

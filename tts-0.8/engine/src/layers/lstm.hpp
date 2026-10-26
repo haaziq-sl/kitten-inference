@@ -4,6 +4,7 @@
 class LstmFp32 : public ILayer {
 public:
     int  hidden_size  = 0;
+    int  input_size_  = 0;   // from weight_ih_l0 at load; the input must have this many channels
     bool bidirectional = false;
 
     std::vector<float> w_ih;

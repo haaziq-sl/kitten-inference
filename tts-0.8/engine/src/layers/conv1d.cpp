@@ -82,6 +82,9 @@ void Conv1dFp32::load_weights(const ReadTensorFn& read)
 
     const int C_in_g = C_in / std::max(groups, 1);
     const int K      = kernel_size * C_in_g;
+    if (groups > 1 && C_in % groups != 0) bad_weights(name + ": C_in is not a multiple of groups");
+    need_values(raw_weight, layer_elems(name, {C_out, C_in_g, kernel_size}), name + ".weight");
+    allow_values(bias_fp32, (size_t)C_out, name + ".bias");
 
     // Reorder NCHW [C_out, C_in/g, kH] → NHWC [C_out, kH, C_in/g]
     weight_fp32.resize((size_t)C_out * K);
@@ -421,21 +424,16 @@ void Conv1dInt8::load_weights(const ReadTensorFn& read)
     std::vector<uint8_t> data;
     std::vector<int8_t>  weight_i8;
 
-    if (read(name + ".weight_i8", shape, data)) {
-        weight_i8.resize(data.size());
-        memcpy(weight_i8.data(), data.data(), data.size());
-    }
-    if (read(name + ".w_scales", shape, data)) {
-        w_scales.resize(data.size() / 4);
-        memcpy(w_scales.data(), data.data(), data.size());
-    }
-    if (read(name + ".bias", shape, data)) {
-        bias_fp32.resize(data.size() / 4);
-        memcpy(bias_fp32.data(), data.data(), data.size());
-    }
+    if (read(name + ".weight_i8", shape, data)) tensor_values(data, weight_i8, name + ".weight_i8");
+    if (read(name + ".w_scales", shape, data)) tensor_values(data, w_scales, name + ".w_scales");
+    if (read(name + ".bias", shape, data)) tensor_values(data, bias_fp32, name + ".bias");
 
     const int C_in_g = C_in / std::max(groups, 1);
     const int K      = kernel_size * C_in_g;
+    if (groups > 1 && C_in % groups != 0) bad_weights(name + ": C_in is not a multiple of groups");
+    need_values(weight_i8, layer_elems(name, {C_out, C_in_g, kernel_size}), name + ".weight_i8");
+    need_values(w_scales, (size_t)C_out, name + ".w_scales");
+    allow_values(bias_fp32, (size_t)C_out, name + ".bias");
     if (!weight_i8.empty()) {
         if (stride == 1 && groups <= 1) {
             // Fast path: pack one [C_out, C_in_g] sub-matrix per kernel position.
@@ -671,6 +669,10 @@ void ConvTranspose1dFp32::load_weights(const ReadTensorFn& read)
     // Pre-pack one [C_out_g, C_in_g] GEMM matrix per (group, kernel position)
     const int C_in_g  = C_in  / (groups > 0 ? groups : 1);
     const int C_out_g = C_out / (groups > 0 ? groups : 1);
+    if (groups < 1 || C_in % groups != 0 || C_out % groups != 0)
+        bad_weights(name + ": C_in and C_out must be multiples of groups");
+    need_values(weight_fp32, layer_elems(name, {C_in, C_out_g, kernel_size}), name + ".weight");
+    allow_values(bias_fp32, (size_t)C_out, name + ".bias");
     w_packed_k.resize((size_t)groups * kernel_size);
     std::vector<float> tmp((size_t)C_out_g * C_in_g);
     for (int g = 0; g < groups; ++g) {

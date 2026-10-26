@@ -11,17 +11,14 @@ void ConvFp32::load_weights(const ReadTensorFn& read)
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
 
-    if (read(base + ".weight", shape, data)) {
-        weight_fp32.resize(data.size() / 4);
-        memcpy(weight_fp32.data(), data.data(), data.size());
-    }
-    if (read(base + ".bias", shape, data)) {
-        bias_fp32.resize(data.size() / 4);
-        memcpy(bias_fp32.data(), data.data(), data.size());
-    }
+    if (read(base + ".weight", shape, data)) tensor_values(data, weight_fp32, base + ".weight");
+    if (read(base + ".bias", shape, data)) tensor_values(data, bias_fp32, base + ".bias");
 
     int C_in_g = C_in / (groups > 0 ? groups : 1);
+    if (groups > 1 && C_in % groups != 0) bad_weights(name + ": C_in is not a multiple of groups");
     K = kH * kW * C_in_g;
+    need_values(weight_fp32, layer_elems(name, {C_out, kH, kW, C_in_g}), base + ".weight");
+    allow_values(bias_fp32, (size_t)C_out, base + ".bias");
 
     // FP32 Winograd F(2,3) weight pre-transform for 3x3 stride=1 pad=1 convs
     if (kH == 3 && kW == 3 && stride_h == 1 && stride_w == 1

@@ -42,6 +42,14 @@ void LstmFp32::load_weights(const ReadTensorFn& read)
     read_f32_lstm(read, n + ".weight_hh_l0", w_hh);
     read_f32_lstm(read, n + ".bias_ih_l0",   b_ih);
     read_f32_lstm(read, n + ".bias_hh_l0",   b_hh);
+    const size_t gates = layer_elems(n, {4, H});
+    if (w_ih.empty() || w_ih.size() % gates != 0)
+        bad_weights(n + ".weight_ih_l0 has " + std::to_string(w_ih.size()) + " values, not a multiple of 4 * " +
+                    std::to_string(H));
+    input_size_ = (int)(w_ih.size() / gates);
+    need_values(w_hh, layer_elems(n, {4, H, H}), n + ".weight_hh_l0");
+    allow_values(b_ih, gates, n + ".bias_ih_l0");
+    allow_values(b_hh, gates, n + ".bias_hh_l0");
 
     // Infer C_in from w_ih [4H, C_in].
     // Always pack using CPU format: this layer always runs on CPU (required_mem_space=Host).
@@ -66,6 +74,10 @@ void LstmFp32::load_weights(const ReadTensorFn& read)
         read_f32_lstm(read, n + ".weight_hh_l0_reverse", w_hh_r);
         read_f32_lstm(read, n + ".bias_ih_l0_reverse",   b_ih_r);
         read_f32_lstm(read, n + ".bias_hh_l0_reverse",   b_hh_r);
+        need_values(w_ih_r, w_ih.size(), n + ".weight_ih_l0_reverse");
+        need_values(w_hh_r, w_hh.size(), n + ".weight_hh_l0_reverse");
+        allow_values(b_ih_r, gates, n + ".bias_ih_l0_reverse");
+        allow_values(b_hh_r, gates, n + ".bias_hh_l0_reverse");
 
         if (!w_ih_r.empty()) {
             int C_in_inferred = (int)w_ih_r.size() / (4 * H);
@@ -122,6 +134,9 @@ Shape LstmFp32::forward(const TensorView* inputs, int n_inputs,
 
     const int T      = sh.d1 * sh.d2;   // time steps
     const int C_in_  = sh.d0;           // input channels
+    if (C_in_ != input_size_)
+        throw std::runtime_error("model weights do not match the input: " + name + " takes " +
+                                 std::to_string(input_size_) + " input channels, got " + std::to_string(C_in_));
 
     const int H      = hidden_size;
     const int H_out  = H * (bidirectional ? 2 : 1);

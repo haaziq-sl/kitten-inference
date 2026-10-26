@@ -49,8 +49,7 @@ void SnakeFp32::load_weights(const ReadTensorFn& read)
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
     if (read(name + ".alpha", shape, data)) {
-        alpha.resize(data.size() / sizeof(float));
-        memcpy(alpha.data(), data.data(), data.size());
+        tensor_values(data, alpha, name + ".alpha");
         inv_alpha.resize(alpha.size());
         for (size_t i = 0; i < alpha.size(); ++i)
             inv_alpha[i] = 1.f / (alpha[i] + 1e-9f);
@@ -75,6 +74,7 @@ Shape SnakeFp32::forward(const TensorView* inputs, int n_inputs,
     BufferView  in1      = inputs[0].view;
     Shape sh       = inputs[0].shape;
     (void)n_inputs;
+    covers(alpha, (size_t)sh.d0, name, "alpha");
     active_backend()->snake1d_fp32(
         in1.as<float>(), out.as<float>(),
         alpha_d.valid()     ? alpha_d.as<float>()     : alpha.data(),

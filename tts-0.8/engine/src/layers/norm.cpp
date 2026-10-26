@@ -35,6 +35,7 @@ Shape RmsNormFp32::forward(const TensorView* inputs, int n_inputs,
     float*       output = out.as<float>();
     int N = sh.d1 * sh.d2;
     int C = sh.d0;
+    covers(gamma, (size_t)C, name, "gamma");
     active_backend()->rmsnorm_fp32(input, gamma.data(), output, N, C, eps, sc.stream);
     return sh;
 }
@@ -59,6 +60,8 @@ Shape LayerNormFp32::forward(const TensorView* inputs, int n_inputs,
     float*       output = out.as<float>();
     int N = in_shape.d1 * in_shape.d2;
     int C = in_shape.d0;
+    covers(gamma, (size_t)C, name, "gamma");
+    covers(beta, (size_t)C, name, "beta");
     active_backend()->layernorm_fp32(input, gamma.data(), beta.data(), output, N, C, eps, sc.stream);
     return in_shape;
 }
@@ -73,6 +76,10 @@ void AdaIn1dFp32::load_weights(const ReadTensorFn& read)
     read_f32_norm(read, name + ".fc.bias",     fc_bias);
     read_f32_norm(read, name + ".norm.weight", norm_weight);  // InstanceNorm learnable scale
     read_f32_norm(read, name + ".norm.bias",   norm_bias);    // InstanceNorm learnable shift
+    need_values(fc_weight, layer_elems(name, {2, C, C_style}), name + ".fc.weight");
+    allow_values(fc_bias, (size_t)2 * C, name + ".fc.bias");
+    allow_values(norm_weight, (size_t)C, name + ".norm.weight");
+    allow_values(norm_bias, (size_t)C, name + ".norm.bias");
 
     if (!fc_weight.empty()) {
         auto* be = active_backend();
@@ -115,6 +122,9 @@ Shape AdaIn1dFp32::forward(const TensorView* inputs, int n_inputs,
     float*       out_ptr = out.as<float>();
     const int T      = sh.d1 * sh.d2;
     const int C_feat = sh.d0;
+    if (C_feat > C)
+        throw std::runtime_error("model weights do not match the input: " + name + " takes up to " +
+                                 std::to_string(C) + " channels, got " + std::to_string(C_feat));
 
     if (gamma_beta_d_.valid()) {
         // GPU path: GEMM → gamma/beta on GPU, then AdaIN on GPU
@@ -161,6 +171,8 @@ void AdaLayerNormFp32::load_weights(const ReadTensorFn& read)
 {
     read_f32_or_i8_tensor(read, name + ".fc.weight", fc_weight);
     read_f32_norm(read, name + ".fc.bias",   fc_bias);
+    need_values(fc_weight, layer_elems(name, {2, C, C_style}), name + ".fc.weight");
+    allow_values(fc_bias, (size_t)2 * C, name + ".fc.bias");
 
     if (!fc_weight.empty()) {
         auto* be = active_backend();
@@ -203,6 +215,9 @@ Shape AdaLayerNormFp32::forward(const TensorView* inputs, int n_inputs,
     float*       out_ptr = out.as<float>();
     const int T      = sh.d1 * sh.d2;
     const int C_feat = sh.d0;
+    if (C_feat > C)
+        throw std::runtime_error("model weights do not match the input: " + name + " takes up to " +
+                                 std::to_string(C) + " channels, got " + std::to_string(C_feat));
 
     if (gamma_beta_d_.valid()) {
         // GPU path

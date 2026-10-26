@@ -46,8 +46,7 @@ static bool read_i8_attn(const ReadTensorFn& read, const std::string& key,
     std::vector<int32_t> shape;
     std::vector<uint8_t> data;
     if (!read(key, shape, data)) return false;
-    out.resize(data.size());
-    memcpy(out.data(), data.data(), data.size());
+    tensor_values(data, out, key);
     return true;
 }
 
@@ -88,6 +87,8 @@ Shape PatchPrepFp32::forward(const TensorView* inputs, int n_inputs,
     int N_patches = in_shape.d1 * in_shape.d2;
     int d = (D > 0) ? D : in_shape.d0;
 
+    covers(cls_token, (size_t)d, name, "cls_token");
+    covers(pos_embed, (size_t)(N_patches + 1) * d, name, "pos_embed");
     patch_prep_fp32(patches, cls_token.data(), pos_embed.data(),
                     output, N_patches, d);
     return {in_shape.d0, N_patches + 1, 1};
@@ -103,6 +104,10 @@ void AttentionFp32::load_weights(const ReadTensorFn& read)
     read_f32_attn(read, name + ".b_qkv",  b_qkv);
     read_f32_attn(read, name + ".w_proj", w_proj);
     read_f32_attn(read, name + ".b_proj", b_proj);
+    need_values(w_qkv, layer_elems(name, {3, D, D}), name + ".w_qkv");
+    need_values(w_proj, layer_elems(name, {D, D}), name + ".w_proj");
+    allow_values(b_qkv, (size_t)3 * D, name + ".b_qkv");
+    allow_values(b_proj, (size_t)D, name + ".b_proj");
 
     if (!w_qkv.empty()) {
         auto* _be = active_backend();
@@ -182,6 +187,8 @@ void SeqGemmFp32::load_weights(const ReadTensorFn& read)
 {
     read_f32_or_i8_tensor(read, name + ".weight", weight_fp32);
     read_f32_attn(read, name + ".bias",   bias_fp32);
+    need_values(weight_fp32, layer_elems(name, {C_out, C_in}), name + ".weight");
+    allow_values(bias_fp32, (size_t)C_out, name + ".bias");
 
     if (!weight_fp32.empty()) {
         auto* _be = active_backend();
@@ -320,6 +327,7 @@ Shape PosEmbAddFp32::forward(const TensorView* inputs, int n_inputs,
     const float* in      = in1.as<float>();
     float*       out_ptr = out.as<float>();
     const size_t N   = (size_t)sh.d0 * sh.d1 * sh.d2;
+    covers(weight, N, name, "weight");
     memcpy(out_ptr, in, N * sizeof(float));
     // Always on CPU (required_mem_space = Host).
     add_vectors_fp32(out_ptr, weight.data(), (int)N);
@@ -335,6 +343,9 @@ void SeqGemmInt8::load_weights(const ReadTensorFn& read)
     read_i8_attn( read, name + ".weight_i8", weight_i8);
     read_f32_attn(read, name + ".w_scales",  w_scales);
     read_f32_attn(read, name + ".bias",      bias_fp32);
+    need_values(weight_i8, layer_elems(name, {C_out, C_in}), name + ".weight_i8");
+    need_values(w_scales, (size_t)C_out, name + ".w_scales");
+    allow_values(bias_fp32, (size_t)C_out, name + ".bias");
 
     if (!weight_i8.empty() && !w_scales.empty()) {
         compute_i8_row_sums(weight_i8, C_out, C_in, w_row_sums);
@@ -426,6 +437,12 @@ void AttentionInt8::load_weights(const ReadTensorFn& read)
     read_i8_attn( read, name + ".w_proj_i8",    w_proj_i8);
     read_f32_attn(read, name + ".w_proj_scales", w_proj_scales);
     read_f32_attn(read, name + ".b_proj",        b_proj);
+    need_values(w_qkv_i8, layer_elems(name, {3, D, D}), name + ".w_qkv_i8");
+    need_values(w_qkv_scales, (size_t)3 * D, name + ".w_qkv_scales");
+    need_values(w_proj_i8, layer_elems(name, {D, D}), name + ".w_proj_i8");
+    need_values(w_proj_scales, (size_t)D, name + ".w_proj_scales");
+    allow_values(b_qkv, (size_t)3 * D, name + ".b_qkv");
+    allow_values(b_proj, (size_t)D, name + ".b_proj");
 
     if (!w_qkv_i8.empty() && !w_qkv_scales.empty()) {
         int three_D = 3 * D;

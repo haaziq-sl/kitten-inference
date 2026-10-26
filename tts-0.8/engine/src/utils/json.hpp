@@ -66,8 +66,16 @@ struct JsonValue {
         if (type == Object) return obj ? obj->size() : 0;
         return 0;
     }
-    const JsonValue& operator[](size_t i) const { return arr[i]; }
-    JsonValue& operator[](size_t i) { return arr[i]; }
+    const JsonValue& operator[](size_t i) const {
+        if (type != Array || i >= arr.size())
+            throw std::runtime_error("JSON: array index " + std::to_string(i) + " out of range");
+        return arr[i];
+    }
+    JsonValue& operator[](size_t i) {
+        if (type != Array || i >= arr.size())
+            throw std::runtime_error("JSON: array index " + std::to_string(i) + " out of range");
+        return arr[i];
+    }
 };
 
 inline JsonValue::JsonValue()
@@ -106,6 +114,17 @@ namespace json_detail {
 struct Parser {
     const char* p;
     const char* end;
+    // Arrays and objects nest at most this deep: an architecture file comes from the model's repository, and each
+    // level costs stack (a few hundred thousand '[' would overflow it).
+    static constexpr int kMaxDepth = 64;
+    int depth = 0;
+    struct Nest {
+        int& d;
+        explicit Nest(int& depth) : d(depth) {
+            if (++d > kMaxDepth) { --d; throw std::runtime_error("JSON: nested too deeply"); }
+        }
+        ~Nest() { --d; }
+    };
 
     explicit Parser(const char* data, size_t len)
         : p(data), end(data + len) {}
@@ -178,6 +197,7 @@ struct Parser {
     JsonValue parse_value();
 
     JsonValue parse_array() {
+        Nest nest(depth);
         expect('[');
         JsonValue v; v.type = JsonValue::Array;
         if (peek() == ']') { consume(); return v; }
@@ -188,6 +208,7 @@ struct Parser {
     }
 
     JsonValue parse_object() {
+        Nest nest(depth);
         expect('{');
         JsonValue v; v.type = JsonValue::Object;
         if (peek() == '}') { consume(); return v; }
