@@ -105,7 +105,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022, macos-14]
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -135,11 +135,11 @@ jobs:
       # Package managers on the runners can stall: each install is retried, with a step time limit.
       - name: ffmpeg (Linux)
         if: runner.os == 'Linux'
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: bash .github/scripts/apt_install.sh ffmpeg && ffmpeg -version | head -1
       - name: ffmpeg (Windows, the Gyan build that the error message suggests)
         if: runner.os == 'Windows'
-        timeout-minutes: 15
+        timeout-minutes: 25
         shell: bash
         run: |
           for try in 1 2 3; do
@@ -149,7 +149,7 @@ jobs:
           ffmpeg -version | head -1
       - name: ffmpeg (macOS)
         if: runner.os == 'macOS'
-        timeout-minutes: 20
+        timeout-minutes: 30
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
@@ -207,7 +207,7 @@ jobs:
       matrix:
         python: ["3.9", "3.12"]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -230,7 +230,7 @@ jobs:
           name: stubs
           path: stubs
       - name: ffmpeg
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: bash .github/scripts/apt_install.sh ffmpeg && ffmpeg -version | head -1
       - name: Install kitten-inference[tts-2] with the oldest allowed dependencies
         shell: bash
