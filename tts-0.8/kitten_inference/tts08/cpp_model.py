@@ -12,6 +12,7 @@ import phonemizer
 import soundfile as sf
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
+from . import _hybrid
 from .preprocess import TextPreprocessor, chunk_text, normalize_text
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -261,6 +262,22 @@ def _check_cpu(requirements=None, features=None):
         )
 
 
+_cpu_setup_lock = threading.Lock()
+_cpu_setup_done = False
+
+
+def _set_up_cpu(engine):
+    """Once per process, before any model runs: on an Intel CPU with performance and efficiency cores, let the
+    faster cores take more of the work (kitten_inference/tts08/_hybrid.py). The output stays the same."""
+    global _cpu_setup_done
+    with _cpu_setup_lock:
+        if _cpu_setup_done:
+            return
+        _cpu_setup_done = True
+        if hasattr(engine, "set_dynamic_split") and _hybrid.hybrid_cpu():
+            engine.set_dynamic_split(_hybrid.DYNAMIC_SPLIT)
+
+
 def _import_engine():
     _check_cpu()
     try:
@@ -270,6 +287,7 @@ def _import_engine():
             "The native engine (kitten_inference.tts08._engine) is missing or does not match "
             'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
         ) from exc
+    _set_up_cpu(_engine)
     return _engine
 
 

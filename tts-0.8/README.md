@@ -52,8 +52,8 @@ Options:
   models and the CPU for the int8 models. On the CPU, models in different threads generate at the same
   time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
 
-Audio can differ slightly between: Metal and the CPU (clip lengths within about 3.5%), and, for the int8
-models, different CPU types (within about 2%).
+Audio can differ slightly between: Metal and the CPU (clip lengths within about 3.5%), CPU thread counts
+(`OMP_NUM_THREADS`; same clip lengths), and, for the int8 models, different CPU types (within about 2%).
 
 ## Platforms
 

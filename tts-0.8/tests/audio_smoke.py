@@ -298,6 +298,29 @@ def backend_mix_check(cache_dir):
     return results
 
 
+SPLIT_MODELS = [NANO, NANO_INT8, "KittenML/kitten-tts-mini-0.8", "KittenML/kitten-tts-mini-0.8-int8"]
+
+
+def split_check(cache_dir):
+    """The dynamic work split (on by default only on CPUs with performance and efficiency cores) must give the same
+    CPU audio as the equal split, bit for bit, and the same audio again on a second call."""
+    results = []
+    before = _engine.dynamic_split()
+    try:
+        for model_name in SPLIT_MODELS:
+            model = KittenTTS(model_name, cache_dir=str(cache_dir), backend="cpu")
+            _engine.set_dynamic_split(0)
+            equal = as_audio(model.generate(TEXT, voice="Jasper"))
+            _engine.set_dynamic_split(4)
+            diffs = [check_same(f"{model_name} dynamic split, call {i}", as_audio(model.generate(TEXT, voice="Jasper")),
+                                equal, exact=True) for i in (1, 2)]
+            results.append({"check": "dynamic split", "model": model_name, "threads": _engine.max_threads(),
+                            "samples": int(len(equal)), "max_diff": max(diffs)})
+    finally:
+        _engine.set_dynamic_split(before)
+    return results
+
+
 def threads_check(cache_dir, rounds=2, timeout=900):
     """One model per thread, all generating at once; each output must match the same model run alone."""
     refs = {}
@@ -430,7 +453,7 @@ def main():
         default="release",
         help="quick: one WAV; release: nano voices, speeds and int8; speed: the speed check only; "
         "models: micro and mini, fp32 and int8; paths: a model folder with non-ASCII characters in its path; "
-        "mix: CPU and default-backend models in one process; threads: several models generating at once; "
+        "mix: CPU and default-backend models in one process; threads: several models generating at once, and the dynamic work split gives the same audio; "
         "auto: the default backend of every model, with warm timings; memory: memory stays level over 100 calls.",
     )
     args = parser.parse_args()
@@ -453,6 +476,7 @@ def main():
         results.extend(backend_mix_check(cache_dir))
     elif args.mode == "threads":
         results.extend(threads_check(cache_dir))
+        results.extend(split_check(cache_dir))
     elif args.mode == "auto":
         results.extend(auto_backend_check(cache_dir))
     elif args.mode == "memory":

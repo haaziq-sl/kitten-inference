@@ -22,6 +22,7 @@
 
 #include "engine/model.hpp"
 #include "backend/backend.hpp"
+#include "backend/cpu/ops/work_split.hpp"
 #ifdef HAVE_METAL
 #include "backend/metal/metal_backend.hpp"
 #endif
@@ -155,6 +156,24 @@ PYBIND11_MODULE(_engine, m) {
 #endif
         },
         "Return the native CPU thread budget visible to this Python thread."
+    );
+
+    m.def("set_dynamic_split",
+        [](int chunks_per_thread) {
+            if (chunks_per_thread < 0)
+                throw std::invalid_argument("chunks_per_thread must be 0 (equal split) or more");
+            kt_dynamic_chunks_setting().store(chunks_per_thread, std::memory_order_relaxed);
+        },
+        py::arg("chunks_per_thread"),
+        "Cut the matrix-multiply work of each CPU operation into chunks_per_thread pieces per thread, which the "
+        "threads take as they finish, so faster cores do more of it (0: one equal piece per thread). The output is "
+        "the same either way. The package turns it on for CPUs with performance and efficiency cores. Set it before "
+        "any model runs."
+    );
+
+    m.def("dynamic_split",
+        []() -> int { return kt_dynamic_chunks(); },
+        "Return the setting of set_dynamic_split() (0: one equal piece per thread)."
     );
 
     // ── InputSpec ─────────────────────────────────────────────────────────

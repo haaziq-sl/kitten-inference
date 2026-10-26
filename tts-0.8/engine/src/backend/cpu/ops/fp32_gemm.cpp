@@ -1,5 +1,6 @@
 #include "../ops_neon.hpp"
 #include "profile_internal.hpp"
+#include "work_split.hpp"
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -156,10 +157,8 @@ void sgemm_f32(
     const int m_tiles = M / MR;
 
     const bool n_part = (nT > 1) && (M < N);
-    const int mi_s = n_part ? 0       : (tid * m_tiles) / nT;
-    const int mi_e = n_part ? m_tiles : ((tid + 1) * m_tiles) / nT;
-    const int co_s = n_part ? (tid * Co_t) / nT       : 0;
-    const int co_e = n_part ? ((tid + 1) * Co_t) / nT : Co_t;
+    kt_split_tiles(n_part, m_tiles, Co_t, tid, nT, in_parallel,
+                   [&](const int mi_s, const int mi_e, const int co_s, const int co_e, const bool tail) {
 
 #ifdef __ARM_NEON
     // ── NEON path: mi-outer, co_blk-inner (MR=8 rows) ────────────────────
@@ -834,11 +833,11 @@ void sgemm_f32(
 #endif  // __ARM_NEON
 
     // ── Tail rows (M % MR residual, at most MR-1 rows) ────────────────────
-    // M-partition: only thread 0 handles the tail.
-    // N-partition: all threads handle the tail with their co_blk range.
-    if (n_part || tid == 0) {
-        const int co_s2 = n_part ? co_s : 0;
-        const int co_e2 = n_part ? co_e : Co_t;
+    // M-partition: one share (thread 0's) handles the tail over all co_blks.
+    // N-partition: every share handles the tail with its co_blk range.
+    if (tail) {
+        const int co_s2 = co_s;
+        const int co_e2 = co_e;
         for (int m = m_tiles * MR; m < M; ++m) {
             const float* a_row = A + (size_t)m * K;
             for (int co_blk = co_s2; co_blk < co_e2; ++co_blk) {
@@ -926,6 +925,7 @@ void sgemm_f32(
             }
         }
     }
+    });
 }
 
 
@@ -1005,10 +1005,8 @@ void conv1d_kfused_sgemm_f32(
     const int m_tiles = M / MR;
 
     const bool n_part = (nT > 1) && (M < C_out);
-    const int mi_s = n_part ? 0         : (tid * m_tiles) / nT;
-    const int mi_e = n_part ? m_tiles   : ((tid + 1) * m_tiles) / nT;
-    const int co_s = n_part ? (tid * Co_t) / nT       : 0;
-    const int co_e = n_part ? ((tid + 1) * Co_t) / nT : Co_t;
+    kt_split_tiles(n_part, m_tiles, Co_t, tid, nT, in_parallel,
+                   [&](const int mi_s, const int mi_e, const int co_s, const int co_e, const bool tail) {
 
     {
 #if defined(__AVX512F__)
@@ -1528,9 +1526,9 @@ void conv1d_kfused_sgemm_f32(
     } // end block
 
     // ── Tail rows (M % MR residual) ────────────────────────────────────────
-    if (n_part || tid == 0) {
-        const int co_s2 = n_part ? co_s : 0;
-        const int co_e2 = n_part ? co_e : Co_t;
+    if (tail) {
+        const int co_s2 = co_s;
+        const int co_e2 = co_e;
         for (int m = m_tiles * MR; m < M; ++m) {
             for (int co_blk = co_s2; co_blk < co_e2; ++co_blk) {
                 const int n0      = co_blk * TILE;
@@ -1633,4 +1631,5 @@ void conv1d_kfused_sgemm_f32(
             }
         }
     }
+    });
 }
