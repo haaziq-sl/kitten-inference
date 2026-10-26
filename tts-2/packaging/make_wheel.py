@@ -57,14 +57,15 @@ CAPS = {caps!r}
 
 README = """# kitten-inference-tts2-cu12
 
-The Kitten TTS 2 native engine for NVIDIA GPUs, with its command-line tool. On an RTX 4090 with the current model,
-this package streams its first audio after **19 ms** (median of 5 runs). Complete files take 6 to 10 times less time
-than with Kitten TTS 2 on vLLM or llama.cpp (one request at a time on an RTX PRO 6000, earlier 47-voice model).
+The Kitten TTS 2 native engine for NVIDIA GPUs, with its command-line tool. On an RTX PRO 6000 with the current
+model it streams its first audio after about **11 ms**, and complete files take 5 to 7 times less time than with
+Kitten TTS 2 on vLLM or llama.cpp (one request at a time).
 
 Install it with the Python API, which uses it:
 
 ```sh
-python -m pip install -U pip                 # older pip versions can skip an extra with only a warning
+python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\\Scripts\\activate
+python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
 pip install "kitten-inference[tts-2]"
 ```
 
