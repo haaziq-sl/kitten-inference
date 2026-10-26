@@ -7,11 +7,14 @@ is smaller: first audio after 22 ms and 4.5 to 6.9 times faster on an RTX 4090, 
 RTX 3060.
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
-python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
-pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Windows x64, driver R570 or newer
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
+pip install "kitten-inference[tts-2]"
 ```
 
+- NVIDIA GPU on Linux x86-64 or Windows x64, with driver R570 or newer.
+- On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
+- Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 - AMD Radeon RX 7000 and RX 9000, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
   ROCm 7.x first (WSL2: step 1 of [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md); Linux
@@ -28,11 +31,11 @@ pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Window
 ```python
 from kitten_inference.tts2 import KittenTTS2
 
-tts = KittenTTS2()                     # first use downloads and prepares the model
-audio = tts.generate("Hello from Kitten TTS 2.", voice="Bruno")   # float32, 24 kHz, mono
+tts = KittenTTS2()
+audio = tts.generate("Hello from Kitten TTS 2.", voice="Bruno")
 tts.save_wav("hello.wav", audio)
 for chunk in tts.stream("Streaming speech, chunk by chunk.", voice="Bruno"):
-    ...                                # play or send each chunk as it arrives
+    ...
 ```
 
 ```sh
@@ -62,7 +65,7 @@ first). On a 12 GB card other programs may then use at most about 500 MiB of it:
 
 ```python
 voice = tts.clone_voice("me.wav", "The exact words spoken in the recording.")
-tts.save_voice(voice, "me.voice")      # later: voice = tts.load_voice("me.voice")
+tts.save_voice(voice, "me.voice")
 audio = tts.generate("New speech in my voice.", voice=voice)
 ```
 

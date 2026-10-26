@@ -9,12 +9,12 @@ Fast inference engines for the Kitten TTS text-to-speech models:
   every machine we tested, and about **60 times faster than real time** on a 12-core desktop CPU.
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
-python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
-pip install "kitten-inference[tts-0.8]"         # Kitten TTS 0.8 on the CPU (kitten-inference-tts08)
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
+pip install "kitten-inference[tts-0.8]"
 ```
 
-On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
+This installs Kitten TTS 0.8 on the CPU (kitten-inference-tts08). On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line. Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning. On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 
 For Kitten TTS 2, install `"kitten-inference[tts-2]"` instead (NVIDIA, driver R570 or newer: kitten-inference-tts2 +
 kitten-inference-tts2-cu12) or `"kitten-inference[tts-2-rocm]"` (AMD Radeon with ROCm 7: kitten-inference-tts2 +

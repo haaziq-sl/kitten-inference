@@ -95,7 +95,7 @@ After step 1, pip can install the engine, in place of steps 2 to 4:
 sudo apt-get install -y python3-venv
 python3 -m venv ~/kitten-tts
 . ~/kitten-tts/bin/activate
-python -m pip install -U pip                 # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
+python -m pip install -U pip
 pip install "kitten-inference[tts-2-rocm]"
 kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
 ```

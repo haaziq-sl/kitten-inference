@@ -14,11 +14,13 @@ runs nano on the GPU (Metal) and ONNX Runtime on the CPU: 0.37 s against 0.71 s 
 ## Install
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
-python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
 pip install "kitten-inference[tts-0.8]"
 ```
 
+- On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
+- Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 - With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
   23.2.1 install no engine for `[tts-0.8]` and still report success.
@@ -29,7 +31,7 @@ pip install "kitten-inference[tts-0.8]"
 from kitten_inference.tts08 import KittenTTS
 
 tts = KittenTTS("KittenML/kitten-tts-mini-0.8")
-audio = tts.generate("This high-quality voice runs without a GPU.", voice="Jasper")  # float32, 24 kHz
+audio = tts.generate("This high-quality voice runs without a GPU.", voice="Jasper")
 tts.generate_to_file("Hello, world.", "hello.wav", voice="Luna", speed=1.2)
 ```
 

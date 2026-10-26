@@ -22,19 +22,20 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 
 ## Install
 
-Each block starts a Python virtual environment and upgrades pip in it. On Ubuntu and Debian, `python3 -m venv` needs
-`sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt; in PowerShell, run
+Each block starts a Python virtual environment and upgrades pip in it (pip older than 23.3 skips the `[tts-0.8]` extra with only a warning). On Ubuntu and Debian, `python3 -m venv` needs
+`sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the blocks in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line; in PowerShell, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once before activating.
 
 ### Kitten TTS 2: NVIDIA and AMD GPUs
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
-python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
-pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Windows x64, driver R570 or newer
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
+pip install "kitten-inference[tts-2]"
 kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 ```
 
+- NVIDIA GPU on Linux x86-64 or Windows x64, with driver R570 or newer.
 - Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
   our test machines (57 s with a 1 Gbit/s connection, 160 s on Windows). Later starts reuse the prepared model.
 - **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
@@ -65,8 +66,8 @@ The package picks its memory settings from the free GPU memory:
 ### Kitten TTS 0.8: the CPU
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
-python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install -U pip
 pip install "kitten-inference[tts-0.8]"
 python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kitten-tts-nano-0.8').generate_to_file('Hello from Kitten TTS.', 'hello.wav', voice='Jasper')"
 ```
@@ -105,10 +106,10 @@ Python 3.9 to 3.14).
 ```python
 from kitten_inference.tts2 import KittenTTS2
 
-tts = KittenTTS2()                                    # first use downloads and prepares the model
-tts.save_wav("hello.wav", tts.generate("Hello from Kitten TTS 2.", voice="Bruno"))   # float32, 24 kHz mono
+tts = KittenTTS2()
+tts.save_wav("hello.wav", tts.generate("Hello from Kitten TTS 2.", voice="Bruno"))
 for chunk in tts.stream("Streaming speech, chunk by chunk.", voice="Bruno"):
-    ...                                               # play or send each chunk as it arrives
+    ...
 ```
 
 ```python
