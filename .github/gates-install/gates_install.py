@@ -295,12 +295,19 @@ def main():
         "both": [("install", both)],
         "both-0-8": [("install", "kitten-inference[tts-0-8,tts-2]")],
         "cuda+rocm": [("install", "kitten-inference[tts-2,tts-2-rocm]")],
+        # what pip says where an extra has no engine once 0.1.x no longer counts (after the planned yank)
+        "tts-2-min-0.2": [("install", "kitten-inference[tts-2]>=0.2.0")],
+        "both-min-0.2": [("install", "kitten-inference[tts-0.8,tts-2]>=0.2.0")],
         "upgrade": [("install-pypi", "kitten-inference==0.1.1"), ("install-U", "kitten-inference[tts-0.8]")],
         "upgrade-0-8": [("install-pypi", "kitten-inference==0.1.1"), ("install-U", "kitten-inference[tts-0-8]")],
         "upgrade-plain": [("install-pypi", "kitten-inference==0.1.1"), ("install-U", "kitten-inference")],
         "uninstall-umbrella-first": [("install", both)] + ([("install", "kitten-inference[tts-2-rocm]")] if a.rocm else []) +
             [("uninstall", d) for d in ("kitten-inference", "kitten-inference-tts2-cu12") +
              (("kitten-inference-tts2-rocm",) if a.rocm else ()) + ("kitten-inference-tts08", "kitten-inference-tts2")],
+        "uninstall-tts08-umbrella-first": [("install", "kitten-inference[tts-0.8]"),
+                                           ("uninstall", "kitten-inference"), ("uninstall", "kitten-inference-tts08")],
+        "uninstall-tts08-engine-first": [("install", "kitten-inference[tts-0.8]"),
+                                         ("uninstall", "kitten-inference-tts08"), ("uninstall", "kitten-inference")],
         "uninstall-engines-first": [("install", both)] +
             [("uninstall", d) for d in ("kitten-inference-tts2", "kitten-inference-tts08", "kitten-inference-tts2-cu12",
                                         "kitten-inference")],

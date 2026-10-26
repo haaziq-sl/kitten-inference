@@ -21,11 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-2022, python: "3.12", label: windows-2022-py3.12, cases: "" }
-          - { os: windows-2022, python: "3.8", label: windows-2022-py3.8, cases: "plain,tts-0.8,tts-2,both,upgrade" }
-          - { os: macos-14, python: "3.12", label: macos-14-arm64-py3.12, cases: "" }
-          - { os: macos-15-intel, python: "3.12", label: macos-15-intel-py3.12, cases: "plain,tts-0.8,tts-2,both" }
-          - { os: ubuntu-24.04, python: "", label: ubuntu-24.04-runner-system-python, cases: "" }
+          # second round: the uninstall order for a TTS 0.8-only install on macOS (no TTS 2 there), and Python 3.8
+          # with the docs' first line (python -m pip install -U pip)
+          - { os: macos-14, python: "3.12", label: macos-14-arm64-py3.12-r2, cases: "uninstall-tts08-umbrella-first,uninstall-tts08-engine-first,tts-2-min-0.2,both-min-0.2", pip: "" }
+          - { os: macos-15-intel, python: "3.12", label: macos-15-intel-py3.12-r2, cases: "uninstall-tts08-umbrella-first,uninstall-tts08-engine-first,tts-2-min-0.2,both-min-0.2", pip: "" }
+          - { os: windows-2022, python: "3.8", label: windows-2022-py3.8-pip-upgraded, cases: "plain,tts-0.8,tts-0-8,tts-2,both,both-0-8,tts-2-min-0.2,upgrade,uninstall-tts08-umbrella-first", pip: "--upgrade-pip" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           "$PY" -I .github/gates-install/gates_install.py --wheels wheels --out out --python "$PY" \
-            --label "${{ matrix.label }}" --cases "${{ matrix.cases }}"
+            --label "${{ matrix.label }}" --cases "${{ matrix.cases }}" ${{ matrix.pip }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
