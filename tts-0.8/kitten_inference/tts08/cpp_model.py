@@ -267,15 +267,22 @@ _cpu_setup_done = False
 
 
 def _set_up_cpu(engine):
-    """Once per process, before any model runs: on an Intel CPU with performance and efficiency cores, let the
-    faster cores take more of the work (kitten_inference/tts08/_hybrid.py). The output stays the same."""
+    """Once per process, before any model runs: on an Intel CPU with performance and efficiency cores, default to one
+    thread per P-core logical CPU and let the faster cores take more of the work (kitten_inference/tts08/_hybrid.py).
+    OMP_NUM_THREADS and set_num_threads() still choose the thread count."""
     global _cpu_setup_done
     with _cpu_setup_lock:
         if _cpu_setup_done:
             return
         _cpu_setup_done = True
-        if hasattr(engine, "set_dynamic_split") and _hybrid.hybrid_cpu():
+        perf_threads = _hybrid.performance_threads()
+        if not perf_threads:
+            return
+        if hasattr(engine, "set_dynamic_split"):
             engine.set_dynamic_split(_hybrid.DYNAMIC_SPLIT)
+        threads = _hybrid.default_threads(perf_threads)
+        if threads and hasattr(engine, "set_default_threads"):
+            engine.set_default_threads(threads)
 
 
 def _import_engine():

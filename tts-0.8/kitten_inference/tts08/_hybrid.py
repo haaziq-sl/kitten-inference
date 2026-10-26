@@ -1,17 +1,20 @@
 """Intel CPUs with performance and efficiency cores ("hybrid" CPUs: 12th-generation Core and newer).
 
-The engine runs each CPU operation on a team of OpenMP threads (one per logical CPU by default). It normally gives
-every thread an equal share of the work, so on a hybrid CPU every operation waits for the threads on the slower
-efficiency cores (E-cores). On these CPUs the package therefore has the engine cut its matrix multiplications into
-DYNAMIC_SPLIT pieces per thread, which the threads take as they finish: the faster performance cores (P-cores) do
-more of them. The output is the same either way (each piece is computed whole by one thread), and the thread count
-is not changed, so OMP_NUM_THREADS and set_num_threads() work as before. On other CPUs the equal split stays: there
-the dynamic one was up to 21% slower for the int8 models.
+The engine runs each CPU operation on a team of OpenMP threads and normally gives every thread an equal share of the
+work, with one thread per logical CPU. On a hybrid CPU every operation then waits for the threads on the slower
+efficiency cores (E-cores), and with that many threads the GNU OpenMP runtime in the Linux wheels (from the
+manylinux_2_28 build image) stalled calls for seconds on a Core i9-14900K. So on these CPUs the package:
+- runs one thread per logical CPU of the performance cores (P-cores), unless OMP_NUM_THREADS or set_num_threads()
+  chooses the count;
+- has the engine cut its matrix multiplications into DYNAMIC_SPLIT pieces per thread, which the threads take as they
+  finish, so the faster cores do more of them. Each piece is computed whole by one thread: the output is the same as
+  with an equal split at the same thread count.
+On other CPUs nothing changes (there the dynamic split was up to 21% slower for the int8 models).
 
 The detection only reads what the operating system reports:
 - Linux: the kernel's list of P-core CPUs, /sys/devices/cpu_core/cpus (Intel hybrid CPUs, Linux 5.13 and newer),
   compared with the CPUs this process may use;
-- Windows: GetSystemCpuSetInformation, whose EfficiencyClass differs between P-cores and E-cores (Intel CPUs only).
+- Windows: GetSystemCpuSetInformation, whose EfficiencyClass is highest on the P-cores (Intel CPUs only).
 """
 import os
 import platform
@@ -57,18 +60,21 @@ def linux_performance_cpus(sysfs="/sys"):
         return None
 
 
-def linux_is_hybrid(sysfs="/sys", allowed=None):
-    """True when this process may run on both P-cores and other cores of an Intel hybrid CPU."""
+def linux_performance_threads(sysfs="/sys", allowed=None):
+    """The number of P-core logical CPUs this process may use, when it may also use other cores of an Intel hybrid
+    CPU; else None."""
     perf = linux_performance_cpus(sysfs)
     if not perf:
-        return False
+        return None
     if allowed is None:
         try:
             allowed = os.sched_getaffinity(0)
         except (AttributeError, OSError):
-            return False
+            return None
     allowed = frozenset(allowed)
-    return bool(perf & allowed) and bool(allowed - perf)
+    if not (perf & allowed) or not (allowed - perf):  # only P-cores, or only E-cores: nothing to balance
+        return None
+    return len(perf & allowed)
 
 
 def parse_windows_cpu_sets(buf):
@@ -92,9 +98,16 @@ def parse_windows_cpu_sets(buf):
     return sets
 
 
-def windows_is_hybrid(sets):
-    """True when the CPU sets have more than one EfficiencyClass (P-cores and E-cores)."""
-    return bool(sets) and len({s[3] for s in sets}) > 1
+def windows_performance_threads(sets):
+    """The number of logical CPUs with the highest EfficiencyClass (the P-cores), when the CPU sets have more than one
+    class; else None."""
+    if not sets:
+        return None
+    classes = {s[3] for s in sets}
+    if len(classes) < 2:
+        return None
+    best = max(classes)
+    return sum(1 for s in sets if s[3] == best)
 
 
 def _windows_cpu_sets():
@@ -122,14 +135,23 @@ def _is_intel():
     return "GenuineIntel" in (platform.processor() or os.environ.get("PROCESSOR_IDENTIFIER", ""))
 
 
-def hybrid_cpu():
-    """True on an Intel CPU with performance and efficiency cores (that this process may use); False when it is
-    not one or this cannot be told."""
+def performance_threads():
+    """The number of P-core logical CPUs on an Intel CPU with performance and efficiency cores (that this process may
+    use); None when it is not one or this cannot be told."""
     try:
         if sys.platform.startswith("linux"):
-            return linux_is_hybrid()
+            return linux_performance_threads()
         if sys.platform == "win32" and _is_intel():
-            return windows_is_hybrid(_windows_cpu_sets())
+            return windows_performance_threads(_windows_cpu_sets())
     except Exception:  # never fail a model load over this
-        return False
-    return False
+        return None
+    return None
+
+
+def default_threads(perf_threads, environ=None):
+    """The engine's default thread count for a hybrid CPU with perf_threads P-core logical CPUs: None (OpenMP's
+    choice) when OMP_NUM_THREADS is set."""
+    environ = os.environ if environ is None else environ
+    if not perf_threads or environ.get("OMP_NUM_THREADS", "").strip():
+        return None
+    return perf_threads

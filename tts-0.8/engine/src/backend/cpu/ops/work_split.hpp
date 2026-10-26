@@ -7,8 +7,8 @@
 // Static split (the default): thread tid takes the tid-th of nT equal ranges of tiles, as these kernels always did.
 // Dynamic split (kt_dynamic_chunks() > 0): the tiles are cut into nT * kt_dynamic_chunks() ranges, handed out to
 // the threads as they finish one (schedule(dynamic, 1)), so a slower core takes fewer of them. The Python package
-// turns it on for CPUs with performance and efficiency cores (kitten_inference/tts08/_hybrid.py), where it made
-// the default thread count 1.3-4x faster in tests; on other CPUs it was up to 21% slower for int8 models.
+// turns it on for Intel CPUs with performance and efficiency cores (kitten_inference/tts08/_hybrid.py), where it
+// was 1.14-1.21x faster than the equal split in tests; on other CPUs it was up to 21% slower for int8 models.
 // The setting is made once, before any model runs: every thread of a team must see the same value.
 #include <algorithm>
 #include <atomic>
