@@ -16,7 +16,6 @@ import contextlib
 import ctypes
 import os
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterator, List, Optional, Set
@@ -77,59 +76,148 @@ DEVELOPER_LINES = ("[decoder] config:",)
 VERBOSE_ENV = "KITTEN_TTS2_VERBOSE"
 
 
-def _hold_stderr():
-    """Points file descriptor 2 at a temporary file; (saved descriptor, file), or None when that is not possible
-    (no stderr, as under pythonw) or not wanted (KITTEN_TTS2_VERBOSE=1; Windows, where the engine's own C runtime
-    keeps the stderr it found when it was loaded, so nothing would be held back)."""
-    if os.environ.get(VERBOSE_ENV) == "1" or sys.platform == "win32":
-        return None
-    with contextlib.suppress(AttributeError, ValueError, OSError):
-        sys.stderr.flush()
-    try:
-        saved = os.dup(2)
-    except OSError:
-        return None
-    try:
-        held = tempfile.TemporaryFile()
-    except OSError:
-        os.close(saved)
-        return None
-    try:
-        os.dup2(held.fileno(), 2)
-    except OSError:
-        os.close(saved)
-        held.close()
-        return None
-    return saved, held
+_DEVELOPER = tuple(prefix.encode() for prefix in DEVELOPER_LINES)
 
 
-def _release_stderr(state, started: bool) -> None:
-    """Restores file descriptor 2 and shows what was held back: all of it when the start failed, else all but the
-    developer lines."""
-    saved, held = state
-    try:
-        os.dup2(saved, 2)
-    finally:
-        os.close(saved)
-    try:
-        held.seek(0)
-        text = held.read().decode("utf-8", "replace")
-    finally:
-        held.close()
-    if started:
-        text = "".join(line for line in text.splitlines(keepends=True) if not line.startswith(DEVELOPER_LINES))
-    if text:
+def _line_kind(start: bytes) -> str:
+    """What a line that begins with ``start`` is: "developer" (a developer line), "user" (any other line), or
+    "unknown" when more of it is needed to tell."""
+    if start.startswith(_DEVELOPER):
+        return "developer"
+    return "unknown" if any(prefix.startswith(start) for prefix in _DEVELOPER) else "user"
+
+
+class _Forwarder:
+    """While engines start, file descriptor 2 is the write end of a pipe. A thread reads the pipe and writes what
+    arrives to the real stderr at once (so a crash in the engine loses at most what the thread had not read yet),
+    except developer lines, which it keeps: they are shown only when a start fails. One forwarder serves every
+    engine that starts at the same time (one KittenTTS2 per GPU, made in threads): the first start redirects
+    descriptor 2 and the last one to finish restores it, so no start can restore another's redirect."""
+
+    def __init__(self, saved: int, reader: int):
+        self.saved = saved      # the real stderr (a duplicate of descriptor 2 as it was)
+        self.reader = reader
+        self.users = 0
+        self.developer: List[bytes] = []
+        self.lock = threading.Lock()   # developer, done, orphaned
+        self.done = False
+        self.orphaned = False   # the restore gave up waiting: the thread closes `saved` when it ends
+        self.thread = threading.Thread(target=self._run, name="kitten-tts2-start-stderr", daemon=True)
+
+    @classmethod
+    def start(cls) -> Optional["_Forwarder"]:
+        """Redirects descriptor 2; None when that is not possible (no stderr, as under pythonw)."""
         with contextlib.suppress(AttributeError, ValueError, OSError):
-            sys.stderr.write(text)
             sys.stderr.flush()
+        try:
+            saved = os.dup(2)
+        except OSError:
+            return None
+        try:
+            reader, writer = os.pipe()
+        except OSError:
+            os.close(saved)
+            return None
+        forwarder = cls(saved, reader)
+        try:
+            forwarder.thread.start()
+        except RuntimeError:  # no thread can be started: the start stays unfiltered
+            os.close(saved)
+            os.close(reader)
+            os.close(writer)
+            return None
+        try:
+            os.dup2(writer, 2)
+        except OSError:
+            os.close(writer)  # the thread sees the end of the pipe and stops
+            forwarder.finish(show_developer=False)
+            return None
+        os.close(writer)  # descriptor 2 is now the pipe's only write end
+        return forwarder
+
+    def _write(self, data: bytes) -> None:
+        with contextlib.suppress(OSError):
+            while data:
+                data = data[os.write(self.saved, data):]
+
+    def _run(self) -> None:
+        pending, inside_user_line = b"", False
+        try:
+            while True:
+                try:
+                    chunk = os.read(self.reader, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                pending += chunk
+                while pending:
+                    end = pending.find(b"\n") + 1
+                    if inside_user_line:  # pass the rest of a user line on, up to its end
+                        upto = end or len(pending)
+                        self._write(pending[:upto])
+                        pending, inside_user_line = pending[upto:], not end
+                        continue
+                    kind = _line_kind(pending)
+                    if kind == "user":
+                        inside_user_line = True
+                    elif kind == "developer" and end:
+                        with self.lock:
+                            self.developer.append(pending[:end])
+                        pending = pending[end:]
+                    else:
+                        break  # wait for more of the line
+            if pending:  # the pipe ended inside a line
+                if _line_kind(pending) == "developer":
+                    with self.lock:
+                        self.developer.append(pending)
+                else:
+                    self._write(pending)
+        finally:
+            os.close(self.reader)
+            with self.lock:
+                self.done = True
+                if self.orphaned:
+                    os.close(self.saved)
+
+    def show_developer_lines(self) -> None:
+        with self.lock:
+            lines, self.developer = self.developer, []
+        self._write(b"".join(lines))
+
+    def finish(self, show_developer: bool) -> None:
+        """After descriptor 2 is restored: waits for the thread to pass on the rest of the pipe. A child process
+        started meanwhile can keep the pipe open; the thread then goes on passing its output on."""
+        self.thread.join(2.0)
+        if show_developer:
+            self.show_developer_lines()
+        with self.lock:
+            if self.done:
+                os.close(self.saved)
+            else:
+                self.orphaned = True
+
+
+_start_lock = threading.Lock()
+_forwarder: Optional[_Forwarder] = None
 
 
 @contextlib.contextmanager
 def quiet_start():
     """Around kt2n_engine_create: the engine's developer lines on stderr are dropped, everything else it (or another
-    thread) writes there meanwhile is shown afterwards, and on a failed start all of it is."""
-    state = _hold_stderr()
-    if state is None:
+    thread) writes there meanwhile is passed on at once, and a failed start also shows the developer lines. Not on
+    Windows, where the engine's own C runtime keeps the stderr it found when it was loaded, so nothing would be held
+    back, nor with KITTEN_TTS2_VERBOSE=1."""
+    global _forwarder
+    forwarder = None
+    if os.environ.get(VERBOSE_ENV) != "1" and sys.platform != "win32":
+        with _start_lock:
+            if _forwarder is None:
+                _forwarder = _Forwarder.start()
+            forwarder = _forwarder
+            if forwarder is not None:
+                forwarder.users += 1
+    if forwarder is None:
         yield
         return
     started = False
@@ -137,7 +225,18 @@ def quiet_start():
         yield
         started = True
     finally:
-        _release_stderr(state, started)
+        with _start_lock:
+            forwarder.users -= 1
+            last = forwarder.users == 0
+            if last:
+                with contextlib.suppress(AttributeError, ValueError, OSError):
+                    sys.stderr.flush()
+                os.dup2(forwarder.saved, 2)  # closes the pipe's write end: the thread reads to its end
+                _forwarder = None
+            elif not started:  # under the lock: the last start closes `saved` only after this
+                forwarder.show_developer_lines()
+        if last:
+            forwarder.finish(show_developer=not started)
 
 
 class Engine:

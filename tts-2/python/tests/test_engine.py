@@ -303,3 +303,85 @@ def test_engine_start_is_quiet(capfd, monkeypatch):
     import os
     os.write(2, b"after\n")  # file descriptor 2 is back where it was
     assert capfd.readouterr().err == "after\n"
+
+
+class SlowNoisyLib(NoisyLib):
+    """NoisyLib whose create first waits for ``barrier`` (so two starts overlap) and returns only once ``leave`` is
+    set (so the test picks which start finishes first)."""
+
+    def __init__(self, barrier, leave, line):
+        super().__init__()
+        self.barrier, self.leave, self.line = barrier, leave, line
+
+    def kt2n_engine_create(self, config, handle, err):
+        import os
+        self.barrier.wait(5)
+        os.write(2, b"[decoder] config: aux_rows=0\n" + self.line)
+        assert self.leave.wait(5)
+        handle._obj.value = 0x1234
+        return 0
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32",
+                    reason="platform: on Windows the engine's C runtime keeps its own stderr")
+@pytest.mark.parametrize("first", ["a", "b"])
+def test_engine_starts_in_two_threads_keep_stderr(capfd, monkeypatch, first):
+    # One KittenTTS2 per GPU, made in threads: the starts overlap. Whichever finishes first, file descriptor 2 must
+    # come back to the real stderr afterwards, with both engines' user lines and no developer line.
+    monkeypatch.delenv("KITTEN_TTS2_VERBOSE", raising=False)
+    barrier = threading.Barrier(2)
+    leave = {"a": threading.Event(), "b": threading.Event()}
+    libs = {k: SlowNoisyLib(barrier, leave[k], f"kt2n: engine {k}\n".encode()) for k in "ab"}
+    threads = {k: threading.Thread(target=_engine_with, args=(libs[k],)) for k in "ab"}
+    for t in threads.values():
+        t.start()
+    second = "b" if first == "a" else "a"
+    leave[first].set()
+    threads[first].join(5)
+    leave[second].set()
+    threads[second].join(5)
+    import os
+    os.write(2, b"after\n")
+    err = capfd.readouterr().err
+    assert "kt2n: engine a\n" in err and "kt2n: engine b\n" in err and "[decoder] config" not in err, err
+    assert err.endswith("after\n"), err
+    assert _engine._forwarder is None
+
+
+class CheckingLib(NoisyLib):
+    """Writes a user line, then looks for it on the real stderr while the start is still running."""
+
+    def __init__(self, capfd):
+        super().__init__()
+        self.capfd, self.seen = capfd, ""
+
+    def kt2n_engine_create(self, config, handle, err):
+        import os
+        os.write(2, b"[decoder] config: aux_rows=0\nkt2n: about to stop")  # no line end yet, as before a crash
+        deadline = time.monotonic() + 5
+        while "kt2n: about to stop" not in self.seen and time.monotonic() < deadline:
+            time.sleep(0.01)
+            self.seen += self.capfd.readouterr().err
+        os.write(2, b" here\n")
+        handle._obj.value = 0x1234
+        return 0
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32",
+                    reason="platform: on Windows the engine's C runtime keeps its own stderr")
+def test_engine_start_passes_user_output_on_at_once(capfd, monkeypatch):
+    # What the engine prints while it starts reaches stderr at once, so a crash during the start (a C++ terminate
+    # message, a failed assertion) still shows it.
+    monkeypatch.delenv("KITTEN_TTS2_VERBOSE", raising=False)
+    lib = CheckingLib(capfd)
+    _engine_with(lib)
+    seen = lib.seen + capfd.readouterr().err
+    assert "kt2n: about to stop" in lib.seen and "[decoder] config" not in seen, seen
+    assert seen.endswith("kt2n: about to stop here\n"), seen
+
+
+def test_developer_line_detection_waits_for_enough_of_a_line():
+    assert _engine._line_kind(b"[decoder] config: x") == "developer"
+    assert _engine._line_kind(b"[deco") == "unknown"
+    assert _engine._line_kind(b"[decoder] other\n") == "user"
+    assert _engine._line_kind(b"\n") == "user"
