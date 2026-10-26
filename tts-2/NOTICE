@@ -9,8 +9,13 @@ Full license texts are in licenses/.
 
 Model weights
 -------------
-This repository contains no model weights. tools/prepare_assets.py downloads
-them and converts them into a local model directory. Converted files are
+This repository contains no model weights, with one exception: the 80
+band-pass filters of the voice cloning speaker network's SincNet front end
+(sincnet.conv1d.0.filters in tools/kt2n_assets/clone_sincnet_reference.json,
+with the fixed filterbank buffers n_ and window_) are computed from the learned
+cut-off frequencies of pyannote/embedding (below; MIT, Copyright (c) 2022
+CNRS), so they are derived from its weights. tools/prepare_assets.py downloads
+the weights and converts them into a local model directory. Converted files are
 derived from these weights and remain subject to their licenses.
 
 - KittenML/kitten-tts-2 on Hugging Face (latest revision): speech language
