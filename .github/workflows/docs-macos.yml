@@ -11,22 +11,17 @@ on:
         type: choice
         options: [prep, test]
       dist:
-        description: "distribution name for the pip install lines"
+        description: "distribution name for the pip install lines (kitten-inference = as written)"
         required: false
         default: ""
         type: string
       wheels_run:
-        description: "CI run whose tts08-wheels-macos-arm64 artifact is rebuilt into the test-release TTS 0.8 wheels (PIP_FIND_LINKS)"
+        description: "CI run with the tts08-wheels-macos-arm64 artifact (PIP_FIND_LINKS)"
         required: false
         default: ""
         type: string
-      desc_sha:
-        description: "commit whose tts-0.8/README.md is the TTS 0.8 wheels' long description"
-        required: false
-        default: ""
-        type: string
-      sums:
-        description: "expected sha256 of the rebuilt wheels: 'sha256  file' lines"
+      umbrella_run:
+        description: "CI run with the dist artifact (umbrella wheel, PIP_FIND_LINKS)"
         required: false
         default: ""
         type: string
@@ -48,7 +43,7 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/harness/doc"
           base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
-          for f in driver.py post.py claims.py retag.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
             curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
           done
           shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
@@ -95,12 +90,13 @@ jobs:
           test -n "$DIST"
           mkdir -p "$RUNNER_TEMP/harness/doc" "$RUNNER_TEMP/out"
           base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
-          for f in driver.py post.py claims.py retag.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
             curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
           done
           shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
       - name: Machine
         run: |
+          set +e
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
           echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
           echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
@@ -116,41 +112,32 @@ jobs:
             curl -sS -o /dev/null -w "$u http=%{http_code} ssl_verify=%{ssl_verify_result} ip=%{remote_ip}\n" "$u" || echo "$u FAILED"
           done
           echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
-          curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))'
-          curl -sS "https://pypi.org/pypi/$DIST-tts08/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("tts08 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]][:12])'
-      - name: CI wheels for TTS 0.8 (macOS arm64)
+          curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))' || true
+          curl -sS "https://pypi.org/pypi/$DIST-tts08/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("tts08 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]][:12])' || true
+      - name: CI wheels, TTS 0.8 macOS arm64 (PIP_FIND_LINKS)
         if: inputs.wheels_run != ''
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.wheels_run }}
+          repository: ${{ github.repository }}
           github-token: ${{ github.token }}
           name: tts08-wheels-macos-arm64
-          path: ${{ runner.temp }}/ci-wheels
-      - name: Test-release TTS 0.8 wheels for PIP_FIND_LINKS, checked against the release sha256
+          path: ${{ runner.temp }}/wheels
+      - name: CI wheels, umbrella (PIP_FIND_LINKS)
+        if: inputs.umbrella_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.umbrella_run }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          name: dist
+          path: ${{ runner.temp }}/wheels
+      - name: sha256 of every file in the PIP_FIND_LINKS folder
         if: inputs.wheels_run != ''
-        env:
-          DESC_SHA: ${{ inputs.desc_sha }}
-          SUMS: ${{ inputs.sums }}
         run: |
-          set -u
-          mkdir -p "$RUNNER_TEMP/desc" "$RUNNER_TEMP/out/retag"
-          curl -fsSL --retry 3 "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$DESC_SHA/tts-0.8/README.md" -o "$RUNNER_TEMP/desc/tts08.md"
-          shasum -a 256 "$RUNNER_TEMP/desc/tts08.md" "$RUNNER_TEMP"/ci-wheels/*.whl
-          export TEST_PREFIX="${DIST%kitten-inference}"
-          py=python3; for c in python3.13 python3.12 python3.11; do command -v $c >/dev/null && { py=$c; break; }; done
-          $py -I "$RUNNER_TEMP/harness/retag.py" retag "$RUNNER_TEMP"/ci-wheels/*.whl --out "$RUNNER_TEMP/tts08-wheels" \
-            --description "kitten-inference-tts08=$RUNNER_TEMP/desc/tts08.md" | tail -3
-          cp "$RUNNER_TEMP/tts08-wheels/retag-report.json" "$RUNNER_TEMP/out/retag/"
-          rm -f "$RUNNER_TEMP/tts08-wheels/retag-report.json"
-          (cd "$RUNNER_TEMP/tts08-wheels" && shasum -a 256 *.whl) | sort -k2 > "$RUNNER_TEMP/out/retag/got.txt"
-          printf '%s\n' "$SUMS" | tr ';' '\n' | grep -v '^[[:space:]]*$' | sort -k2 > "$RUNNER_TEMP/out/retag/expected.txt"
-          if diff "$RUNNER_TEMP/out/retag/expected.txt" "$RUNNER_TEMP/out/retag/got.txt"; then
-            echo "SHA256 CHECK: all $(wc -l < "$RUNNER_TEMP/out/retag/got.txt") wheels identical to the release" | tee "$RUNNER_TEMP/out/retag/result.txt"
-          else
-            echo "SHA256 CHECK: MISMATCH (kept for comparison)" | tee "$RUNNER_TEMP/out/retag/result.txt"
-            cp "$RUNNER_TEMP"/tts08-wheels/*.whl "$RUNNER_TEMP/out/retag/"
-          fi
-          echo "SESSION_PIP_FIND_LINKS=$RUNNER_TEMP/tts08-wheels" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/out"
+          (cd "$RUNNER_TEMP/wheels" && ls -la && shasum -a 256 *) | tee "$RUNNER_TEMP/out/find-links-sha256.txt"
+          echo "SESSION_PIP_FIND_LINKS=$RUNNER_TEMP/wheels" >> "$GITHUB_ENV"
       - name: Shell check (no doc lines)
         run: |
           for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
