@@ -206,7 +206,7 @@ jobs:
         shell: bash
         run: |
           set +e -u  # the runs below are expected to fail: their exit statuses are checked one by one
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user > /dev/null
+          bash .github/scripts/apt_install.sh qemu-user  # retried: apt-get on the runners can stall
           qemu-aarch64 --version | head -1
           py=venv-cp312/bin/python
           code='from kitten_inference.tts08 import KittenTTS
@@ -644,6 +644,7 @@ jobs:
     needs: [linux-wheels, desktop-wheels, android-wheels]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v5  # before the download: a checkout cleans the folder

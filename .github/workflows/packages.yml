@@ -43,6 +43,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -104,6 +105,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022, macos-14]
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -130,19 +132,33 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job)
         if: runner.os == 'Windows'
       # ffmpeg on every OS: the clone_voice decode tests (stdin pipe and by-name fallback) must run everywhere.
+      # Package managers on the runners can stall: each install is retried, with a step time limit.
       - name: ffmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+        timeout-minutes: 15
+        run: bash .github/scripts/apt_install.sh ffmpeg && ffmpeg -version | head -1
       - name: ffmpeg (Windows, the Gyan build that the error message suggests)
         if: runner.os == 'Windows'
+        timeout-minutes: 15
         shell: bash
-        run: choco install ffmpeg -y --no-progress > /dev/null && ffmpeg -version | head -1
+        run: |
+          for try in 1 2 3; do
+            choco install ffmpeg -y --no-progress --execution-timeout=240 && break
+            echo "::warning::choco try $try of 3 failed or timed out"; sleep 10
+          done
+          ffmpeg -version | head -1
       - name: ffmpeg (macOS)
         if: runner.os == 'macOS'
+        timeout-minutes: 20
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: brew install ffmpeg > /dev/null && ffmpeg -version | head -1
+        run: |
+          for try in 1 2 3; do
+            brew install ffmpeg && break
+            echo "::warning::brew try $try of 3 failed or timed out"; sleep 10
+          done
+          ffmpeg -version | head -1
       - name: Dependencies wheelhouse (kitten-inference-tts2's own dependencies, from PyPI)
         shell: bash
         run: |
@@ -214,7 +230,8 @@ jobs:
           name: stubs
           path: stubs
       - name: ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+        timeout-minutes: 15
+        run: bash .github/scripts/apt_install.sh ffmpeg && ffmpeg -version | head -1
       - name: Install kitten-inference[tts-2] with the oldest allowed dependencies
         shell: bash
         run: |
@@ -262,6 +279,7 @@ jobs:
           - os: windows-2022
             artifact: tts2-cu12-windows
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -303,6 +321,7 @@ jobs:
     # Ubuntu 22.04's own pip (22.0.2): does "kitten-inference[tts-0.8]" install the engine?
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     container: ubuntu:22.04
     steps:
       - uses: actions/checkout@v4

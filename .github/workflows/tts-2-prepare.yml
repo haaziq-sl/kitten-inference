@@ -191,6 +191,7 @@ jobs:
     needs: convert
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:
