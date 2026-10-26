@@ -71,6 +71,7 @@ jobs:
     name: install (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: wheel
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +130,7 @@ jobs:
     needs: [wheel, install]
     if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment: pypi
     permissions:
       contents: read
@@ -146,7 +148,7 @@ jobs:
             --platform manylinux_2_28_x86_64
       - name: Publish to PyPI (trusted publishing)
         if: steps.files.outputs.upload == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3: pinned to a commit (this job can upload to PyPI)
         with:
           packages-dir: upload/
           skip-existing: true

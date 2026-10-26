@@ -28,10 +28,22 @@ def _pypi(releases):
     return lambda index, name: None if name not in releases else {"releases": releases[name]}
 
 
+def _tts08_wheels(version="0.2.0"):
+    """The tts-0.8 release's wheels as tts-0.8.yml builds them (the file names of the gated 0.2.0 run), in the
+    order twine uploads them (sorted by name)."""
+    plats = ["macosx_11_0_arm64", "macosx_11_0_x86_64", "manylinux2014_aarch64.manylinux_2_17_aarch64",
+             "manylinux2014_x86_64.manylinux_2_17_x86_64", "manylinux_2_27_aarch64.manylinux_2_28_aarch64",
+             "manylinux_2_27_x86_64.manylinux_2_28_x86_64", "win_amd64"]
+    names = []
+    for py in ("cp38", "cp39", "cp310", "cp311", "cp312", "cp313", "cp314", "cp315"):
+        extra = (["win_arm64"] if py not in ("cp38", "cp39", "cp310") else []) + \
+                (["android_24_arm64_v8a"] if py == "cp313" else [])
+        names += [f"kitten_inference_tts08-{version}-{py}-{py}-{plat}.whl" for plat in plats + extra]
+    return [{"filename": n, "packagetype": "bdist_wheel", "yanked": False} for n in sorted(names)]
+
+
 FULL = {
-    "kitten-inference-tts08": {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64"),
-                                         _wheel("kitten-inference-tts08", "0.2.0", "macosx_11_0_arm64"),
-                                         _wheel("kitten-inference-tts08", "0.2.0", "win_amd64")]},
+    "kitten-inference-tts08": {"0.2.0": _tts08_wheels()},
     "kitten-inference-tts2": {"0.2.0": [_wheel("kitten-inference-tts2", "0.2.0")]},
     "kitten-inference-tts2-cu12": {"0.2.0": [_wheel("kitten-inference-tts2-cu12", "0.2.0", "manylinux_2_28_x86_64"),
                                              _wheel("kitten-inference-tts2-cu12", "0.2.0", "win_amd64")]},
@@ -67,15 +79,29 @@ def test_missing_platform_and_wrong_versions(guard):
                         "kitten-inference-tts2-rocm: no release >=0.2.0,<0.3 with wheels"]
 
 
-def test_tts08_needs_its_windows_wheel(guard):
-    # tts-0.8 uploads its ~65 wheels in one sorted run, Windows last. An upload that stopped before the Windows
-    # wheel (its macOS and Linux files up) must not count as ready, or the umbrella would publish with no tts08
-    # Windows wheel behind the [tts-0.8] extra.
-    releases = dict(FULL)
-    releases["kitten-inference-tts08"] = {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64"),
-                                                    _wheel("kitten-inference-tts08", "0.2.0", "macosx_11_0_arm64")]}
-    problems = guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(releases))
-    assert problems == ["kitten-inference-tts08 0.2.0: no wheel for win_amd64"]
+def test_tts08_needs_every_wheel(guard):
+    # tts-0.8 uploads its 62 wheels in one twine run sorted by name, so grouped by Python version: after 7 files
+    # (all of cp310, its Windows wheel included) every platform is there. An upload that stopped at any point must
+    # not count as ready, or the umbrella would publish with no wheel behind [tts-0.8] for most Python versions.
+    wheels = _tts08_wheels()
+    assert len(wheels) == 62 and wheels[6]["filename"] == "kitten_inference_tts08-0.2.0-cp310-cp310-win_amd64.whl"
+    assert wheels[-1]["filename"] == "kitten_inference_tts08-0.2.0-cp39-cp39-win_amd64.whl"
+    reqs = guard.only(guard.requirements(PYPROJECT), ["kitten-inference-tts08"])
+    for stopped in range(1, len(wheels)):
+        problems = guard.missing("idx", reqs, get=_pypi({"kitten-inference-tts08": {"0.2.0": wheels[:stopped]}}))
+        assert len(problems) == 1 and f"{62 - stopped} of 62 wheels not there yet" in problems[0], (stopped, problems)
+    assert guard.missing("idx", reqs, get=_pypi({"kitten-inference-tts08": {"0.2.0": wheels}})) == []
+    problems = guard.missing("idx", reqs, get=_pypi({"kitten-inference-tts08": {"0.2.0": wheels[:20]}}))
+    assert problems[0].startswith("kitten-inference-tts08 0.2.0: 42 of 62 wheels not there yet "
+                                  "(cp38-manylinux_2_17_x86_64, ")
+    assert problems[0].endswith(" and 36 more)")
+    # A yanked wheel does not count; a post release must be complete on its own.
+    wheels[-1] = dict(wheels[-1], yanked=True)
+    post = _tts08_wheels("0.2.0.post1")[:61]
+    problems = guard.missing("idx", reqs, get=_pypi({"kitten-inference-tts08": {"0.2.0": wheels, "0.2.0.post1": post}}))
+    assert problems == ["kitten-inference-tts08 0.2.0.post1: 1 of 62 wheels not there yet (cp39-win_amd64)"]
+    assert guard.wheel_tags("kitten_inference_tts08-0.2.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl") \
+        == {("cp310", "manylinux2014_x86_64"), ("cp310", "manylinux_2_17_x86_64")}
 
 
 def test_versions(guard):
@@ -154,3 +180,31 @@ def test_only_files_this_repository_published_count(guard):
         "kind": "GitHub", "repository": "kittenml/Kitten-Inference", "workflow": ".github/workflows/tts-2-engine.yml"}}]},
         "KittenML/kitten-inference", "tts-2-engine.yml")
     assert set(guard.WORKFLOWS) >= set(reqs) | {"kitten-inference"}
+
+
+def test_the_built_tts08_wheels_are_the_set_the_check_waits_for(guard):
+    # tts-0.8.yml runs `pypi_ready.py complete` on the wheels it built, so its build matrix and COMPLETE stay in step.
+    names = [w["filename"] for w in _tts08_wheels()]
+    assert guard.check_built("kitten-inference-tts08", names) == []
+    assert guard.check_built("kitten-inference-tts08", names[1:]) == ["not built: cp310-macosx_11_0_arm64"]
+    extra = "kitten_inference_tts08-0.2.0-cp316-cp316-win_amd64.whl"
+    assert guard.check_built("kitten-inference-tts08", names + [extra]) == [
+        f"built but not in pypi_ready.COMPLETE: {extra}"]
+
+
+def test_complete_command_line(guard, tmp_path):
+    # As tts-0.8.yml runs it: pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
+    import subprocess
+    import sys
+    for w in _tts08_wheels():
+        (tmp_path / w["filename"]).write_bytes(b"")
+    files = sorted(str(p) for p in tmp_path.iterdir())
+
+    def run(paths):
+        return subprocess.run([sys.executable, str(SCRIPT), "complete", "--dist", "kitten-inference-tts08", *paths],
+                              capture_output=True, text=True)
+
+    ok = run(files)
+    assert ok.returncode == 0 and "the 62 built wheels" in ok.stdout, ok.stdout + ok.stderr
+    bad = run(files[1:])
+    assert bad.returncode == 1 and "not built: cp310-macosx_11_0_arm64" in bad.stdout, bad.stdout + bad.stderr

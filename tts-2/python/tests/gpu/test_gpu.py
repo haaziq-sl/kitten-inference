@@ -192,6 +192,21 @@ def test_gpu_check_sees_this_gpu():
     assert run.returncode == 1 and "sees no GPU" in run.stderr, run.stderr[-500:]
 
 
+def test_engine_modules_load_eagerly(tts, backend):
+    # The GPU check in KittenTTS2() is the process's first driver call, so it asks for eager module loading before
+    # it, as the engine's create does; else the first requests of each process pay lazy module loading.
+    if backend.name != "cuda":
+        pytest.skip("CUDA only (cuModuleGetLoadingMode)")
+    code = ("import ctypes, sys; from kitten_inference.tts2 import KittenTTS2, _gpu; "
+            "t = KittenTTS2(revision=sys.argv[1], cache_dir=sys.argv[2] or None); m = ctypes.c_int(0); "
+            "s = ctypes.CDLL(_gpu.CUDA_DRIVER).cuModuleGetLoadingMode(ctypes.byref(m)); print(s, m.value); t.close()")
+    env = {k: v for k, v in os.environ.items() if k not in ("CUDA_MODULE_LOADING", "KT2N_CUDA_EAGER")}
+    for extra, want in (({}, "0 1"), ({"KT2N_CUDA_EAGER": "0"}, "0 2")):  # CU_MODULE_EAGER_LOADING 1, LAZY 2
+        run = subprocess.run([sys.executable, "-c", code, REVISION, CACHE or ""], capture_output=True, text=True,
+                             env=dict(env, **extra), timeout=600)
+        assert run.returncode == 0 and run.stdout.split()[-2:] == want.split(), (extra, run.stdout, run.stderr[-800:])
+
+
 def test_ctrl_c_during_start_frees_the_engine(tmp_path):
     """A real interrupt (as Ctrl-C) while kt2n_engine_create runs: no engine may stay behind, and the next
     KittenTTS2() in the same process starts normally."""
@@ -298,11 +313,11 @@ def test_loaded_voice_in_a_new_process(tts, reference, tmp_path):
     assert np.array_equal(np.load(tmp_path / "a.npy"), expected)
 
 
-def test_ffmpeg_missing_message(tts, reference, monkeypatch):
+def test_ffmpeg_missing_message(tts, reference, monkeypatch, tmp_path):
     if not tts.can_clone:
         _skip("this engine has no voice cloning")
     from kitten_inference.tts2 import FFmpegNotFound
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setenv("PATH", str(tmp_path))  # find_ffmpeg() reads PATH itself (not shutil.which): no ffmpeg there
     with pytest.raises(FFmpegNotFound, match="ffmpeg was not found"):
         tts.clone_voice(reference[0], reference[1])
 

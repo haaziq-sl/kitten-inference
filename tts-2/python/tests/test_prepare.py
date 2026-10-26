@@ -20,12 +20,15 @@ class FakeHub:
         self.calls = []
         self.timeouts = []
         self.online = True
+        self.during = None  # called inside model_info: what happens while a start waits for Hugging Face
         hub = self
 
         class Api:
             def model_info(self, repo, revision=None, token=None, timeout=None):
                 hub.calls.append(("model_info", repo, revision, token))
                 hub.timeouts.append(timeout)
+                if hub.during is not None:
+                    hub.during()
                 if not hub.online:
                     raise ConnectionError("no network")
                 return types.SimpleNamespace(sha=hub.sha)
@@ -327,7 +330,8 @@ def test_child_process_failure_shows_the_log_tail(tmp_path, monkeypatch):
 
     def fake_run(cmd, stdin=None, stdout=None, stderr=None, env=None):
         assert cmd[1] == "-c" and "kitten_inference.tts2._assets.prepare" in cmd[2] and cmd[3:] == ["--out", "x"]
-        assert env["PYTHONPATH"].split(os.pathsep)[0].endswith(("site-packages", "python"))
+        assert env[_prepare._PACKAGE_VAR].endswith(("site-packages", "python"))
+        assert env.get("PYTHONPATH") == os.environ.get("PYTHONPATH")  # the package is not put before the stdlib
         stdout.write(b"line 1\nerror: full decoder source checksum mismatch\n")
         return subprocess.CompletedProcess(cmd, 1)
 
@@ -599,3 +603,124 @@ def test_a_concurrent_ref_update_is_not_an_error(env, monkeypatch):
     monkeypatch.setattr(_prepare.os, "replace", busy)
     assert env.run() == env.cache / SHA
     assert not list(ref.parent.glob("*.tmp"))
+
+
+def test_child_keeps_the_standard_library_first(tmp_path, monkeypatch):
+    # The folder that holds kitten_inference (normally site-packages) must not go before the standard library in the
+    # child: a stale backport there with a standard-library name (PyPI's pathlib 1.0.1, enum34) would then replace
+    # that module in the child only, and first use would fail after the downloads. The folder still comes before
+    # site-packages when the child's path lacks it, so the child runs the same copy of the package as this process.
+    folder = tmp_path / "packages"
+    assets = folder / "kitten_inference" / "tts2" / "_assets"
+    assets.mkdir(parents=True)
+    for init in (folder / "kitten_inference", folder / "kitten_inference" / "tts2", assets):
+        (init / "__init__.py").write_text("")
+    (assets / "prepare.py").write_text("import argparse, json, pathlib\n"
+                                       "def main(argv):\n"
+                                       "    print('prepare from the parent folder', json.dumps(argv))\n"
+                                       "    return 0\n")
+    for name in ("json", "argparse", "pathlib", "enum"):
+        (folder / f"{name}.py").write_text(f"raise SystemExit('planted {name}.py imported')\n")
+    monkeypatch.setattr(_prepare, "_package_dir", lambda: str(folder))
+    log = tmp_path / "prepare.log"
+    _prepare._run_prepare(["--out", "x"], log)
+    text = log.read_text(encoding="utf-8")
+    assert "planted" not in text and 'prepare from the parent folder ["--out", "x"]' in text, text
+
+
+def test_frozen_app_is_told_to_prepare_first(env, monkeypatch):
+    # In a PyInstaller/cx_Freeze app sys.executable is the app: `-c` would start the app again, which then waits for
+    # ever on the lock this process holds. Refused before any download; a prepared model is still used.
+    monkeypatch.setattr(_prepare.sys, "frozen", True, raising=False)
+    with pytest.raises(_prepare.PrepareError, match="frozen app.*kitten-tts2 --prepare-only"):
+        env.run()
+    assert not [c for c in env.hub.calls if c[0] in ("snapshot", "file")] and env.prep.runs == []
+    assert env.prep.pinned == []
+    monkeypatch.setattr(_prepare.sys, "frozen", False)
+    assert env.run() == env.cache / SHA
+    monkeypatch.setattr(_prepare.sys, "frozen", True)
+    assert env.run() == env.cache / SHA and len(env.prep.runs) == 1
+    env.hub.sha = OTHER  # a newer main cannot be prepared here: the prepared one is used, with a warning
+    env.lines.clear()
+    assert env.run() == env.cache / SHA and any("frozen app" in l for l in env.lines), env.lines
+
+
+def test_fallback_folder_that_is_a_junction_is_refused(monkeypatch, tmp_path):
+    _Windows(monkeypatch, tmp_path, lambda path: path)
+    root = _prepare.cache_root(log=lambda m: None)
+    monkeypatch.setattr(_prepare, "_is_reparse_point", lambda p: p == root)
+    with pytest.raises(_prepare.PrepareError, match="reparse point"):
+        _prepare.cache_root(log=lambda m: None)
+
+
+def test_fallback_folder_is_checked_again_after_the_hugging_face_wait(monkeypatch, tmp_path, env):
+    # Another user can re-point a junction (or swap the folder) while a start waits for Hugging Face (up to
+    # HF_TIMEOUT); the fallback folder is checked again after the wait, as a given cache_dir is.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # the pinned inputs' cache (no cache_dir) goes there
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    _Windows(monkeypatch, tmp_path, lambda path: path)
+    fallback = _prepare.cache_root(log=lambda m: None)
+    start = lambda: _prepare.ensure(text_data_tool=tmp_path / "tool", log=lambda m: None)
+    env.hub.during = lambda: monkeypatch.setattr(_prepare, "_owned_by_me", lambda path: False)
+    with pytest.raises(_prepare.PrepareError, match="belongs to another user or can be changed by other users"):
+        start()
+    monkeypatch.setattr(_prepare, "_owned_by_me", lambda path: True)
+    env.hub.during = lambda: monkeypatch.setattr(_prepare, "_is_reparse_point", lambda p: p == fallback)
+    with pytest.raises(_prepare.PrepareError, match="reparse point"):
+        start()
+    assert not [c for c in env.hub.calls if c[0] in ("snapshot", "file")] and env.prep.runs == []
+    monkeypatch.setattr(_prepare, "_is_reparse_point", lambda p: False)
+    env.hub.during = None
+    assert start() == fallback / SHA
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="platform: Linux and macOS only")
+
+
+@posix_only
+def test_posix_cache_dir_others_can_write_is_refused(env):
+    # On a shared Linux server another user could create the folder first (or leave it writable) with a model in
+    # it whose sizes and SHA-256 match its own config.json, or a link where the prepare log is written.
+    (env.cache / SHA).mkdir(parents=True)
+    (env.cache / SHA / "config.json").write_text(json.dumps({"native": {"version": 1}}))
+    os.chmod(env.cache, 0o777)
+    with pytest.raises(_prepare.PrepareError, match="can be changed by other users of this computer"):
+        env.run()
+    os.chmod(env.cache, 0o755)
+    assert env.run() == env.cache / SHA
+
+
+@posix_only
+def test_posix_cache_dir_of_another_user_is_refused(env, monkeypatch):
+    env.cache.mkdir(mode=0o700)
+    me = os.getuid()
+    monkeypatch.setattr(_prepare.os, "getuid", lambda: me + 1)
+    with pytest.raises(_prepare.PrepareError, match="belongs to another user"):
+        env.run()
+    assert env.prep.runs == []
+
+
+@posix_only
+def test_posix_new_and_empty_cache_dirs_are_made_private(env, tmp_path):
+    env.run()
+    assert env.cache.stat().st_mode & 0o777 == 0o700  # made for this user only
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    os.chmod(empty, 0o777)
+    assert _prepare.cache_root(empty) == empty and empty.stat().st_mode & 0o777 == 0o700
+    link = tmp_path / "link"  # a link of this user's to a folder of this user's is fine
+    link.symlink_to(env.cache, target_is_directory=True)
+    assert _prepare.cache_root(link) == link
+
+
+@posix_only
+def test_posix_group_write_of_a_private_group_is_allowed(tmp_path, monkeypatch):
+    # Ubuntu and Fedora give each user a group of their own and umask 002: group write lets no one else in.
+    folder = tmp_path / "models"
+    (folder / SHA).mkdir(parents=True)
+    os.chmod(folder, 0o775)
+    monkeypatch.setattr(_prepare, "_group_is_only_mine", lambda gid: True)
+    assert _prepare.cache_root(folder) == folder
+    monkeypatch.setattr(_prepare, "_group_is_only_mine", lambda gid: False)
+    with pytest.raises(_prepare.PrepareError, match="can be changed by other users"):
+        _prepare.cache_root(folder)

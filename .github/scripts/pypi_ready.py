@@ -6,7 +6,9 @@ nothing (pip then fails, or falls back to the earlier kitten-inference 0.1.1).
     python .github/scripts/pypi_ready.py check  [--pyproject umbrella/pyproject.toml] [--index https://pypi.org]
     python .github/scripts/pypi_ready.py wait   [--timeout-minutes 120] [--every-seconds 60]
     python .github/scripts/pypi_ready.py wait   --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
+    python .github/scripts/pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
 
+complete: whether built wheels are exactly the set the check waits for (COMPLETE), so the two stay in step.
 check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout;
 a failed request (an error answer from PyPI, a timeout, a dropped connection) counts as "not ready yet" and is tried
 again at the next check.
@@ -34,14 +36,25 @@ except ImportError:  # Python < 3.11
     tomllib = None
 
 # The platforms each distribution must have a wheel for before it counts as ready, and whose provenance is checked
-# (CONTRACT.md); any wheel will do for distributions not listed. tts-0.8 uploads ~65 wheels in one sorted twine run,
-# so its Windows wheel (win_amd64) is the last uploaded: requiring it catches an upload that stopped partway (for
-# example on a network error after the macOS and Linux files), which would otherwise let the umbrella publish while
-# `pip install "kitten-inference[tts-0.8]"` has no Windows wheel.
+# (CONTRACT.md); any wheel will do for distributions not listed.
 PLATFORMS = {
     "kitten-inference-tts2-cu12": ["manylinux_2_28_x86_64", "win_amd64"],
     "kitten-inference-tts2-rocm": ["manylinux_2_28_x86_64"],
-    "kitten-inference-tts08": ["win_amd64"],
+}
+# Distributions with one wheel per CPython and platform: every one of them must be there. tts-0.8 uploads its 62
+# wheels in one twine run sorted by file name, so grouped by Python version (cp310 ... cp315, cp38, cp39), and every
+# platform has a wheel within the first few files: only the whole set shows that an upload which stopped partway
+# (a PyPI error or a dropped connection after file 20) is incomplete. Without it the umbrella would publish while
+# `pip install "kitten-inference[tts-0.8]"` finds no wheel for most Python versions. This is tts-0.8.yml's build
+# matrix: keep the two in step. A wheel listed here that the workflow does not build keeps the umbrella waiting (and
+# failing at the timeout), never publishing early.
+_TTS08_PYTHONS = ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313", "cp314", "cp315"]
+_TTS08_PLATFORMS = ["manylinux_2_17_x86_64", "manylinux_2_17_aarch64", "manylinux_2_28_x86_64",
+                    "manylinux_2_28_aarch64", "macosx_11_0_x86_64", "macosx_11_0_arm64", "win_amd64"]
+COMPLETE = {
+    "kitten-inference-tts08": ([(py, plat) for py in _TTS08_PYTHONS for plat in _TTS08_PLATFORMS]
+                               + [(py, "win_arm64") for py in _TTS08_PYTHONS if py not in ("cp38", "cp39", "cp310")]
+                               + [("cp313", "android_24_arm64_v8a")]),
 }
 EARLIER = ("kitten-inference", ["0.1.0", "0.1.1"])
 # The workflow that publishes each distribution (RELEASING.md), as PyPI's provenance names it.
@@ -136,6 +149,21 @@ def only(reqs: dict, names: list) -> dict:
     return {n: reqs[n] for n in wanted}
 
 
+def wheel_tags(filename: str) -> set:
+    """The (python tag, platform tag) pairs a wheel file name covers (compressed tag sets such as
+    manylinux2014_x86_64.manylinux_2_17_x86_64 give one pair per tag)."""
+    parts = filename[:-len(".whl")].split("-") if filename.endswith(".whl") else []
+    if len(parts) < 5:
+        return set()
+    return {(py, plat) for py in parts[-3].split(".") for plat in parts[-1].split(".")}
+
+
+def incomplete(name: str, wheels: list) -> list:
+    """The expected (python, platform) wheels of ``name`` (COMPLETE) that ``wheels`` lacks, as "cp39-win_amd64"."""
+    have = set().union(*(wheel_tags(w) for w in wheels)) if wheels else set()
+    return [f"{py}-{plat}" for py, plat in COMPLETE.get(name, []) if (py, plat) not in have]
+
+
 def missing(index: str, reqs: dict, get=fetch, provenance=None, publisher: str = PUBLISHER) -> list:
     """What is not on the index yet: one line per distribution. With ``provenance`` (a fetch_provenance-like
     function), only files that this repository's own workflow published count."""
@@ -157,6 +185,11 @@ def missing(index: str, reqs: dict, get=fetch, provenance=None, publisher: str =
         absent = [p for p in PLATFORMS.get(name, []) if not any(w.endswith(f"-{p}.whl") for w in good[best])]
         if absent:
             problems.append(f"{name} {best}: no wheel for {', '.join(absent)}")
+            continue
+        lacking = incomplete(name, good[best])
+        if lacking:
+            shown = ", ".join(lacking[:6]) + (f" and {len(lacking) - 6} more" if len(lacking) > 6 else "")
+            problems.append(f"{name} {best}: {len(lacking)} of {len(COMPLETE[name])} wheels not there yet ({shown})")
             continue
         if provenance is not None:
             # One wheel per required platform (or the first one): a squatted project has none from this repository.
@@ -199,7 +232,30 @@ def wait(index: str, reqs: dict, mode: str, timeout_s: float, every_s: float, ge
         sleep(every_s)
 
 
+def check_built(name: str, files: list) -> list:
+    """Problems with the built wheels ``files`` of ``name`` against COMPLETE: expected wheels that were not built, and
+    built ones the check would not wait for."""
+    wheels = [Path(f).name for f in files]
+    expected = set(COMPLETE.get(name, []))
+    problems = [f"not built: {w}" for w in incomplete(name, wheels)]
+    problems += [f"built but not in pypi_ready.COMPLETE: {w}" for w in sorted(wheels)
+                 if not wheel_tags(w) & expected]
+    return problems
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["complete"]:
+        c = argparse.ArgumentParser(prog="pypi_ready.py complete")
+        c.add_argument("--dist", required=True)
+        c.add_argument("wheels", nargs="*")
+        a = c.parse_args(sys.argv[2:])
+        name = re.sub(r"[-_.]+", "-", a.dist).lower()
+        problems = check_built(name, a.wheels) if name in COMPLETE else [f"{name} has no COMPLETE entry"]
+        for problem in problems:
+            print(f"::error::{name}: {problem}")
+        if not problems:
+            print(f"{name}: the {len(a.wheels)} built wheels are the set the umbrella's release check waits for")
+        return 1 if problems else 0
     p = argparse.ArgumentParser()
     p.add_argument("mode", choices=["check", "wait"])
     p.add_argument("--pyproject", type=Path, default=Path("umbrella/pyproject.toml"))

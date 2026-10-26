@@ -8,6 +8,8 @@ report for itself.
 from __future__ import annotations
 
 import ctypes
+import os
+import re
 import sys
 from typing import Callable, Optional
 
@@ -95,8 +97,30 @@ def check_rocm(device: int = 0, load=_cdll) -> int:
     return count.value if status == 0 else -1
 
 
+def _atoi(text: str) -> int:
+    """C's atoi(): the leading integer of ``text``, 0 when there is none."""
+    m = re.match(r"\s*([+-]?\d+)", text)
+    return int(m.group(1)) if m else 0
+
+
+def request_eager_loading(backend: str) -> None:
+    """Asks the driver to load every GPU module when the context is made, as the engine does at create
+    (request_eager_module_loading in src/engine/engine.cc): CUDA_MODULE_LOADING=EAGER, and on ROCm also
+    HIP_ENABLE_DEFERRED_LOADING=0. The driver reads these once, when this process first initialises it, and the check
+    below does that before the engine starts; without them first requests of the process pay lazy module loading
+    inside their kernel launches (the engine measured first audio 35 -> 44 ms on an RTX 4090). As in the engine, a
+    value already set wins and KT2N_CUDA_EAGER=0 keeps the driver's lazy default."""
+    if _atoi(os.environ.get("KT2N_CUDA_EAGER", "1")) == 0:
+        return
+    os.environ.setdefault("CUDA_MODULE_LOADING", "EAGER")
+    if backend == "rocm":
+        os.environ.setdefault("HIP_ENABLE_DEFERRED_LOADING", "0")
+
+
 def check(backend: str, device: int = 0, log: Optional[Callable[[str], None]] = None) -> int:
-    """The check for ``backend`` ("cuda" or "rocm")."""
+    """The check for ``backend`` ("cuda" or "rocm"). It is the first GPU call of the process, so it first asks for
+    the engine's eager module loading (request_eager_loading)."""
+    request_eager_loading(backend)
     if backend == "rocm":
         return check_rocm(device)
     return check_cuda(device, log)

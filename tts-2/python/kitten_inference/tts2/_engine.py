@@ -12,7 +12,11 @@ sections, so abandon() only records the id (an atomic deque append) and the next
 from __future__ import annotations
 
 import collections
+import contextlib
 import ctypes
+import os
+import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterator, List, Optional, Set
@@ -67,6 +71,75 @@ class Event:
 TERMINAL = (_abi.EVENT_DONE, _abi.EVENT_VOICE_BUILT)
 
 
+# Lines the engine prints on stderr while it starts that are meant for its developers (the render settings), not for
+# a Python program's user. KITTEN_TTS2_VERBOSE=1 shows them.
+DEVELOPER_LINES = ("[decoder] config:",)
+VERBOSE_ENV = "KITTEN_TTS2_VERBOSE"
+
+
+def _hold_stderr():
+    """Points file descriptor 2 at a temporary file; (saved descriptor, file), or None when that is not possible
+    (no stderr, as under pythonw) or not wanted (KITTEN_TTS2_VERBOSE=1; Windows, where the engine's own C runtime
+    keeps the stderr it found when it was loaded, so nothing would be held back)."""
+    if os.environ.get(VERBOSE_ENV) == "1" or sys.platform == "win32":
+        return None
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        sys.stderr.flush()
+    try:
+        saved = os.dup(2)
+    except OSError:
+        return None
+    try:
+        held = tempfile.TemporaryFile()
+    except OSError:
+        os.close(saved)
+        return None
+    try:
+        os.dup2(held.fileno(), 2)
+    except OSError:
+        os.close(saved)
+        held.close()
+        return None
+    return saved, held
+
+
+def _release_stderr(state, started: bool) -> None:
+    """Restores file descriptor 2 and shows what was held back: all of it when the start failed, else all but the
+    developer lines."""
+    saved, held = state
+    try:
+        os.dup2(saved, 2)
+    finally:
+        os.close(saved)
+    try:
+        held.seek(0)
+        text = held.read().decode("utf-8", "replace")
+    finally:
+        held.close()
+    if started:
+        text = "".join(line for line in text.splitlines(keepends=True) if not line.startswith(DEVELOPER_LINES))
+    if text:
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            sys.stderr.write(text)
+            sys.stderr.flush()
+
+
+@contextlib.contextmanager
+def quiet_start():
+    """Around kt2n_engine_create: the engine's developer lines on stderr are dropped, everything else it (or another
+    thread) writes there meanwhile is shown afterwards, and on a failed start all of it is."""
+    state = _hold_stderr()
+    if state is None:
+        yield
+        return
+    started = False
+    try:
+        yield
+        started = True
+    finally:
+        _release_stderr(state, started)
+
+
 class Engine:
     def __init__(self, lib, config: _abi.EngineConfig):
         self.lib = lib
@@ -84,9 +157,10 @@ class Engine:
         handle = ctypes.c_void_p()
         err = _abi.Error()
         try:
-            status = lib.kt2n_engine_create(ctypes.byref(config), ctypes.byref(handle), ctypes.byref(err))
-            if status != _abi.OK:
-                raise error_from(lib, status, err)
+            with quiet_start():
+                status = lib.kt2n_engine_create(ctypes.byref(config), ctypes.byref(handle), ctypes.byref(err))
+                if status != _abi.OK:
+                    raise error_from(lib, status, err)
             self._handle = handle
         except BaseException:
             # Also Ctrl-C: create blocks for seconds, and Python raises KeyboardInterrupt as soon as it returns, with

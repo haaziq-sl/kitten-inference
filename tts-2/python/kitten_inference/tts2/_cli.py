@@ -168,6 +168,35 @@ def _voice_message(path: str, revision: str, other: Optional[str], root: Path) -
             "--revision (kitten-tts2 --save-voice prints it), or clone the voice again with this model")
 
 
+ROCM_DOCS = "https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md"
+
+
+def _load(name: str):
+    import ctypes
+    return ctypes.CDLL(name)
+
+
+def _runtime_missing(backend, names: set) -> Optional[str]:
+    """One line when the GPU runtime the native tool needs is not on this machine, instead of its raw error. The ROCm
+    tool is linked against libamdhip64.so.7, so without ROCm it cannot start at all (the loader's error, exit 127);
+    the CUDA tool loads the NVIDIA driver at run time, which --help and --version do not need."""
+    from . import _gpu
+    if backend.name == "rocm":
+        try:
+            _load(_gpu.HIP_RUNTIME)
+        except OSError:
+            return (f"the AMD ROCm 7.x runtime ({_gpu.HIP_RUNTIME}) was not found, and the AMD engine needs it: "
+                    f"install ROCm 7.x as in step 1 of {ROCM_DOCS}")
+        return None
+    if names & {"--help", "--version"}:
+        return None
+    try:
+        _load(_gpu.CUDA_DRIVER)
+    except OSError:
+        return f"no NVIDIA driver found on this machine ({_gpu.CUDA_DRIVER} is missing). {_gpu.NEED_DRIVER}."
+    return None
+
+
 def _run(cli: str, args: List[str]) -> int:
     sys.stdout.flush()
     sys.stderr.flush()
@@ -197,6 +226,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except (ImportError, ValueError) as exc:  # the usage above is still the answer to --help
             print(f"kitten-tts2: {exc}", file=sys.stderr)
             return 0
+        missing = _runtime_missing(backend, names | {"--help"})
+        if missing is not None:  # the usage above is still the answer
+            print(f"kitten-tts2: {missing}", file=sys.stderr)
+            return 0
         return _run(str(backend.cli), ["--help"])
     if own.get("--with-cloning") and not own.get("--prepare-only"):
         print("kitten-tts2: --with-cloning goes with --prepare-only (cloning files are added on their own when "
@@ -211,8 +244,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except (ImportError, ValueError) as exc:
         print(f"kitten-tts2: {exc}", file=sys.stderr)
         return 1
+    # Said before anything is downloaded: the native tool could not start without its GPU runtime. Preparing alone
+    # needs none (the text-data helper runs without it).
+    missing = None if own.get("--prepare-only") else _runtime_missing(backend, names)
     if "--version" in names:
         print(f"kitten-tts2 {__version__} ({backend.distribution} {backend.version})")
+        if missing is not None:
+            print(f"kitten-tts2: {missing}", file=sys.stderr)
+            return 1
         return _run(str(backend.cli), native)
     if (own.get("--with-cloning") or "--reference-audio" in names) and not backend.can_clone:
         # Before the cloning files are downloaded and prepared (1.1 GB): this engine could not use them.
@@ -220,6 +259,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               "voice cloning. Clone and save the voice on an NVIDIA GPU (kitten-tts2 --reference-audio ... "
               "--save-voice FILE), then use it here with --load-voice FILE", file=sys.stderr)
         return 2
+    if missing is not None:
+        print(f"kitten-tts2: {missing}", file=sys.stderr)
+        return 1
     if own.get("--prepare-only") or "--assets" not in names:
         from . import _gpu
         # A saved voice works only with the model it was made with (the native tool would only print its status code).

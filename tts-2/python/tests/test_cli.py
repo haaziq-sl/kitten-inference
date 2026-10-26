@@ -204,3 +204,44 @@ def test_save_voice_names_the_revision(voices, monkeypatch, capsys):
             "--save-voice", "me2.voice", "--text", "hi"]
     assert _cli.main(argv) == 0
     assert f"model revision {OLD}; a voice saved now loads only with this revision" in capsys.readouterr().err
+
+
+def _no_runtime(monkeypatch, missing):
+    def load(name):
+        if name == missing:
+            raise OSError(f"{name}: cannot open shared object file: No such file or directory")
+        return object()
+    monkeypatch.setattr(_cli, "_load", load)
+
+
+def test_missing_rocm_runtime_is_one_line_before_any_download(no_backends, fake_backend, monkeypatch, capsys):
+    # The ROCm tool is linked against libamdhip64.so.7: without ROCm the loader would only print its raw error.
+    fake_backend("rocm", caps=())
+    prepared, ran = [], []
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: prepared.append(kw) or "model")
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(args) or 0)
+    _no_runtime(monkeypatch, "libamdhip64.so.7")
+    for argv in (["--text", "x"], ["--version"], ["--assets", "m", "--text", "x"]):
+        assert _cli.main(argv) == 1, argv
+        err = capsys.readouterr().err
+        assert "AMD ROCm 7.x runtime (libamdhip64.so.7) was not found" in err and "amd-radeon.md" in err, err
+        assert len(err.strip().splitlines()) == 1, err
+    assert prepared == [] and ran == []
+    assert _cli.main(["--help"]) == 0 and ran == []  # the usage is still printed
+    assert "ROCm 7.x runtime" in capsys.readouterr().err
+    assert _cli.main(["--prepare-only"]) == 0 and len(prepared) == 1  # preparing needs no ROCm
+    _no_runtime(monkeypatch, None)
+    assert _cli.main(["--text", "x"]) == 0 and len(ran) == 1
+
+
+def test_missing_nvidia_driver_is_one_line_before_any_download(no_backends, fake_backend, monkeypatch, capsys):
+    fake_backend("cuda")
+    prepared, ran = [], []
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: prepared.append(kw) or "model")
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(args) or 0)
+    from kitten_inference.tts2 import _gpu
+    _no_runtime(monkeypatch, _gpu.CUDA_DRIVER)
+    assert _cli.main(["--text", "x"]) == 1 and prepared == [] and ran == []
+    assert "no NVIDIA driver found" in capsys.readouterr().err
+    # --help and --version run the tool without the driver
+    assert _cli.main(["--version"]) == 0 and _cli.main(["--help"]) == 0 and _cli.main([]) == 0 and len(ran) == 3
