@@ -29,7 +29,7 @@ def _pypi(releases):
 
 
 def _tts08_wheels(version="0.2.0"):
-    """The tts-0.8 release's wheels as tts-0.8.yml builds them (the file names of the gated 0.2.0 run), in the
+    """The tts-0.8 release's wheels as tts-0.8.yml builds them (the file names of the 0.2.0 CI run), in the
     order twine uploads them (sorted by name)."""
     plats = ["macosx_11_0_arm64", "macosx_11_0_x86_64", "manylinux2014_aarch64.manylinux_2_17_aarch64",
              "manylinux2014_x86_64.manylinux_2_17_x86_64", "manylinux_2_27_aarch64.manylinux_2_28_aarch64",

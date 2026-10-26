@@ -73,8 +73,17 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
    is not byte-for-byte the same: the Windows CUDA wheel's size moved by 2 bytes between two runs of the same source
    (its GPU code still passed `SASS check`, which compares only GPU code), and the ROCm wheel stamps its zip entries
    with the time of the built commit, so its sha256 changes with every commit. Before you approve the `pypi`
-   environment for a job, tie its wheels to the CI run you tested (of the tagged commit, or of an earlier commit
-   with the same `tts-2/` and `tts-0.8/` sources):
+   environment for a job, tie its wheels to the CI run you tested: a run of the tagged commit, or of an earlier commit
+   with the same sources for that distribution. For the engine wheels (`-tts2-cu12`, `-tts2-rocm`) that is `tts-2/`
+   apart from `tts-2/python/`, `tts-2/docs/`, the Markdown files, `tts-2/NOTICE` and the description text in
+   `tts-2/packaging/make_wheel.py`, so this lists nothing else:
+
+   ```
+   git diff --stat <tested> <tagged> -- tts-2 ':!tts-2/python' ':!tts-2/docs' ':!*.md' ':!tts-2/NOTICE'
+   ```
+
+   For `kitten-inference-tts08` it is the `paths:` of `tts-0.8.yml`; for `kitten-inference-tts2` and
+   `kitten-inference`, the `paths:` of `packages.yml`. Then check:
    - the CUDA jobs print `SASS check: IDENTICAL` (GPU code == `tts-2/packaging/sass-reference.txt`);
    - the wheel jobs' own checks passed: size, contents and install checks for the engine wheels
      (`tts-2/packaging/smoke_wheel.py`, `check_wheel_rocm.py`), "Wheel list and contents" for tts-0.8, and the tests
@@ -88,9 +97,11 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
      diff tested.txt tagged.txt
      ```
 
-     Approve only if no line differs, or only these do: `METADATA` when its text changed between the two commits,
-     and on Windows the CUDA engine's binaries under `kitten_inference/_tts2_cuda/lib/` and `bin/`, whose host code is
-     not reproducible (after `SASS check: IDENTICAL`). For any other difference, run the GPU tests with the tagged
+     Approve only if no line differs, or only these do: `METADATA` when its text changed between the two commits;
+     the text file `NOTICE` when `tts-2/NOTICE` changed (`*.dist-info/licenses/NOTICE` in the CUDA wheels,
+     `kitten_inference/_tts2_rocm/licenses/NOTICE` in the ROCm wheel); and on Windows the CUDA engine's binaries under
+     `kitten_inference/_tts2_cuda/lib/` and `bin/`, whose host code is not reproducible (after `SASS check:
+     IDENTICAL`). For any other difference, run the GPU tests with the tagged
      wheels first (`python -m pytest tts-2/python/tests/gpu` on an NVIDIA GPU, or an AMD GPU for the ROCm wheel;
      `KT2N_TEST_CLONING=1` adds cloning).
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
