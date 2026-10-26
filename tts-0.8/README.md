@@ -22,8 +22,9 @@ pip install "kitten-inference[tts-0.8]"
 - On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
 - Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
-- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
-  23.2.1 install no engine for `[tts-0.8]` and still report success.
+- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip older than 23.3 (for example
+  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) installs no engine for `[tts-0.8]`
+  and still reports success.
 
 ## Use
 
@@ -86,7 +87,7 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
   if the text front end's (espeak-ng) data path is too long or not plain ASCII, TTS 0.8 keeps one copy of that data in
   a short folder (`~/.cache/kitten-inference/espeak`, on Windows `%LOCALAPPDATA%\kitten-inference\espeak` or
   `C:\ProgramData\kitten-inference-espeak-<id>`); you can delete it at any time. On Windows, a virtual environment path
-  of about 168 characters or more still stops the import, with an error that says so: use a shorter folder for the
+  of about 150 characters or more can stop the install or the import, with an error that says so: use a shorter folder for the
   virtual environment.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times

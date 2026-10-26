@@ -25,7 +25,8 @@ Other systems have no Kitten TTS 2 engine: pip then stops with "No matching dist
 with Python 3.9 to 3.14: `"kitten-inference[tts-0.8,tts-2]"`.
 
 - With a pip you cannot upgrade, write the extra as `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip
-  22.0.2 to 23.2.1 install no engine for `[tts-0.8]` and still report success.
+  older than 23.3 (for example 22.0.2 on Ubuntu 22.04, or 21.2.4 with the python3 that macOS includes) installs no
+  engine for `[tts-0.8]` and still reports success.
 - Python: `from kitten_inference.tts08 import KittenTTS`, `from kitten_inference.tts2 import KittenTTS2`.
 - Version 0.1.x of this package was the TTS 0.8 engine itself (`import model_inference`); code that uses it pins
   `kitten-inference==0.1.1`.
