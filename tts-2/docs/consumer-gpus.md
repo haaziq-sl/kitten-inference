@@ -38,7 +38,7 @@ again, and are marked "47-voice revision" otherwise.
 | 4 GB cards (3 GB cards not tested) | supported, not optimal: as above, and long streaming text is cut where the fitted sizes limit it | RTX 3050 Laptop GPU 4 GB: 0.17 |
 | 2 GB cards | not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start | — |
 | AMD Radeon RX 7000 and RX 9000 | supported; audio close to, not bit for bit the same as, NVIDIA; no voice cloning; RX 7600 and RX 7600 XT not tested; see [AMD Radeon](#amd-radeon) | RX 7900 XTX: 0.068, first audio 0.05 s; RX 9060 XT: 0.090 |
-| 64-bit Windows with an NVIDIA GPU | supported; voice cloning only with the pip package (built; passes an automated check, not tested by hand); tested on Windows Server 2022 only; see [Windows](#windows) | NVIDIA L4: 0.074, first audio 46 ms |
+| 64-bit Windows with an NVIDIA GPU | supported; the same audio as Linux on the same GPU model; voice cloning only with the pip package; tested on Windows Server 2022 only; see [Windows](#windows) | NVIDIA L4: 0.074, first audio 46 ms |
 
 Building a cloned voice needs about 11.3 GB of free GPU memory with the low-memory profile, which the tool picks when
 the default profile's 15.6 GB does not fit; it was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits
@@ -53,7 +53,8 @@ Other AMD GPUs (RX 6000 and earlier, Instinct) and NVIDIA GPUs other than comput
 **NVIDIA: the same audio as the earlier build (CUDA 12.8 build).** On RTX 20-series and newer NVIDIA GPUs, and on GTX 10
 and GTX 16 GPUs with the new decode kernel, a seeded `--stream false` request from the CUDA 12.8 build gives bit for
 bit the same audio as the earlier build on the same GPU, with the same prepared model files. The fitted small-memory sizes give the same audio too, except for the
-streaming split listed below.
+streaming split listed below. Windows and Linux give byte for byte the same audio on the same GPU model (the pip
+packages of this version on an NVIDIA L4: 36 of 36 seeded `--stream false` requests).
 
 **Streaming on every GPU.** Where streamed audio is cut into decoder chunks depends on how fast speech is generated,
 so streamed audio with the same seed can differ from run to run on any GPU (in one test, 39 of 212 streaming requests
@@ -75,7 +76,6 @@ texts.
 | Cards where the fitted sizes limit streaming segments (seen on 4 GB cards), streaming only | a long streaming text chunk is split into shorter pieces, each spoken separately ([details](#small-memory-cards)) | Output can differ. Same GPU with and without the split, 24 texts, 2 seeds: 3 of 48 outputs skipped a sentence (without: none), word error rate 1.43% (without: 0.58%), same voice (similarity 0.995). On a real RTX 3050 Laptop GPU 4 GB: 1.71%, 2 of 47 outputs. On the 72 test requests, real 4 GB cards stayed within the usual variation (word error rate 0.80% to 0.99%; RTX 4090: 0.99%). `KT2N_FIT_SPLIT=0` refuses such text instead. `--stream false` is never split |
 | NVIDIA, builds made with CUDA 13 | another compiler version rounds differently | RTX 5060, 72 test requests: none bit for bit the same as the CUDA 12.8 build's; word error rate 1.39% against 1.42% |
 | GeForce GTX 10, GTX 16 and RTX 20 | no bf16 tensor cores: the engine does the same math in software; not changed by this version | 72 test requests: word error rate 0.80%, vs 0.99% on the RTX 4090; voice similarity 0.957, vs 0.910 for a different seed |
-| Windows | the same GPU code as Linux, but not measured on the same GPU as Linux | NVIDIA L4, 24 texts, 2 seeds: word error rate 0.55% (RTX 4090 on Linux: 0.60%); transcripts differ from the RTX 4090's by 2 words in 4,327 |
 
 These are speech-recognition and speaker-similarity measurements; no listening test was done.
 
@@ -278,16 +278,11 @@ work the same way but have not been tested.
 | Real-time factor, streaming / `--stream false` | 0.082 / 0.074 (12 to 13.5 times faster than real time; 24 test texts, measured on a development build of this version with `--memory-profile low --voice-cache lru --voice-cache-voices 4`) |
 | Word error rate | 0.55% (Linux on an RTX 4090: 0.60%; same development build and settings) |
 
-How the output compares with Linux (no Linux machine with an L4 was available, so this was checked in parts, not on
-one GPU):
-- GPU code: the compiled GPU instructions of the Windows and Linux builds are identical (compared kernel by kernel for
-  the L4's architecture, compute capability 8.9).
-- CPU math: the noise, the lookup tables, and the loudness and speed processing give bit-identical results on both
-  systems (the same computations run on both and their outputs compared by hash).
-- End to end, against Linux on a different GPU (an RTX 4060): the transcripts matched on 99.95% of words with
-  `--stream false` and on all words when streaming, and every item had the same length. The samples themselves differ,
-  as they do between any two GPUs with different numbers of processors (see [Output
-  differences](#output-differences)).
+Output against Linux: with the pip packages of this version, the Windows and Linux engines give byte for byte the
+same audio on the same GPU model (an NVIDIA L4 on each: 36 of 36 seeded `--stream false` requests), and the model
+prepared on Windows is byte for byte the one prepared on Linux. Voices cloned on Windows match Linux too (WAV and MP3
+recordings; M4A recordings can differ slightly with FFmpeg 9). First use of the pip package (download and
+preparation) took 160 s on the L4 VM.
 
 ## How these were measured
 
