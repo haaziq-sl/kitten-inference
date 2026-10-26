@@ -116,8 +116,8 @@ In the Ubuntu terminal:
 sudo apt-get update
 sudo apt-get install -y git ca-certificates build-essential cmake pkg-config python3-venv \
   libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
-git clone --branch v0.2.0 https://github.com/KittenML/kitten-tts-2-native.git
-cd kitten-tts-2-native
+git clone --branch v0.2.0 https://github.com/KittenML/kitten-inference.git
+cd kitten-inference/tts-2
 python3 tools/build_text_deps.py --prefix build-deps/text
 export KT2N_TEXT_DEPS="$PWD/build-deps/text"
 cmake --preset hip
@@ -158,7 +158,7 @@ RX 7900 XTX).
 
 ## Tests
 
-The tests need steps 1 to 4 first. In the Ubuntu terminal, in the `kitten-tts-2-native` folder:
+The tests need steps 1 to 4 first. In the Ubuntu terminal, in the `kitten-inference/tts-2` folder:
 
 ```sh
 export HSA_ENABLE_DXG_DETECTION=1

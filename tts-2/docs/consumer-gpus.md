@@ -2,7 +2,8 @@
 
 Kitten TTS 2 native runs on the GPUs most people own: GeForce cards from the GTX 10 series on, cards with 4 GB of
 memory, AMD Radeon RX 7000 and RX 9000 cards, and Windows. On RTX 20-series and newer NVIDIA GPUs the audio of the CUDA 12.8
-build is bit for bit the same as with the previous version (0.1.0), and no setting we measured got slower.
+build is bit for bit the same as with the earlier build of this engine (never released as a package; see
+[How these were measured](#how-these-were-measured)), and no setting we measured got slower.
 
 - **Starts with no options on every card we tested, from 4 GB up** (20 GeForce and Radeon cards). `kitten-tts-native`
   picks the memory profile itself and fits its buffers to small cards. Before, only cards with about 24 GB started
@@ -29,27 +30,29 @@ again, and are marked "47-voice revision" otherwise.
 
 | GPU | Status | Measured on |
 |---|---|---|
-| GeForce RTX 30, 40 and 50 series | supported; same audio as version 0.1.0 | RTX 4060 Laptop GPU: real-time factor 0.079; RTX 5060 Ti: 0.047 |
+| GeForce RTX 30, 40 and 50 series | supported; same audio as the earlier build | RTX 4060 Laptop GPU: real-time factor 0.079; RTX 5060 Ti: 0.047 |
 | GeForce RTX 20 series | supported, not optimal: no bf16 tensor cores, so part of the math runs in software | RTX 2060: real-time factor 0.45 → 0.22 |
 | GeForce GTX 16 series | supported, not optimal: as RTX 20 | GTX 1660 Ti: 0.58 → 0.27 |
 | GeForce GTX 10 series | supported, not optimal: as RTX 20 | GTX 1080 Ti: 0.47 → 0.28 |
 | Cards with 8 GB or less | supported, not optimal: one stream, buffers fitted to the card (`--stream false` about 1.5% slower), no voice cloning; see [Small-memory cards](#small-memory-cards) | RTX 4060 Laptop GPU 8 GB: 0.079 |
 | 4 GB cards (3 GB cards not tested) | supported, not optimal: as above, and long streaming text is cut where the fitted sizes limit it | RTX 3050 Laptop GPU 4 GB: 0.17 |
 | 2 GB cards | not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start | — |
-| AMD Radeon RX 7000 and RX 9000 | supported; audio close to, not bit for bit the same as, NVIDIA; voice cloning not tested; RX 7600 and RX 7600 XT not tested; see [AMD Radeon](#amd-radeon) | RX 7900 XTX: 0.068, first audio 0.05 s; RX 9060 XT: 0.090 |
-| 64-bit Windows with an NVIDIA GPU | supported, no voice cloning yet; tested on Windows Server 2022 only; see [Windows](#windows) | NVIDIA L4: 0.074, first audio 46 ms |
+| AMD Radeon RX 7000 and RX 9000 | supported; audio close to, not bit for bit the same as, NVIDIA; no voice cloning; RX 7600 and RX 7600 XT not tested; see [AMD Radeon](#amd-radeon) | RX 7900 XTX: 0.068, first audio 0.05 s; RX 9060 XT: 0.090 |
+| 64-bit Windows with an NVIDIA GPU | supported; voice cloning only with the pip package (built; passes an automated check, not tested by hand); tested on Windows Server 2022 only; see [Windows](#windows) | NVIDIA L4: 0.074, first audio 46 ms |
 
-Voice cloning needs about 13 GB of free GPU memory, so it works on cards with 16 GB or more (16 GB cards: not tested).
-On cards with 8 GB or less it is off; see [Small-memory cards](#small-memory-cards).
+Building a cloned voice needs about 11.3 GB of free GPU memory with the low-memory profile, which the tool picks when
+the default profile's 15.6 GB does not fit; it was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits
+when other programs use at most about 500 MiB of GPU memory. On cards with 8 GB or less it is off; see
+[Small-memory cards](#small-memory-cards).
 
 Other AMD GPUs (RX 6000 and earlier, Instinct) and NVIDIA GPUs other than compute capability 6.1, 7.5 and 8.0 or newer
 (for example 6.0 and 7.0) are not supported: the engine stops at start and says so.
 
 ## Output differences
 
-**NVIDIA: the same audio as version 0.1.0 (CUDA 12.8 build).** On RTX 20-series and newer NVIDIA GPUs, and on GTX 10
+**NVIDIA: the same audio as the earlier build (CUDA 12.8 build).** On RTX 20-series and newer NVIDIA GPUs, and on GTX 10
 and GTX 16 GPUs with the new decode kernel, a seeded `--stream false` request from the CUDA 12.8 build gives bit for
-bit the same audio as version 0.1.0 on the same GPU, with the same prepared model files. The fitted small-memory sizes give the same audio too, except for the
+bit the same audio as the earlier build on the same GPU, with the same prepared model files. The fitted small-memory sizes give the same audio too, except for the
 streaming split listed below.
 
 **Streaming on every GPU.** Where streamed audio is cut into decoder chunks depends on how fast speech is generated,
@@ -66,7 +69,7 @@ texts.
 
 | GPU group | Why it differs | Measured |
 |---|---|---|
-| AMD Radeon RX 7000 and RX 9000 (default) | AMD's math library (exp, log, sin, cos) and the Radeon matrix instructions round differently, so sampled speech can differ | 24 texts, 2 seeds: word error rate 1.41% (RX 7900 XTX) and 1.18% (RX 9070 XT), vs 0.60% on the RTX 4090. 2 of 48 and 1 of 48 outputs left out a sentence, which also happens on NVIDIA GPUs (3 of 48 on an RTX 2060 with version 0.1.0); without those, 0.54% and 0.62%, vs 0.46% and 0.62% on the RTX 4090. The voice is closer to the RTX 4090's than a different seed is (similarity 0.971 and 0.976, vs 0.949). On the 72 test requests: word error rate 1.17% on every RX 7000 card (RX 7900 XTX, RX 7900 XT, RX 7800 XT) and 1.02% on both RX 9000 cards (RX 9070 XT, RX 9060 XT), against 0.99% on the RTX 4090; 4 of 72 outputs dropped a sentence on every card, as on the RTX 4090 |
+| AMD Radeon RX 7000 and RX 9000 (default) | AMD's math library (exp, log, sin, cos) and the Radeon matrix instructions round differently, so sampled speech can differ | 24 texts, 2 seeds: word error rate 1.41% (RX 7900 XTX) and 1.18% (RX 9070 XT), vs 0.60% on the RTX 4090. 2 of 48 and 1 of 48 outputs left out a sentence, which also happens on NVIDIA GPUs (3 of 48 on an RTX 2060 with the earlier build); without those, 0.54% and 0.62%, vs 0.46% and 0.62% on the RTX 4090. The voice is closer to the RTX 4090's than a different seed is (similarity 0.971 and 0.976, vs 0.949). On the 72 test requests: word error rate 1.17% on every RX 7000 card (RX 7900 XTX, RX 7900 XT, RX 7800 XT) and 1.02% on both RX 9000 cards (RX 9070 XT, RX 9060 XT), against 0.99% on the RTX 4090; 4 of 72 outputs dropped a sentence on every card, as on the RTX 4090 |
 | AMD Radeon with `KT2N_AMD_WMMA=0` | the matrix math runs in software | word error rate 1.24% on both cards; voice similarity 0.966 |
 | AMD Radeon, builds made with different ROCm versions | the compiler rounds differently | ROCm 7.1 and 7.2.4 builds on the same card differ only at the level of rounding (about -65 dB), with the same words and voice |
 | Cards where the fitted sizes limit streaming segments (seen on 4 GB cards), streaming only | a long streaming text chunk is split into shorter pieces, each spoken separately ([details](#small-memory-cards)) | Output can differ. Same GPU with and without the split, 24 texts, 2 seeds: 3 of 48 outputs skipped a sentence (without: none), word error rate 1.43% (without: 0.58%), same voice (similarity 0.995). On a real RTX 3050 Laptop GPU 4 GB: 1.71%, 2 of 47 outputs. On the 72 test requests, real 4 GB cards stayed within the usual variation (word error rate 0.80% to 0.99%; RTX 4090: 0.99%). `KT2N_FIT_SPLIT=0` refuses such text instead. `--stream false` is never split |
@@ -86,15 +89,15 @@ either way: a seeded `--stream false` request gives the same bytes with `low` an
   11 to 13 GB of GPU memory, depending on the card; with `--voice-cache all`, about 21 GB (more with the 115 voices of
   the latest revision, not measured).
 - **Below that, `auto` uses `low`: supported, not optimal.** One request at a time runs as fast (`--stream false`
-  real-time factor 0.050 with `low` and 0.051 with the default profile on an RTX 5060 Ti 16 GB, measured on an
-  earlier build). With several streams (C API), requests that arrive together are batched less. On 8 GB cards and
+  real-time factor 0.050 with `low` and 0.051 with the default profile on an RTX 5060 Ti 16 GB, measured on a
+  development build of this version). With several streams (C API), requests that arrive together are batched less. On 8 GB cards and
   smaller, `low` also fits its sizes to the card and the decoder runs without CUDA graphs: `--stream false` about 1.5%
   slower than with them on an 8 GB laptop GPU.
 - When even `low` does not fit, the engine does not start and says how much free memory it needs.
 
-The command-line tool also starts sooner than version 0.1.0: it checks the model files in the background, loads the
+The command-line tool also starts sooner than the earlier build: it checks the model files in the background, loads the
 text grammars in parallel and prepares only the voice it speaks with, before the request. The audio is the same.
-Measured with `--memory-profile low`, running version 0.1.0 and this version in turns on the same machine:
+Measured with `--memory-profile low`, running the earlier build and this version in turns on the same machine:
 
 | GPU | One sentence, start to exit | First audio after the request |
 |---|---|---|
@@ -108,23 +111,23 @@ instructions, so checking the model files took longest there, and moving that ch
 the RTX 5060 and RTX 5060 Ti, each generated token also takes 7 to 9% less time (same audio).
 
 With an explicit `--voice-cache all`, which prepares all voices, first audio from a cold command-line start is as
-fast as with version 0.1.0: 19.5 → 19.1 ms on an RTX 4090 (median of 40 rounds in turns).
+fast as with the earlier build: 19.5 → 19.1 ms on an RTX 4090 (median of 40 rounds in turns).
 
 ## GTX 10, GTX 16 and RTX 20
 
 These GPUs have no bf16 tensor-core instructions. **Supported, not optimal:** part of the language model's math runs
 in software on them, so they are slower than an RTX 30-series or newer card. When the engine produces the next audio
 token, the language model's weight multiplications now run on plain arithmetic units instead of that software path, so
-speech as a whole is 1.7 to 2.2 times faster than with version 0.1.0 (about 2 times on GTX 16 and RTX 20, 1.7 times on
+speech as a whole is 1.7 to 2.2 times faster than with the earlier build (about 2 times on GTX 16 and RTX 20, 1.7 times on
 GTX 10; table below). With one request those multiplications got about 4 to 5 times faster on the GPUs we measured
 (GTX 1080 Ti, GTX 1070, GTX 1660 Ti, RTX 2060), and the whole step 1.8 to 2.7 times faster (GTX 1080 Ti, GTX 1660 Ti,
 RTX 2060). Other GPUs in these groups run the same code but were not measured. With more than four requests at once,
 the engine keeps the previous method, which is faster there.
 
-On each measured GPU the audio is bit for bit the same as with version 0.1.0.
+On each measured GPU the audio is bit for bit the same as with the earlier build.
 
 Measured with `--memory-profile low`, one request at a time, on 36 English and German requests of different lengths,
-each with and without streaming; before = version 0.1.0 on the same card:
+each with and without streaming; before = the earlier build on the same card:
 
 | GPU | Real-time factor (`--stream false`), before → now | First audio (streaming, median), before → now |
 |---|---|---|
@@ -138,7 +141,7 @@ each with and without streaming; before = version 0.1.0 on the same card:
 On a card with too little free memory for its standard sizes (8 GB cards and smaller), `--memory-profile low`
 measures the free memory when it starts and shrinks its buffers to fit. **Complete files (`--stream false`) do not
 change:** on the same GPU they are byte for byte the same as with the standard sizes (checked on an RTX 4090 with
-2,700 to 3,680 MiB free, and on real 6 GB cards against version 0.1.0; on real 4 GB cards the words and voice matched
+2,700 to 3,680 MiB free, and on real 6 GB cards against the earlier build; on real 4 GB cards the words and voice matched
 a larger card's). Streaming audio changes only where long text is cut (below), apart from the run-to-run variation
 streaming has with any setting.
 
@@ -179,11 +182,10 @@ here.
   cut; with about 4 GB, one whose text needs much more language-model context than usual (for example hundreds of rare
   characters) can be refused with `gpu_memory_limit_exceeded`, which none of our test texts was.
 - **No voice cloning on cards where the sizes are fitted (8 GB and smaller):** the cloning model needs about 4.4 GB
-  more. The engine starts, and building a voice fails with a message saying so. Building a cloned voice needs about 13
-  GB of free GPU memory, so on 10 to 12 GB cards it may fail at start (not tested). Build and save the voice on a GPU with 16 GB or
-  more, then use it here with `--load-voice --voice-cache none` (with a loaded voice the tool otherwise prepares all
-  built-in voices, which does not fit: it needed about 4,305 MiB with the 47-voice revision). A saved voice with a long prompt leaves less room for text, so its
-  streaming segments are shorter.
+  more. The engine starts, and building a voice fails with a message saying so. Building a cloned voice needs about 11.3
+  GB of free GPU memory, more than a 10 GB card has. Build and save the voice on a larger GPU, then use it here with
+  `--load-voice` (without a `--voice-cache` option the tool keeps only that voice on the GPU). A saved voice with a
+  long prompt leaves less room for text, so its streaming segments are shorter.
 - **4 GB cards need a small voice cache.** Leave out `--voice-cache` (the tool then prepares only the voice it speaks
   with), or use `--voice-cache none` or `--voice-cache lru --voice-cache-voices 1`. `--voice-cache all` needed about
   4,305 MiB with the 47-voice revision (every built-in voice stays prepared; more with the latest revision), and plain `--voice-cache lru` sets aside room for 16 voices, which
@@ -251,8 +253,8 @@ PCs hang when free memory gets below about 0.5 GB); on a simulated 8 GB card thi
 measured inside WSL2 on Windows desktops, with ROCm 7.1 builds; each started with no options 8 of
 8 times and served all 72 test requests. On a 16 GB card whose desktop used 2.5 GB, the tool picked the low profile by
 itself. Linux without WSL2 was not tested. Other RX 7000 and RX 9000 cards (RX 7700 XT, and 8 GB cards) run the same
-code but were not tested; AMD's WSL2 support does not include the RX 7600 or RX 7600 XT. Voice cloning builds, but was not tested on
-Radeon.
+code but were not tested; AMD's WSL2 support does not include the RX 7600 or RX 7600 XT. The ROCm build has no voice
+cloning: build and save a voice on an NVIDIA GPU, then load it on the Radeon.
 
 `KT2N_AMD_WMMA=0` turns the matrix instructions off. **Supported, not optimal:** all matrix math then runs in
 software, 3.4 to 4.9 times slower: real-time factor 0.23 (RX 7900 XTX) to 0.44 (RX 9060 XT).
@@ -273,8 +275,8 @@ work the same way but have not been tested.
 | On the L4 | Windows |
 |---|---|
 | First audio (streaming, median), default settings | 46 ms (6 runs) |
-| Real-time factor, streaming / `--stream false` | 0.082 / 0.074 (12 to 13.5 times faster than real time; 24 test texts, measured on an earlier build of this version with `--memory-profile low --voice-cache lru --voice-cache-voices 4`) |
-| Word error rate | 0.55% (Linux on an RTX 4090: 0.60%; same earlier build and settings) |
+| Real-time factor, streaming / `--stream false` | 0.082 / 0.074 (12 to 13.5 times faster than real time; 24 test texts, measured on a development build of this version with `--memory-profile low --voice-cache lru --voice-cache-voices 4`) |
+| Word error rate | 0.55% (Linux on an RTX 4090: 0.60%; same development build and settings) |
 
 How the output compares with Linux (no Linux machine with an L4 was available, so this was checked in parts, not on
 one GPU):
@@ -289,8 +291,10 @@ one GPU):
 
 ## How these were measured
 
-- "Version 0.1.0" is the version before this one (0.2.0); "before → now" tables compare it with this version on the same
-  card, run in turns.
+- "The earlier build" is this engine as it was before this release (0.2.0), when these measurements were made. It was
+  never released as a package, so it cannot be installed (kitten-inference 0.1.x on PyPI is the Kitten TTS 0.8
+  engine, another product); where the engine's code comes from is in [PROVENANCE.md](../PROVENANCE.md). "Before → now"
+  tables compare it with this version on the same card, run in turns.
 - Model files prepared from `KittenML/kitten-tts-2` revision f2eee74 on one NVIDIA GPU, the same files on every GPU.
 - Word error rate: Whisper large-v3 transcripts compared with the input text. Voice similarity: cosine similarity of
   speaker embeddings (ECAPA) between this GPU's output and the RTX 4090's for the same text and seed; "a different

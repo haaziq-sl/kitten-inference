@@ -40,8 +40,8 @@ A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce
 
 | GPU memory | What you get |
 |---|---|
-| 24 GB or more | Everything, at full speed. On 24 GB cards, building a cloned voice uses the low-memory profile: supported, not optimal, because several requests at once share smaller buffers (one at a time runs as fast: real-time factor 0.050 against 0.051); the audio is the same. |
-| 10 to 16 GB | When the default profile does not fit (it needs about 11 to 13 GB, depending on the card, measured with the earlier 47-voice revision), the tool uses the low-memory profile: supported, not optimal, because several requests at once share smaller buffers. One request at a time runs as fast (real-time factor 0.050 against 0.051 on a 16 GB card). Voice cloning needs about 13 GB of free GPU memory, so it fits only on 16 GB cards (not tested on them). |
+| 24 GB or more | Everything, at full speed. |
+| 10 to 16 GB | When the default profile does not fit (it needs about 11 to 13 GB, depending on the card, measured with the earlier 47-voice revision), the tool uses the low-memory profile: supported, not optimal, because several requests at once share smaller buffers. One request at a time runs as fast (real-time factor 0.050 against 0.051 on a 16 GB card). Building a cloned voice needs about 11.3 GB of free GPU memory with the low-memory profile (15.6 GB with the default one); it was tested end to end on a 16 GB card. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory; on 10 GB cards it does not fit. |
 | 4 to 8 GB | Supported, not optimal: one request at a time, and the tool fits its buffers to the card, which makes complete files (`--stream false`) about 1.5% slower. On 4 GB cards, long streaming text is cut into shorter pieces, so the audio can differ from a larger GPU's (on long texts, word error rate 1.43% against 0.58% without the cut). No voice cloning: use a voice saved on a larger GPU. |
 | 3 GB | Not tested. |
 | 2 GB | Not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start. |
@@ -71,11 +71,11 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y sudo tzdata
 ```sh
 sudo apt-get update
 sudo apt-get install -y git ca-certificates wget
-git clone --branch v0.2.0 https://github.com/KittenML/kitten-tts-2-native.git
-cd kitten-tts-2-native
+git clone --branch v0.2.0 https://github.com/KittenML/kitten-inference.git
+cd kitten-inference/tts-2
 ```
 
-Run every later command in this `kitten-tts-2-native` folder.
+Run every later command in this `kitten-inference/tts-2` folder.
 
 ### 2. Build
 
@@ -187,7 +187,7 @@ Ctrl-C cancels a running request; the tool then exits with status 130. The exit 
 
 ## Voice cloning
 
-Cloning needs the `default` build from the Quick start, extra model files, and about 13 GB of free GPU memory (a 16 GB card or larger). On GPUs with 8 GB or less, cloning is off: the engine starts, and building a voice fails with a message that says so. On 10 to 12 GB cards it needs more memory than the card has and may fail at start (not tested). On those cards, build and save the voice on a larger GPU, then load it. Not tested with this version: building a cloned voice end to end (it was tested with an earlier version, on a 24 GB card); loading saved voices was tested with voices saved from built-in voices.
+Cloning needs the `default` build from the Quick start, extra model files, and about 11.3 GB of free GPU memory while the voice is built. Building, saving and loading a cloned voice was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory (measured with the Python package: building worked with 11,285 MiB free and failed with 11,157 MiB free). On GPUs with 8 GB or less, cloning is off: the engine starts, and building a voice fails with a message that says so. On those cards and on 10 GB cards, build and save the voice on a larger GPU, then load it.
 
 In the repository folder after the Quick start, add the cloning files to the prepared model once, in the same environment (no Hugging Face account needed):
 
@@ -204,11 +204,11 @@ build/default/bin/kitten-tts-native --assets models/kitten-tts-2 \
   --reference-transcript "The exact words spoken in the recording." \
   --save-voice my-voice.voice --text "New speech in this voice." --output cloned.wav
 build/default/bin/kitten-tts-native --assets models/kitten-tts-2 \
-  --load-voice my-voice.voice --voice-cache none \
+  --load-voice my-voice.voice \
   --text "Using the saved voice." --output saved.wav
 ```
 
-Building a cloned voice needs about 23 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 13 GB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. `--voice-cache none` lets it load on 4 GB cards too: with a loaded voice and no `--voice-cache` option, the tool also prepares all built-in voices, which does not fit there.
+Building a cloned voice needs about 15.6 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 11.3 GB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. Speaking with it needs about 13.5 GB of GPU memory with the default profile and 9.2 GB with the low-memory one; on smaller cards the tool fits its buffers to the card, as with built-in voices. Without a `--voice-cache` option the tool keeps only the voice it speaks with on the GPU, for built-in, cloned and loaded voices alike, so loading needs no extra option on small cards.
 
 ## Using less GPU memory
 
@@ -216,7 +216,7 @@ Building a cloned voice needs about 23 GB of GPU memory with the default profile
 
 - `--memory-profile auto|default|low`: without the option the tool uses `auto`, which takes the default profile when it fits the free GPU memory and `low` otherwise, and prints one line when it picks `low`. `low` sizes the engine's buffers for the requests it actually serves, and fits itself to cards with about 8 GB or less (supported, not optimal: one stream, `--stream false` about 1.5% slower). An explicit `--memory-profile default` on a GPU too small for it stops at start and says how much it needs.
 - `--voice-cache all|lru|none` keeps all built-in voices on the GPU, only the recently used ones, or only the ones in use. Without the option, the tool prepares only the voice it speaks with. `--voice-cache-voices N` and `--voice-cache-mib N` set the cache size and need an explicit `--voice-cache lru` or `none`. Plain `--voice-cache lru` sets aside room for 16 voices (about 3 GB with the earlier 47-voice revision), which does not fit on 4 GB cards.
-- In the C API, set `memory_profile` to `KT2N_MEMORY_PROFILE_AUTO` for the same choice; the C API defaults are the default profile and all voices prepared, which needed about 21 GB with the earlier 47-voice revision and need more with the 115 voices of the current one (not measured).
+- In the C API, set `memory_profile` to `KT2N_MEMORY_PROFILE_AUTO` for the same choice; the C API defaults are the default profile and all voices prepared, which need about 33 GB with the 115 voices of the current revision, more than a 24 GB card has (21 GB with the earlier 47-voice revision).
 
 [docs/memory.md](docs/memory.md) explains each setting, the small-GPU fit and the C API fields; [docs/consumer-gpus.md](docs/consumer-gpus.md) has the measured numbers.
 

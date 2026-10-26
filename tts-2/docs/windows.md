@@ -7,7 +7,8 @@ Tested on Windows Server 2022 with an NVIDIA L4 (a 24 GB data-centre GPU run wit
 ## What works, and what does not yet
 
 - Works: streaming and `--stream false`, all built-in voices, the voice cache and memory options, WAV or PCM output to a file or to standard output, Unicode text and non-ASCII file and folder names, UTF-8 text files with or without a byte order mark (UTF-16 files are refused), and the C API (`kt2n_engine.dll`, `include/kt2n/engine.h`).
-- Not yet: voice cloning (not tested on Windows, and the Windows build leaves it out; see [Voice cloning](#voice-cloning-not-tested)), the MP3, AAC, Opus and FLAC encoders, and the C examples in `examples/`. `kt2n_event_fd()` returns -1 on Windows: wait in `kt2n_poll()` with a timeout instead.
+- Voice cloning: with the pip package (`pip install "kitten-inference[tts-2]"`), which decodes the recording with the FFmpeg program; built; passes an automated check, not tested by hand. The source build on this page leaves it out; see [Voice cloning](#voice-cloning).
+- Not yet: the MP3, AAC, Opus and FLAC encoders, and the C examples in `examples/`. `kt2n_event_fd()` returns -1 on Windows: wait in `kt2n_poll()` with a timeout instead.
 
 ## Requirements
 
@@ -46,8 +47,8 @@ Open a new **Command Prompt** (not as administrator; Start menu: "Command Prompt
 
 ```bat
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-git clone --branch v0.2.0 https://github.com/KittenML/kitten-tts-2-native.git
-cd kitten-tts-2-native
+git clone --branch v0.2.0 https://github.com/KittenML/kitten-inference.git
+cd kitten-inference\tts-2
 python tools\build_text_deps.py --prefix build-deps\text
 set KT2N_TEXT_DEPS=%CD%\build-deps\text
 cmake --preset windows
@@ -83,7 +84,7 @@ This writes `hello.wav`. Every option in the [README](../README.md#usage) works 
 
 ## Tests
 
-The tests need a Python with numpy: the `.venv-prepare` environment from step 3 has it. In a new Command Prompt, in the `kitten-tts-2-native` folder, first restore the environment of steps 2 and 3:
+The tests need a Python with numpy: the `.venv-prepare` environment from step 3 has it. In a new Command Prompt, in the `kitten-inference\tts-2` folder, first restore the environment of steps 2 and 3:
 
 ```bat
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
@@ -116,9 +117,9 @@ ctest --preset windows-cpu
 
 Copy `kitten-tts-native.exe`, `kt2n_engine.dll` and the `models\kitten-tts-2` folder. The other computer needs the NVIDIA driver (570 or newer) and the Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64) from Microsoft, but no CUDA Toolkit. This was not tested.
 
-## Voice cloning (not tested)
+## Voice cloning
 
-The `windows` preset builds without voice cloning. A cloning build compiles with a shared FFmpeg 8.1 build for Windows: add `-DKT2N_BUILD_CLONING=ON -DKT2N_VOICE_AV=ON -DCMAKE_PREFIX_PATH=<FFmpeg folder>` to `cmake --preset windows`, and copy FFmpeg's `bin\*.dll` files next to `kitten-tts-native.exe`. Building a voice that way has not been tested on Windows.
+The pip package builds voices on Windows with the FFmpeg program (`winget install --id Gyan.FFmpeg -e`; built; passes an automated check, not tested by hand). The `windows` preset on this page builds without voice cloning. A cloning build compiles with a shared FFmpeg 8.1 build for Windows: add `-DKT2N_BUILD_CLONING=ON -DKT2N_VOICE_AV=ON -DCMAKE_PREFIX_PATH=<FFmpeg folder>` to `cmake --preset windows`, and copy FFmpeg's `bin\*.dll` files next to `kitten-tts-native.exe`. Building a voice that way has not been tested on Windows.
 
 ## Tips
 
