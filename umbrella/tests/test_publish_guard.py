@@ -190,3 +190,21 @@ def test_the_built_tts08_wheels_are_the_set_the_check_waits_for(guard):
     extra = "kitten_inference_tts08-0.2.0-cp316-cp316-win_amd64.whl"
     assert guard.check_built("kitten-inference-tts08", names + [extra]) == [
         f"built but not in pypi_ready.COMPLETE: {extra}"]
+
+
+def test_complete_command_line(guard, tmp_path):
+    # As tts-0.8.yml runs it: pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
+    import subprocess
+    import sys
+    for w in _tts08_wheels():
+        (tmp_path / w["filename"]).write_bytes(b"")
+    files = sorted(str(p) for p in tmp_path.iterdir())
+
+    def run(paths):
+        return subprocess.run([sys.executable, str(SCRIPT), "complete", "--dist", "kitten-inference-tts08", *paths],
+                              capture_output=True, text=True)
+
+    ok = run(files)
+    assert ok.returncode == 0 and "the 62 built wheels" in ok.stdout, ok.stdout + ok.stderr
+    bad = run(files[1:])
+    assert bad.returncode == 1 and "not built: cp310-macosx_11_0_arm64" in bad.stdout, bad.stdout + bad.stderr

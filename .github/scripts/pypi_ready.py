@@ -245,11 +245,10 @@ def check_built(name: str, files: list) -> list:
 
 def main() -> int:
     if sys.argv[1:2] == ["complete"]:
-        c = argparse.ArgumentParser()
-        c.add_argument("mode")
+        c = argparse.ArgumentParser(prog="pypi_ready.py complete")
         c.add_argument("--dist", required=True)
         c.add_argument("wheels", nargs="*")
-        a = c.parse_args()
+        a = c.parse_args(sys.argv[2:])
         name = re.sub(r"[-_.]+", "-", a.dist).lower()
         problems = check_built(name, a.wheels) if name in COMPLETE else [f"{name} has no COMPLETE entry"]
         for problem in problems:
