@@ -1,0 +1,67 @@
+# Measurement only (never merged): installs the release candidate files of one CI run set the way a user would, each
+# case in a fresh venv, with the five kitten-inference distributions taken only from a local folder (--find-links)
+# and their dependencies from PyPI. The files are downloaded from the runs below and checked against sha256sums.txt.
+name: gates-install
+
+on:
+  push:
+    branches: ["ws/gates-install"]
+    paths: [".github/workflows/gates-install.yml", ".github/gates-install/**"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  install:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, python: "3.12", label: windows-2022-py3.12, cases: "" }
+          - { os: windows-2022, python: "3.8", label: windows-2022-py3.8, cases: "plain,tts-0.8,tts-2,both,upgrade" }
+          - { os: macos-14, python: "3.12", label: macos-14-arm64-py3.12, cases: "" }
+          - { os: macos-15-intel, python: "3.12", label: macos-15-intel-py3.12, cases: "plain,tts-0.8,tts-2,both" }
+          - { os: ubuntu-24.04, python: "", label: ubuntu-24.04-runner-system-python, cases: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/gates-install
+      - uses: actions/setup-python@v5
+        if: matrix.python != ''
+        id: py
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Python for the venvs
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.python }}" ]; then echo "PY=${{ steps.py.outputs.python-path }}" >> "$GITHUB_ENV";
+          else /usr/bin/python3 -m venv "$RUNNER_TEMP/t" > /dev/null 2>&1 || timeout 900 sudo apt-get install -y -q python3-venv > /dev/null; echo "PY=/usr/bin/python3" >> "$GITHUB_ENV"; fi
+      - name: Release files (umbrella + tts2 + sdists)
+        uses: actions/download-artifact@v4
+        with: { run-id: "40281705825", github-token: "${{ github.token }}", name: dist, path: wheels }
+      - name: Release files (cu12)
+        uses: actions/download-artifact@v4
+        with: { run-id: "40281728733", github-token: "${{ github.token }}", pattern: "tts2-cu12-*", merge-multiple: true, path: wheels }
+      - name: Release files (rocm)
+        uses: actions/download-artifact@v4
+        with: { run-id: "40281731669", github-token: "${{ github.token }}", pattern: "kitten-inference-tts2-rocm-*", merge-multiple: true, path: wheels }
+      - name: Release files (tts08)
+        uses: actions/download-artifact@v4
+        with: { run-id: "40281737274", github-token: "${{ github.token }}", pattern: "tts08-wheels-*", merge-multiple: true, path: wheels }
+      - name: Check every file against the inventory sha256
+        shell: bash
+        run: '"$PY" .github/gates-install/verify_dir.py wheels .github/gates-install/sha256sums.txt'
+      - name: Install matrix
+        shell: bash
+        run: |
+          "$PY" -I .github/gates-install/gates_install.py --wheels wheels --out out --python "$PY" \
+            --label "${{ matrix.label }}" --cases "${{ matrix.cases }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gates-install-${{ matrix.label }}
+          path: out
