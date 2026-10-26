@@ -1,6 +1,6 @@
 # Kitten TTS 2 native
 
-A fast C++/CUDA inference engine for [Kitten TTS 2](https://huggingface.co/KittenML/kitten-tts-2) on NVIDIA GPUs, with a ROCm build for AMD Radeon RX 7000 and RX 9000. **First audio after about 11 ms when streaming, and complete files 5 to 7 times faster than Kitten TTS 2 on vLLM or llama.cpp** (RTX PRO 6000). It ships as a C library and a command-line tool, and needs no Python, PyTorch or network connection at run time. From Python, install it with pip instead: see [python/README.md](python/README.md).
+A fast C++/CUDA inference engine for [Kitten TTS 2](https://huggingface.co/KittenML/kitten-tts-2) on NVIDIA GPUs, with a ROCm build for AMD Radeon RX 7000 and RX 9000. **On an RTX PRO 6000 it streams its first audio after about 11 ms and makes complete files 5 to 7 times faster than Kitten TTS 2 on vLLM or llama.cpp. On smaller GPUs the lead is smaller, but it is still 2.4 times or more on a 12 GB RTX 3060.** It ships as a C library and a command-line tool, and needs no Python, PyTorch or network connection at run time. From Python, install it with pip instead: see [python/README.md](python/README.md).
 
 - Built-in voices, expression tags and vocal events
 - Voice cloning from a short recording, with saved, reusable voices
@@ -22,6 +22,8 @@ One request at a time on an NVIDIA RTX PRO 6000 (96 GB) with the current model, 
 | Kitten TTS 2 on llama.cpp (GPU) | 520 ms (6.4x) | 5.4 s (5.6x) | 2.7-4.8 GiB |
 
 When streaming, the native engine sends its first audio after **11.4 ms** (median; 11.6 ms at the 95th percentile, 300 requests). vLLM and llama.cpp stream one whole sentence at a time, so on a short text their first audio comes with the complete file (481 to 643 ms). Word error rate is 0.02 to 0.05% for all four on the short texts. vLLM ran through `kittenml[vllm]` 0.9.6. The default profile reserves GPU memory up front so that it can serve several streams at once; see [Using less GPU memory](#using-less-gpu-memory).
+
+On smaller GPUs the same comparison gives a smaller lead, because the native engine's speed follows the GPU's memory speed while vLLM and llama.cpp lose a roughly fixed time per token on the processor: complete files 4.5 to 6.9 times faster and first audio after 22 ms on an RTX 4090, 2.4 to 4.3 times and 58 ms on a 12 GB RTX 3060 (with the low-memory profile, which the tool picks there by itself). Tables: [docs/consumer-gpus.md](docs/consumer-gpus.md#against-vllm-and-llamacpp).
 
 ## Supported GPUs
 

@@ -21,8 +21,9 @@ build is bit for bit the same as with the earlier build of this engine (never re
 
 A real-time factor of 0.27 means 10 seconds of audio take 2.7 seconds to produce.
 
-**Model revision.** The measurements on this page were made with an earlier revision of the model (f2eee74, 47 voices).
-The tool now prepares the latest revision, which has 115 voices. Speed and quality figures were not measured
+**Model revision.** Apart from [Against vLLM and llama.cpp](#against-vllm-and-llamacpp), the measurements on this page
+were made with an earlier revision of the model (f2eee74, 47 voices). The tool now prepares the latest revision, which
+has 115 voices. Speed and quality figures were not measured
 again. Memory figures that depend on preparing all voices are given for the latest revision where we measured them
 again, and are marked "47-voice revision" otherwise.
 
@@ -47,6 +48,29 @@ when other programs use at most about 500 MiB of GPU memory. On cards with 8 GB 
 
 Other AMD GPUs (RX 6000 and earlier, Instinct) and NVIDIA GPUs other than compute capability 6.1, 7.5 and 8.0 or newer
 (for example 6.0 and 7.0) are not supported: the engine stops at start and says so.
+
+## Against vLLM and llama.cpp
+
+With the current model (115 voices), through the pip package with its default settings, one request at a time, each
+GPU on its own machine. Every system spoke the same 300 short texts (about 5.5 s of speech each) and 12 long texts
+(about 64 s each) with the same voice and seeds. Medians; for vLLM and llama.cpp, their time divided by the native
+engine's (short / long texts):
+
+| GPU | Native, short / long | Native, first streamed audio | vLLM, 4-bit | vLLM, bf16 (its default) | llama.cpp (GPU) |
+|---|---|---|---|---|---|
+| RTX PRO 6000 96 GB | 82 ms / 0.95 s | 11.4 ms | 5.55x / 5.12x | 7.15x / 6.92x | 6.37x / 5.64x |
+| RTX 4090 24 GB | 159 ms / 1.80 s | 22.1 ms | 5.22x / 4.49x | 6.89x / 6.37x | 5.43x / 5.04x |
+| RTX 3060 12 GB | 459 ms / 5.07 s | 57.5 ms | 2.45x / 2.44x | 4.27x / 4.33x | 2.55x / 2.40x |
+
+- vLLM's and llama.cpp's streaming sends nothing until a whole sentence is done, which on these short texts is the
+  complete file (0.5 to 2.0 s), so their first audio is not ranked against the native engine's.
+- Word error rate is about the same for every system (0.00 to 0.05% on the short texts).
+- The lead shrinks on smaller GPUs: the native engine's speed follows the GPU's memory speed, while vLLM and llama.cpp
+  lose a roughly fixed 2 to 5 ms per token on the processor side.
+- On the RTX 3060 the tool picked the low-memory profile by itself (the default profile needed about 275 MiB more than
+  was free): supported, not optimal, because it batches several requests at once less; at one request at a time, as
+  here, that does not show.
+- Several requests at once were not measured; vLLM is built for that case.
 
 ## Output differences
 

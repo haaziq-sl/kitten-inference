@@ -2,7 +2,9 @@
 
 Kitten TTS 2 text-to-speech on NVIDIA and AMD GPUs, from Python or the `kitten-tts2` command. On an RTX PRO 6000 it
 streams its first audio after about **11 ms**, and finishes complete files **5 to 7 times faster** than Kitten TTS 2
-on vLLM or llama.cpp (82 ms against 453 to 584 ms for a short text; one request at a time).
+on vLLM or llama.cpp (82 ms against 453 to 584 ms for a short text; one request at a time). On smaller GPUs the lead
+is smaller: first audio after 22 ms and 4.5 to 6.9 times faster on an RTX 4090, 58 ms and 2.4 to 4.3 times on a 12 GB
+RTX 3060.
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate

@@ -8,13 +8,14 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 | Headline | Complete files **5 to 7 times faster** than Kitten TTS 2 on vLLM or llama.cpp | The nano model **1.1 to 2.3 times faster** than kittenml 0.9.6 (ONNX Runtime), on every machine we tested |
 | Speed | First streamed audio after **about 11 ms** | **About 60 times faster than real time** |
 | Example | A short text (one chunk) in 82 ms, a long text (about three chunks) in 0.95 s | A 41-word text (15 to 17 s of speech) in 0.29 s, against 0.54 s with ONNX Runtime |
-| Measured on | RTX PRO 6000, one request at a time | Ryzen 9 9900X (12 cores); the 1.1 to 2.3 times covers macOS, Linux (x86-64 and ARM64) and Windows |
+| Measured on | RTX PRO 6000, one request at a time; on smaller GPUs the lead is smaller (below) | Ryzen 9 9900X (12 cores); the 1.1 to 2.3 times covers macOS, Linux (x86-64 and ARM64) and Windows |
 
 - **Kitten TTS 2:** the pip package with its default settings and the current model, medians of 300 short and 12 long
   texts, the same texts, voice and seeds for every engine. On vLLM (kittenml 0.9.6) 453 ms / 4.9 s with 4-bit weights
   and 584 ms / 6.6 s with bf16, its default; on llama.cpp (GPU) 520 ms / 5.4 s. Word error rate 0.02 to 0.05% for all
   four on the short texts. vLLM and llama.cpp stream whole sentences, so on a short text their first audio comes with
-  the complete file (481 to 643 ms).
+  the complete file (481 to 643 ms). On an RTX 4090: first audio 22 ms, complete files 4.5 to 6.9 times faster. On a
+  12 GB RTX 3060: 58 ms, and 2.4 to 4.3 times faster.
 - **Kitten TTS 0.8:** the default settings of both packages on the same machine, median of 10 calls. On Apple Silicon
   this engine runs nano on the GPU (Metal) and ONNX Runtime on the CPU. "Times faster than real time" is speech length
   divided by compute time over six test clips (real-time factor 0.017).

@@ -3,8 +3,8 @@
 Fast inference engines for the Kitten TTS text-to-speech models:
 
 - **Kitten TTS 2 on an NVIDIA GPU:** first streamed audio after about **11 ms**, and complete files **5 to 7 times
-  faster** than Kitten TTS 2 on vLLM or llama.cpp (RTX PRO 6000, one request at a time). AMD Radeon RX 7000 and
-  RX 9000 are supported too.
+  faster** than Kitten TTS 2 on vLLM or llama.cpp (RTX PRO 6000, one request at a time; 2.4 times or more on a 12 GB
+  RTX 3060). AMD Radeon RX 7000 and RX 9000 are supported too.
 - **Kitten TTS 0.8 on the CPU:** the nano model runs **1.1 to 2.3 times faster** than kittenml 0.9.6 (ONNX Runtime) on
   every machine we tested, and about **60 times faster than real time** on a 12-core desktop CPU.
 
