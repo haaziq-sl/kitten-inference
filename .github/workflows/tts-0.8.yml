@@ -122,7 +122,7 @@ jobs:
       # The wheels are tested on the runner, not in the build container: the espeak-ng
       # library from espeakng_loader needs glibc 2.29, newer than both manylinux images.
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.4.1
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084  # v3.4.1: pinned to a commit (builds published wheels)
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
@@ -137,7 +137,7 @@ jobs:
 
       # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same image, flags and tests.
       - name: Build the CPython 3.15 wheel
-        uses: pypa/cibuildwheel@v4.3.4
+        uses: pypa/cibuildwheel@b9e566a2b284570af229f6c2a33673410d0389a3  # v4.3.4: pinned to a commit (builds published wheels)
         env:
           CIBW_BUILD: cp315-manylinux_${{ matrix.arch }}
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
@@ -398,7 +398,7 @@ jobs:
       # macOS: delocate is pinned the same way. Left to cibuildwheel, each build venv installs its own delocate, and
       # the cp38 one (0.12, the last for Python 3.8) retagged the wheel macosx_10_9 -> 11_0 without updating RECORD.
       - name: Build and test wheels
-        uses: pypa/cibuildwheel@v3.4.1
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084  # v3.4.1: pinned to a commit (builds published wheels)
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
@@ -422,7 +422,7 @@ jobs:
 
       # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same flags, repair and tests.
       - name: Build and test the CPython 3.15 wheel
-        uses: pypa/cibuildwheel@v4.3.4
+        uses: pypa/cibuildwheel@b9e566a2b284570af229f6c2a33673410d0389a3  # v4.3.4: pinned to a commit (builds published wheels)
         env:
           CIBW_BUILD: ${{ matrix.cibw_build_315 }}
           CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
@@ -529,7 +529,7 @@ jobs:
             "https://repo.maven.apache.org/maven2/com/chaquo/python/python/3.13.12/python-3.13.12-aarch64-linux-android.tar.gz"
 
       - name: Build Android wheel
-        uses: pypa/cibuildwheel@v3.4.1
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084  # v3.4.1: pinned to a commit (builds published wheels)
         env:
           CIBW_PLATFORM: android
           CIBW_BUILD: cp313-android_arm64_v8a
@@ -808,7 +808,7 @@ jobs:
 
       - name: Publish to PyPI (trusted publishing)
         if: steps.files.outputs.upload == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3: pinned to a commit (this job can upload to PyPI)
         with:
           packages-dir: upload
           skip-existing: true
