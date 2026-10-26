@@ -40,8 +40,9 @@ machines (55 to 168 s, download included); later starts reuse the prepared model
 small pinned files from PyPI (`files.pythonhosted.org`) and GitHub (`raw.githubusercontent.com`); these are checked
 first, so a network that blocks either host fails in seconds rather than after the large download. The downloads stay in the
 Hugging Face cache (`~/.cache/huggingface`); the prepared model (2 GB) is in `~/.cache/kitten-inference/tts2/`.
-`cache_dir=` / `--cache-dir` keeps both in one folder instead; on Windows it must be a new folder or one only you can
-change. When a newer revision cannot be prepared (for example for lack of disk space), the one prepared before is
+`cache_dir=` / `--cache-dir` keeps both in one folder instead: a new folder, or one that belongs to you and that no
+other user can change (new model folders are made private). A frozen app (PyInstaller, cx_Freeze) cannot prepare the
+model itself: prepare it once with `kitten-tts2 --prepare-only` and pass the same `revision=` and `cache_dir=`. When a newer revision cannot be prepared (for example for lack of disk space), the one prepared before is
 used, with a warning. Each start without a pinned revision asks Hugging Face for the latest one (at most 10 s);
 without a connection the prepared model is used, and `HF_HUB_OFFLINE=1` skips the question. On Windows, a user folder path with
 non-ASCII characters can move the model to a folder of yours in `C:\ProgramData\kitten-inference`: supported, not
