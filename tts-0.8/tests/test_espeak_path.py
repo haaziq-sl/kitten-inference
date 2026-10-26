@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from kitten_inference.tts08 import _espeak_path as ep
 
@@ -28,9 +29,9 @@ class EspeakPathTest(unittest.TestCase):
         ep.short_path = lambda path: None
         self.addCleanup(setattr, ep, "short_path", short_path)
 
-    def deep_data(self):
-        # tmp/<pad>/espeak-ng-data, at least 170 bytes (espeak-ng fails from 160)
-        pad = "d" * max(10, 170 - len(self.tmp) - len("/espeak-ng-data") - 2)
+    def deep_data(self, length=170):
+        # tmp/<pad>/espeak-ng-data, at least ``length`` bytes (espeak-ng fails from 160)
+        pad = "d" * max(10, length - len(self.tmp) - len("/espeak-ng-data") - 2)
         return _make_data(os.path.join(self.tmp, pad, "espeak-ng-data"))
 
     def test_rules(self):
@@ -107,14 +108,71 @@ class EspeakPathTest(unittest.TestCase):
         self.assertEqual(os.listdir(root), [os.path.basename(paths.pop())])
 
     def test_no_usable_folder_raises_a_clear_error(self):
-        src = self.deep_data()
+        for windows, length in ((False, 170), (True, 215)):
+            src = self.deep_data(length)
+            too_deep = os.path.join(self.tmp, "r" * 160)
+            with self.assertRaises(ep.EspeakPathError) as cm:
+                ep._choose(src, "1", [([], too_deep)], windows=windows)
+            message = str(cm.exception)
+            self.assertIn("would end the Python process", message)
+            self.assertIn("Fix:", message)
+            self.assertIn(src, message)
+
+    def test_windows_uses_an_ascii_path_up_to_200_bytes_when_no_copy_can_be_made(self):
+        src = self.deep_data(170)
+        self.assertLessEqual(len(os.fsencode(src)), ep.WINDOWS_AS_IS_BYTES)
         too_deep = os.path.join(self.tmp, "r" * 160)
-        with self.assertRaises(ep.EspeakPathError) as cm:
-            ep._choose(src, "1", [([], too_deep)])
-        message = str(cm.exception)
-        self.assertIn("would end the Python process", message)
-        self.assertIn("Fix:", message)
-        self.assertIn(src, message)
+        self.assertEqual(ep._choose(src, "1", [([], too_deep)], windows=True), src)
+        self.assertEqual(ep.how["how"], "as-is-no-copy")
+
+    def test_a_copy_deleted_while_running_is_made_again(self):
+        src = self.deep_data()
+        short = tempfile.mkdtemp(prefix="kesr-")
+        self.addCleanup(shutil.rmtree, short, True)
+        root = os.path.join(short, "espeak")
+        self.addCleanup(ep._done.pop, os.path.abspath(src), None)
+        path = ep.usable_data_path(src, "1", [([], root)])
+        self.assertEqual(ep.how["how"], "copy")
+        shutil.rmtree(path)
+        self.assertEqual(ep.usable_data_path(src, "1", [([], root)]), path)
+        self.assertTrue(os.path.isfile(os.path.join(path, "phontab")))
+
+    def test_the_version_is_asked_only_for_a_copy(self):
+        src = _make_data(os.path.join(self.tmp, "espeak-ng-data"))
+        if not ep.fits(src):
+            self.skipTest("this machine's temp folder is not short ASCII")
+
+        def version():
+            raise AssertionError("asked for the version without a copy")
+        self.assertEqual(ep._choose(src, version, [([], os.path.join(self.tmp, "root"))]), src)
+        deep = self.deep_data()
+        short = tempfile.mkdtemp(prefix="kesr-")
+        self.addCleanup(shutil.rmtree, short, True)
+        path = ep._choose(deep, lambda: "9.9", [([], os.path.join(short, "espeak"))])
+        self.assertTrue(os.path.basename(path).startswith("9.9-"), path)
+
+    @unittest.skipUnless(os.name == "posix", "XDG and HOME")
+    def test_copy_folders_are_absolute_even_with_a_relative_cache_or_no_home(self):
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": "relative/cache"}):
+            roots = ep._copy_roots(windows=False)
+            self.assertNotIn("relative", roots[0][1])
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": ""}), \
+                mock.patch.object(ep.os.path, "expanduser", lambda p: p):  # no HOME, no passwd entry
+            roots = ep._copy_roots(windows=False)
+            self.assertEqual(len(roots), 1)
+            self.assertIn("kitten-espeak-", roots[0][1])
+        for parents, folder in roots:
+            self.assertTrue(all(os.path.isabs(p) for p in parents + [folder]), (parents, folder))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows folders")
+    def test_windows_copies_go_to_the_profile_then_directly_into_programdata(self):
+        local = os.path.join(self.tmp, "Local")
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": local, "PROGRAMDATA": "C:\\ProgramData"}):
+            roots = ep._copy_roots(windows=True)
+        self.assertEqual(roots[0][1], os.path.join(local, "kitten-inference", "espeak"))
+        self.assertEqual(roots[1][0], [])
+        self.assertEqual(os.path.dirname(roots[1][1]), "C:\\ProgramData")
+        self.assertTrue(os.path.basename(roots[1][1]).startswith("kitten-inference-espeak-"))
 
     @unittest.skipUnless(os.name == "posix", "symbolic links")
     def test_a_link_in_place_of_the_folder_is_refused(self):
@@ -140,6 +198,20 @@ class EspeakPathTest(unittest.TestCase):
         with self.assertRaises(ep.EspeakPathError) as cm:
             ep._choose(src, "1", [([], shared)])
         self.assertIn("other users can change it", str(cm.exception))
+
+
+class EspeakEnvironmentTest(unittest.TestCase):
+    def test_a_value_set_after_the_import_is_kept(self):
+        from kitten_inference.tts08 import cpp_model
+        mine = os.environ.get("ESPEAK_DATA_PATH")
+        self.assertEqual(mine, cpp_model._espeak_env_written)
+        self.addCleanup(os.environ.__setitem__, "ESPEAK_DATA_PATH", mine)
+        os.environ["ESPEAK_DATA_PATH"] = "/somebody/else/espeak-ng-data"
+        cpp_model._set_espeak_data_path()
+        self.assertEqual(os.environ["ESPEAK_DATA_PATH"], "/somebody/else/espeak-ng-data")
+        os.environ["ESPEAK_DATA_PATH"] = mine
+        cpp_model._set_espeak_data_path()
+        self.assertEqual(os.environ["ESPEAK_DATA_PATH"], mine)
 
 
 class WindowsLongPathTest(unittest.TestCase):

@@ -53,11 +53,9 @@ _load_msvc_runtime()
 EspeakWrapper.set_library(espeakng_loader.get_library_path())
 
 
-def _set_espeak_data_path():
-    """Points espeak-ng at its data folder before it loads. A long path (Linux, macOS) or, on Windows, one with
-    characters outside ASCII would make espeak-ng end the Python process; such a folder is replaced by a short copy
-    (kitten_inference/tts08/_espeak_path.py), or a RuntimeError says what to do."""
-    src = espeakng_loader.get_data_path()
+def _espeak_version():
+    """espeakng_loader's version, which names the data copy (asked only when a copy is needed: 0.2.4 has no
+    __version__, and the distribution lookup scans sys.path)."""
     version = getattr(espeakng_loader, "__version__", None)
     if version is None:
         try:
@@ -65,18 +63,34 @@ def _set_espeak_data_path():
             version = _dist_version("espeakng_loader")  # a third-party distribution: its name never changes
         except Exception:
             version = "unknown"
-    os.environ["ESPEAK_DATA_PATH"] = _espeak_path.usable_data_path(src, version)
+    return version
+
+
+_espeak_env_written = None  # the ESPEAK_DATA_PATH value this module set last
+
+
+def _set_espeak_data_path(at_import=False):
+    """Points espeak-ng at its data folder before it loads. A long path (Linux, macOS) or, on Windows, one with
+    characters outside ASCII would make espeak-ng end the Python process; such a folder is replaced by a short copy
+    (kitten_inference/tts08/_espeak_path.py), or a RuntimeError says what to do. After the import, a value someone
+    else set is left alone."""
+    global _espeak_env_written
+    if not at_import and os.environ.get("ESPEAK_DATA_PATH") not in (None, _espeak_env_written):
+        return
+    path = _espeak_path.usable_data_path(espeakng_loader.get_data_path(), _espeak_version)
+    os.environ["ESPEAK_DATA_PATH"] = _espeak_env_written = path
 
 
 try:  # at import too, for code that starts phonemizer's espeak backend itself
-    _set_espeak_data_path()
+    _set_espeak_data_path(at_import=True)
 except (_espeak_path.EspeakPathError, OSError):
-    os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()  # KittenTTS() raises the error with the fix
+    # KittenTTS() raises the error with the fix.
+    os.environ["ESPEAK_DATA_PATH"] = _espeak_env_written = espeakng_loader.get_data_path()
 
 
-# Windows refuses to load a file whose full path has 260 characters or more unless long paths are enabled.
+# Windows does not load a DLL whose full path has 260 characters or more, even with long paths enabled (CI: pip
+# installed the engine at 273 characters on a runner with long paths on, and it did not load).
 WINDOWS_MAX_PATH = 260
-WINDOWS_LONG_PATHS_URL = "https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation"
 
 
 def _longest_engine_path(here=_HERE):
@@ -340,9 +354,8 @@ def _import_engine():
         if longest >= WINDOWS_MAX_PATH:
             raise ImportError(
                 f"This folder path is too long for Windows: the native engine's files have paths of up to {longest} "
-                f"characters, and Windows loads only shorter ones ({WINDOWS_MAX_PATH - 1} at most) unless long paths "
-                "are enabled. Use a shorter folder for the virtual environment (for example C:\\venvs\\kitten), or "
-                f"enable long paths: {WINDOWS_LONG_PATHS_URL}"
+                f"characters, and Windows loads them only from shorter ones ({WINDOWS_MAX_PATH - 1} at most). "
+                "Use a shorter folder for the virtual environment (for example C:\\venvs\\kitten)."
             ) from exc
         raise ImportError(
             "The native engine (kitten_inference.tts08._engine) is missing or does not match "

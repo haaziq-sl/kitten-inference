@@ -30,6 +30,9 @@ import uuid
 # Paths of this many bytes or more are not given to espeak-ng (its buffer is 160 bytes; files below the folder add to
 # the path, so keep a margin).
 MAX_PATH_BYTES = 150
+# Windows espeak-ng opens ASCII data paths of up to 200 characters (CI, wheel c158adf). Such a path is used as it is when
+# no short copy can be made, instead of failing.
+WINDOWS_AS_IS_BYTES = 200
 MARKER = "kitten-inference-espeak.json"
 WINDOWS = sys.platform == "win32"
 
@@ -331,56 +334,83 @@ def _user_tag():
     return hashlib.sha256(who.encode("utf-8")).hexdigest()[:8]
 
 
+def _absolute(path):
+    """``path`` when it is an absolute path, else None (a relative one would change with the working folder)."""
+    return path if path and os.path.isabs(path) else None
+
+
 def _copy_roots(windows=WINDOWS):
     """(parents to create, the private folder for copies) for each place a copy may go, best first."""
     roots = []
     if windows:
-        program_data = os.environ.get("PROGRAMDATA") or "C:\\ProgramData"
-        roots.append(([os.path.join(program_data, "kitten-inference")],
-                      os.path.join(program_data, "kitten-inference", "espeak-" + _user_tag())))
+        # The user's own profile first (only this user and the system can change it), then a folder directly in
+        # ProgramData (there, other users cannot rename or delete a folder they do not own), then TEMP.
+        local = _absolute(os.environ.get("LOCALAPPDATA"))
+        if local and not fits(local, windows):
+            local = short_path(local) or local
+        if local:
+            roots.append(([os.path.join(local, "kitten-inference")], os.path.join(local, "kitten-inference", "espeak")))
+        program_data = _absolute(os.environ.get("PROGRAMDATA")) or "C:\\ProgramData"
+        roots.append(([], os.path.join(program_data, "kitten-inference-espeak-" + _user_tag())))
         tmp = tempfile.gettempdir()
         if not fits(tmp, windows):
             tmp = short_path(tmp) or tmp
         roots.append(([], os.path.join(tmp, "kitten-espeak-" + _user_tag())))
     else:
-        cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-        roots.append(([cache, os.path.join(cache, "kitten-inference")],
-                      os.path.join(cache, "kitten-inference", "espeak")))
+        # XDG: a relative XDG_CACHE_HOME is ignored. "~" stays "~" when HOME is unset and the user has no passwd entry
+        # (containers with an arbitrary uid): then only the temp folder is used.
+        cache = _absolute(os.environ.get("XDG_CACHE_HOME"))
+        if cache is None:
+            home = _absolute(os.path.expanduser("~"))
+            cache = os.path.join(home, ".cache") if home else None
+        if cache:
+            roots.append(([cache, os.path.join(cache, "kitten-inference")],
+                          os.path.join(cache, "kitten-inference", "espeak")))
         roots.append(([], os.path.join(tempfile.gettempdir(), "kitten-espeak-" + _user_tag())))
-    return roots
+    return [([os.path.abspath(p) for p in parents], os.path.abspath(folder)) for parents, folder in roots]
 
 
 _lock = threading.Lock()
-_done = {}
-how = {}  # how the last path was chosen ("as-is", "short-name" or "copy"), for tests and bug reports
+_done = {}  # src -> (path, sha256 of a copy or None)
+how = {}  # how the last path was chosen ("as-is", "short-name", "copy" or "as-is-no-copy"), for tests and bug reports
 
 
 def usable_data_path(src, version="unknown", roots=None):
-    """A path to espeak-ng's data folder ``src`` (or to a copy of it) that espeak-ng can open."""
+    """A path to espeak-ng's data folder ``src`` (or to a copy of it) that espeak-ng can open. ``version`` (or a
+    function that returns it, called only when a copy is needed) names the copy."""
+    src = os.path.abspath(src)
     with _lock:
         if src in _done:
-            return _done[src]
-        path = _choose(src, str(version), roots)
-        _done[src] = path
+            path, digest = _done[src]
+            if digest is None or _valid_copy(path, digest):
+                return path
+            # The copy was deleted while this program runs: espeak-ng would end the process, so copy again.
+        path, digest = _choose_and_digest(src, version, roots)
+        _done[src] = (path, digest)
         return path
 
 
-def _choose(src, version, roots):
-    if fits(src):
+def _choose(src, version, roots, windows=WINDOWS):
+    return _choose_and_digest(src, version, roots, windows)[0]
+
+
+def _choose_and_digest(src, version, roots, windows=WINDOWS):
+    if fits(src, windows):
         how.update(how="as-is", path=src)
-        return src
-    if WINDOWS:
+        return src, None
+    if windows:
         short = short_path(src)
-        if short and fits(short):
+        if short and fits(short, windows):
             how.update(how="short-name", path=short)
-            return short
+            return short, None
+    version = str(version() if callable(version) else version)
     digest = content_digest(src)
     name = f"{''.join(c if c.isalnum() or c in '.-' else '_' for c in version)}-{digest[:16]}"
     tried = []
-    for parents, folder in (roots if roots is not None else _copy_roots()):
+    for parents, folder in (roots if roots is not None else _copy_roots(windows)):
         final = os.path.join(folder, name)
-        if not fits(final):
-            tried.append(f"{final}: {why_not(final)}")
+        if not fits(final, windows):
+            tried.append(f"{final}: {why_not(final, windows)}")
             continue
         try:
             for parent in parents:
@@ -394,12 +424,16 @@ def _choose(src, version, roots):
             tried.append(f"{final}: {type(exc).__name__}: {exc}")
             continue
         how.update(how="copy", path=path)
-        return path
+        return path, digest
+    if windows and src.isascii() and len(os.fsencode(src)) <= WINDOWS_AS_IS_BYTES:
+        # Windows espeak-ng opens such a path (only the copy's margin rules it out above): use it as it is.
+        how.update(how="as-is-no-copy", path=src, tried=tried)
+        return src, None
     raise EspeakPathError(
         f"espeak-ng (the text-to-phoneme library of kitten-inference-tts08) cannot use its data folder {src}: "
-        f"{why_not(src)}, and it would end the Python process. No short copy could be made either ("
+        f"{why_not(src, windows)}, and it would end the Python process. No short copy could be made either ("
         + "; ".join(tried) + "). Fix: create the virtual environment in a shorter folder"
-        + (" whose path has only ASCII characters (for example C:\\venvs\\kitten)" if WINDOWS else
+        + (" whose path has only ASCII characters (for example C:\\venvs\\kitten)" if windows else
            " (for example ~/venvs/kitten)")
-        + (", or set TMP" if WINDOWS else ", or set TMPDIR") + " to such a folder that you can write to."
+        + (", or set TMP" if windows else ", or set TMPDIR") + " to such a folder that you can write to."
     )
