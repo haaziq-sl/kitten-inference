@@ -26,12 +26,18 @@ TEST(FfmpegDecode, ArgumentsMirrorTheReferenceDecode) {
                                          "-ar", "24000", "-t", "30.100", "-f", "f32le", "pipe:1"};
   EXPECT_EQ(ffmpeg_decode_args("pipe:0"), want);
   EXPECT_EQ(ffmpeg_decode_args("my file.wav")[7], "my file.wav");
-  // The by-name fallback holds ffmpeg to the MP4/M4A family and to local files.
+  // The by-name fallback holds ffmpeg to ordinary recording demuxers and to local files.
   const std::vector<std::string> by_name = ffmpeg_decode_args("file:/dir/ref.m4a", 24000, 30.1, true);
-  ASSERT_NE(std::find(by_name.begin(), by_name.end(), "-format_whitelist"), by_name.end());
-  EXPECT_NE(std::find(by_name.begin(), by_name.end(), "mov,mp4,m4a,3gp,3g2,mj2"), by_name.end());
-  ASSERT_NE(std::find(by_name.begin(), by_name.end(), "-protocol_whitelist"), by_name.end());
-  EXPECT_NE(std::find(by_name.begin(), by_name.end(), "file"), by_name.end());
+  const auto wl = std::find(by_name.begin(), by_name.end(), "-format_whitelist");
+  ASSERT_NE(wl, by_name.end());
+  const std::string formats = *(wl + 1);
+  EXPECT_NE(formats.find("wav"), std::string::npos);
+  EXPECT_NE(formats.find("mov"), std::string::npos);
+  EXPECT_EQ(formats.find("concat"), std::string::npos);
+  EXPECT_EQ(formats.find("avisynth"), std::string::npos);
+  const auto pw = std::find(by_name.begin(), by_name.end(), "-protocol_whitelist");
+  ASSERT_NE(pw, by_name.end());
+  EXPECT_EQ(*(pw + 1), "file");
   EXPECT_EQ(by_name[by_name.size() - 1], "pipe:1");
 }
 

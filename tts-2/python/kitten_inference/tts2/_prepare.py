@@ -147,7 +147,9 @@ def _is_reparse_point(path: Path) -> bool:
     """Whether ``path`` is a reparse point (a junction or symbolic link). GetNamedSecurityInfoW and the owner/ACL
     checks follow such a link, so another user's junction that points at a folder of the victim's would pass them
     and could be re-pointed later; a model folder must be a real directory."""
-    if not _windows():
+    # The real platform, not _windows() (tests patch _windows() to exercise the Windows ACL path on other systems):
+    # ctypes.windll exists only on a real Windows.
+    if sys.platform != "win32":
         try:
             return path.is_symlink()
         except OSError:
@@ -158,7 +160,7 @@ def _is_reparse_point(path: Path) -> bool:
 
 def _reject_reparse(path: Path, what: str) -> None:
     """Refuses a model folder that is a reparse point (Windows junction/symlink)."""
-    if _windows() and path.exists() and _is_reparse_point(path):
+    if path.exists() and _is_reparse_point(path):
         raise PrepareError(f"the model {what} {path} is a reparse point (a junction or symbolic link); it could "
                            "point to another user's folder. Delete it, or pass a new folder as cache_dir "
                            "(KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir)")
@@ -609,8 +611,9 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
     if cache_dir is not None:
         # resolve_revision may have waited on Hugging Face; a folder or junction another user planted in that window
         # must not be trusted. Re-check the folder now that it exists, and refuse a <sha> reached through a junction.
-        _check_folder_is_yours(root)
-        _reject_reparse(final, "folder")
+        _check_folder_is_yours(root)  # no-op off Windows; refuses a reparse-point root
+        if _windows():
+            _reject_reparse(final, "folder")
     if is_prepared(final, with_cloning):
         _record_ref(root, repo, revision, sha)
         return final

@@ -22,6 +22,13 @@ FFMPEG_ARGS = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"
 FFMPEG_MISSING = ("ffmpeg was not found: voice cloning uses it to read the reference audio. Install it with: " +
                   ("winget install --id Gyan.FFmpeg -e (then open a new terminal)" if os.name == "nt"
                    else "sudo apt-get install -y ffmpeg"))
+# Demuxers the by-name fallback may use: ordinary recording containers only. It leaves out every demuxer that opens
+# other files or URLs or runs a script (hls, dash, concat, imf, sdp, rtsp, rtp, image2, avisynth, vapoursynth,
+# dvdvideo), the same ones the in-process decode excludes, so a reference file named like a *.avs AviSynth script or
+# an ID3-hidden ffconcat list cannot pick one of them. ffmpeg has no demuxer deny-list, so this allow-list names the
+# formats a recording can be instead. The read-from-pipe run above is unrestricted (guarded by is_playlist).
+BY_NAME_FORMATS = ("wav,w64,aiff,au,caf,mp3,mp2,flac,ogg,oga,opus,aac,amr,mov,mp4,m4a,3gp,3g2,mj2,"
+                   "matroska,webm,asf")
 
 
 class AudioError(ValueError):
@@ -63,16 +70,19 @@ def is_playlist(data: bytes) -> bool:
 
 def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:
     """The ffmpeg arguments: from standard input, or with ``path`` from that file (made absolute, so a name that starts
-    with '-' is never read as an option). The by-name form (``path`` given) is the fallback for MP4/M4A files whose
-    index is at the end; it holds ffmpeg to that container family and to local files, so a reference file with another
-    extension (for example a .avs read as an AviSynth script, which can load and run any DLL) cannot select a demuxer
-    that runs code or opens other inputs."""
+    with '-' is never read as an option). The by-name form (``path`` given) is the fallback for files that cannot be
+    read from a pipe (an MP4/M4A whose index is at the end); it holds ffmpeg to ordinary recording demuxers and to
+    local files, so a reference file with another extension (for example a .avs read as an AviSynth script, which can
+    load and run any DLL) cannot select a demuxer that runs code or opens other inputs."""
     if path is None:
         return list(FFMPEG_ARGS)
     args = list(FFMPEG_ARGS)
     i = args.index("-i")
     args[i + 1] = os.path.abspath(path)
-    args[i:i] = ["-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2", "-protocol_whitelist", "file"]
+    # Hold ffmpeg to ordinary recording demuxers and to local files, so a reference file with another extension
+    # (a .avs read as an AviSynth script, which can load and run any DLL) or an ID3-hidden ffconcat list cannot
+    # select a demuxer that runs code or opens other inputs.
+    args[i:i] = ["-format_whitelist", BY_NAME_FORMATS, "-protocol_whitelist", "file"]
     return args
 
 

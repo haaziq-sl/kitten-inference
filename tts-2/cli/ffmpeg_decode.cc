@@ -295,11 +295,15 @@ std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate, 
   std::snprintf(seconds, sizeof(seconds), "%.3f", max_seconds);
   std::vector<std::string> args = {"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"};
   if (by_name) {
-    // The by-name fallback exists only for MP4/M4A files whose index is at the end (see ffmpeg_decode). Restrict
-    // ffmpeg to that container family and to local files, so a reference file with another extension (for example a
-    // .avs read as an AviSynth script, which can load and run any DLL) cannot select a demuxer that runs code or
-    // opens other inputs. The read-from-pipe run above has no file name, so it never selects a demuxer by extension.
-    args.insert(args.end(), {"-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2", "-protocol_whitelist", "file"});
+    // Hold ffmpeg to ordinary recording demuxers and to local files, so a reference file with another extension
+    // (for example a .avs read as an AviSynth script, which can load and run any DLL) or an ID3-hidden ffconcat
+    // list cannot select a demuxer that runs code or opens other inputs. The list leaves out every demuxer that
+    // opens other files/URLs or runs a script (hls, dash, concat, imf, sdp, rtsp, rtp, image2, avisynth,
+    // vapoursynth, dvdvideo), as the in-process decode (decode.cc) does. ffmpeg has no demuxer deny-list, so this
+    // names the formats a recording may be. The read-from-pipe run above has no file name, so it never selects a
+    // demuxer by extension.
+    args.insert(args.end(), {"-format_whitelist", "wav,w64,aiff,au,caf,mp3,mp2,flac,ogg,oga,opus,aac,amr,mov,mp4,"
+                             "m4a,3gp,3g2,mj2,matroska,webm,asf", "-protocol_whitelist", "file"});
   }
   args.insert(args.end(), {"-i", input, "-map_metadata", "-1", "-vn", "-sn", "-dn", "-ac", "1", "-ar",
                            std::to_string(rate), "-t", seconds, "-f", "f32le", "pipe:1"});

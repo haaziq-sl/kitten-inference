@@ -117,8 +117,10 @@ def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
     assert a[a.index("-t") + 1] == "30.100" and a[a.index("-f") + 1] == "f32le"
     b = _audio.ffmpeg_args(tmp_path / "-ref.m4a")  # the by-name fallback
     assert b[b.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.m4a") and b[:6] == a[:6]
-    # held to the MP4/M4A family and to local files, so a .avs (AviSynth) or another input-opening demuxer is refused
-    assert b[b.index("-format_whitelist") + 1] == "mov,mp4,m4a,3gp,3g2,mj2"
+    # held to ordinary recording demuxers and to local files, so a .avs (AviSynth) / concat / hls demuxer is refused
+    wl = b[b.index("-format_whitelist") + 1]
+    assert "wav" in wl.split(",") and "mov" in wl.split(",") and "concat" not in wl.split(",")
+    assert "avisynth" not in wl.split(",") and "hls" not in wl.split(",") and "dash" not in wl.split(",")
     assert b[b.index("-protocol_whitelist") + 1] == "file" and b[-1] == "pipe:1"
     assert "-format_whitelist" not in a  # the stdin run reads any recording format (guarded by is_playlist)
 
