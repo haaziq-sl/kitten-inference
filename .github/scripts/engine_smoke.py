@@ -86,12 +86,16 @@ with tempfile.TemporaryDirectory() as tmp:
         print(f"engine create, the model folder cache_root() picks ({root}): status {s_root}: {m_root}")
         check("non-ASCII" not in m_root, "the folder cache_root() picks passes the engine's path check")
         tool = str(backend.text_data_tool)
-        for folder, want in ((other, "cannot open input graph"), (root, "not a public Kitten compact graph")):
+        # The text-data tool carries a UTF-8 code page manifest (like kitten-tts-native), so it opens the file in both
+        # folders and then rejects its content; "cannot open input graph" would mean the manifest is missing.
+        want = "not a public Kitten compact graph"
+        for folder in (other, root):
             graph = folder / "tagger.compact"
             graph.write_bytes(b"x" * 64)
             t = subprocess.run([tool, str(graph), str(folder / "tagger.fst")], capture_output=True, text=True)
             print(f"text-data tool on {graph}: exit {t.returncode}: {(t.stderr or t.stdout).strip()[-200:]}")
-            check(t.returncode != 0 and want in (t.stderr + t.stdout), f"text-data tool in {folder.name!r}: {want}")
+            check(t.returncode != 0 and want in (t.stderr + t.stdout),
+                  f"text-data tool in {folder.name!r} opens the file: {want}")
     else:
         check("non-ASCII" not in m_other, "non-ASCII model paths are accepted here")
 
