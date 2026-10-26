@@ -4,7 +4,7 @@ The model comes from the latest revision on Hugging Face (115 built-in voices). 
 
 `kitten-tts-native` picks working settings by itself, so most users need nothing in this section. It is for running several streams, for the C API, and for using less GPU memory.
 
-By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one voice per run (a built-in, cloned or loaded one), so without a `--voice-cache` option it prepares only that voice, right after the engine starts or the voice is built or loaded (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13.5 GB instead of 33 GB with the 115 voices of the current revision, and 13 GB instead of 21 GB with the earlier 47-voice revision), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
+By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one voice per run (a built-in, cloned or loaded one), so without a `--voice-cache` option it prepares only that voice, right after the engine starts or the voice is built or loaded (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13,500 MiB instead of 33,200 MiB with the 115 voices of the current model), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
 
 Two settings make the engine use less GPU memory: the voice cache keeps only some voices on the GPU, and the low memory profile uses smaller working buffers. They can be combined. Neither changes the audio; what changes is the time to the first audio of a voice that is not on the GPU yet. With the same text, voice, seed, model and GPU, `--stream false` output is byte for byte the same with every cache mode and both profiles, when requests run one at a time (as `kitten-tts-native` runs them).
 
@@ -13,11 +13,26 @@ build/default/bin/kitten-tts-native --assets models/kitten-tts-2 --voice Bruno \
   --text "Speaking with less GPU memory." --voice-cache none --memory-profile low --output low.wav
 ```
 
+GPU memory in use with the current model (115 voices), including the CUDA context:
+
+| Setting | Default profile | Low-memory profile |
+|---|---:|---:|
+| one voice (`kitten-tts-native` and the pip package without options) | about 13,500 MiB | about 9,100 MiB |
+| `--voice-cache lru` (room for 16 voices) | about 16,500 MiB | about 12,100 MiB |
+| every voice (`--voice-cache all`, the C API default) | about 33,200 MiB | about 13,000 MiB |
+| building a cloned voice | about 15,600 MiB | about 11,300 MiB |
+| speaking with a saved voice | about 13,500 MiB | about 9,200 MiB |
+
+By card size: 24 GB cards use the default profile with one voice, and build voices with it; 16 GB cards use it when
+it fits and build voices with the low-memory profile; 12 GB cards usually get the low-memory profile (supported, not
+optimal, see [below](#--memory-profile-autodefaultlow)) and build a voice only when other programs use at most about
+500 MiB; on 8 GB cards and smaller the low-memory profile fits itself to the card ([Small GPUs](#small-gpus)).
+
 ## Where voices are kept
 
 - **On disk:** `voices.kt2n` in the prepared model directory holds the built-in voices. Voices you save with `--save-voice` are in their own files.
-- **In host memory:** with `lru` and `none`, the engine reads every built-in voice when it starts and keeps it there, about 7.6 MiB for the 47 voices of the earlier revision (more with 115 voices).
-- **On the GPU:** the state the model needs to speak with the voice. One built-in voice took about 180 MiB of GPU memory and the largest 197 MiB (measured with the earlier 47-voice revision).
+- **In host memory:** with `lru` and `none`, the engine reads every built-in voice when it starts and keeps it there, about 21 MiB for the 115 voices (the size of `voices.kt2n`).
+- **On the GPU:** the state the model needs to speak with the voice: about 175 MiB per built-in voice on average, and 197 MiB for the largest.
 
 Preparing a voice copies it from host memory into GPU memory, in about 9 ms (47-voice revision). Removing a voice from the GPU keeps its host copy, so using it again only prepares it again.
 
@@ -36,7 +51,7 @@ These limits need an explicit `--voice-cache lru` or `--voice-cache none`. Witho
 - `--voice-cache-voices N` keeps at most N voices on the GPU at once (1 to 4096).
 - `--voice-cache-mib N` keeps at most N MiB of GPU memory for voices.
 
-With both options, both limits apply. With only `--voice-cache-mib`, as many voices are kept as fit in the budget. With neither, `none` keeps one voice for each stream (`--max-streams`), and `lru` keeps 16 voices, or one for each stream when that is more. The engine sets aside GPU memory for these limits when it starts, so the limits, not the number of voices used so far, decide how much memory the cache takes. Plain `--voice-cache lru` therefore sets aside room for 16 voices (about 3 GB (measured with the earlier 47-voice revision)), which does not fit on 4 GB cards: there, use `--voice-cache none` or `--voice-cache lru --voice-cache-voices 1`. The engine refuses to start when the MiB budget cannot hold the largest built-in voice, and the message gives both sizes, for example `voice_cache_max_bytes (100 MiB) cannot hold the largest voice (197 MiB)` (47-voice revision).
+With both options, both limits apply. With only `--voice-cache-mib`, as many voices are kept as fit in the budget. With neither, `none` keeps one voice for each stream (`--max-streams`), and `lru` keeps 16 voices, or one for each stream when that is more. The engine sets aside GPU memory for these limits when it starts, so the limits, not the number of voices used so far, decide how much memory the cache takes. Plain `--voice-cache lru` therefore sets aside room for 16 voices (about 3,000 MiB), which does not fit on 4 GB cards: there, use `--voice-cache none` or `--voice-cache lru --voice-cache-voices 1`. The engine refuses to start when the MiB budget cannot hold the largest built-in voice, and the message gives both sizes, for example `voice_cache_max_bytes (100 MiB) cannot hold the largest voice (197 MiB)`.
 
 Cloned and loaded voices go through the same cache. A cloned or loaded voice larger than the whole budget is refused when it is built or loaded.
 
@@ -45,7 +60,7 @@ Cloned and loaded voices go through the same cache. A cloned or loaded voice lar
 `auto` is what `kitten-tts-native` uses when you do not pass `--memory-profile`. It uses the default profile when that fits the free GPU memory and `low` otherwise. When it uses `low`, it prints one line that says so and how much memory was free.
 
 - The audio does not depend on the choice: with the same text, voice, seed and GPU, `--stream false` output is byte for byte the same with `low` and `default`.
-- With `kitten-tts-native`'s own voice setting (one voice prepared), the default profile needs about 11 to 13 GB of GPU memory (measured with the earlier 47-voice revision), depending on the card (the low-memory line prints the number for yours), and keeps 10% of the GPU free; with `--voice-cache all` it needs about 33 GB with the 115 voices of the current revision, more than a 24 GB card has (21 GB with the earlier 47-voice revision). Below that, `auto` uses `low`: supported, not optimal. With several streams (C API), requests that arrive together are batched less than with the default profile (not measured). One request at a time runs as fast (`--stream false` real-time factor 0.050 with `low` and 0.051 with the default profile on a 16 GB RTX 5060 Ti; 47-voice revision).
+- With `kitten-tts-native`'s own voice setting (one voice prepared), the default profile needs about 13,500 MiB of GPU memory (the low-memory line prints the number for your card), and keeps 10% of the GPU free; with `--voice-cache all` it needs about 33,200 MiB, more than a 24 GB card has, so `auto` then uses `low` (about 13,000 MiB). Below that, `auto` uses `low`: supported, not optimal. With several streams (C API), requests that arrive together are batched less than with the default profile (not measured). One request at a time runs as fast (`--stream false` real-time factor 0.050 with `low` and 0.051 with the default profile on a 16 GB RTX 5060 Ti; 47-voice revision).
 - `auto` decides from the free memory before it loads the model. When the default profile clearly cannot fit, it does not try it. Only when it is close (about 12 to 14 GB free) does it try the default profile first; when that does not fit, starting takes a few seconds longer.
 - When even `low` does not fit, the engine does not start, and the message says how much free memory one stream needs.
 - With an explicit `--memory-profile default` on a GPU too small for it, the engine stops at start with `the default memory profile needs about N MiB or more of free GPU memory; this GPU has M MiB free after the CUDA context`, followed by what to use instead (exit status 1).
