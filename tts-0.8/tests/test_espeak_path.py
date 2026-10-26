@@ -23,6 +23,10 @@ class EspeakPathTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="kesp-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # Windows: a temp folder on a drive with 8.3 names would take the short-name route; these tests are about copies.
+        short_path = ep.short_path
+        ep.short_path = lambda path: None
+        self.addCleanup(setattr, ep, "short_path", short_path)
 
     def deep_data(self):
         # tmp/<pad>/espeak-ng-data, at least 170 bytes (espeak-ng fails from 160)
@@ -77,12 +81,21 @@ class EspeakPathTest(unittest.TestCase):
         self.assertEqual(ep._choose(src, "1", [([], root)]), path)
         self.assertTrue(os.path.isfile(os.path.join(path, ep.MARKER)))
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows 8.3 names")
+    def test_windows_uses_an_ascii_short_name_when_there_is_one(self):
+        src = self.deep_data()
+        ep.short_path = lambda path: "C:\\PROGRA~1\\ESPEAK~1"
+        root = os.path.join(self.tmp, "root")
+        self.assertEqual(ep._choose(src, "1", [([], root)]), "C:\\PROGRA~1\\ESPEAK~1")
+        self.assertEqual(ep.how["how"], "short-name")
+        self.assertFalse(os.path.exists(root))
+
     def test_processes_starting_together_share_one_copy(self):
         src = self.deep_data()
         short = tempfile.mkdtemp(prefix="kesr-")
         self.addCleanup(shutil.rmtree, short, True)
         root = os.path.join(short, "espeak")
-        code = ("import json, sys; from kitten_inference.tts08 import _espeak_path as ep; "
+        code = ("import sys; from kitten_inference.tts08 import _espeak_path as ep; ep.short_path = lambda p: None; "
                 "print(ep._choose(sys.argv[1], '1', [([], sys.argv[2])]))")
         procs = [subprocess.Popen([sys.executable, "-c", code, src, root], stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE) for _ in range(4)]

@@ -88,7 +88,8 @@ def make_venv(venv, wheels, overlay, env):
                       env=env)
         dest = Path(out[-1])
         for f in Path(overlay).glob("*.py"):
-            shutil.copy2(f, dest / f.name)
+            if f.name != "__init__.py":  # the wheel's own: delvewheel adds the DLL folder there on Windows
+                shutil.copy2(f, dest / f.name)
     rc, out = run([py, "-c", "import espeakng_loader; print(espeakng_loader.get_data_path())"], env=env)
     return py, out[-1]
 
@@ -126,6 +127,8 @@ def main():
     ap.add_argument("--overlay")
     ap.add_argument("--out")
     args = ap.parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # folder names on a cp1252 console
     wheels = Path(args.wheels).resolve()
     base = Path(os.path.realpath(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())) / f"ep-{args.expect}"
     hf_home = base / "hf"  # one model download for every case

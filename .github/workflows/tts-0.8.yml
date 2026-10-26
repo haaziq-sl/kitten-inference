@@ -729,7 +729,8 @@ jobs:
           py=$([ -x ut/bin/python ] && echo ut/bin/python || echo ut/Scripts/python.exe)
           "$py" -m pip install -q --disable-pip-version-check --find-links old-wheels kitten-inference-tts08
           dest=$("$py" -c "import os, kitten_inference.tts08 as m; print(os.path.dirname(m.__file__).replace(os.sep, '/'))")
-          cp tts-0.8/kitten_inference/tts08/*.py "$dest/"
+          # the wheel's own __init__.py stays: delvewheel adds the DLL folder there on Windows
+          find tts-0.8/kitten_inference/tts08 -maxdepth 1 -name "*.py" ! -name "__init__.py" -exec cp {} "$dest/" \;
           "$py" -m unittest discover -s tts-0.8/tests -p "test_espeak_path.py" -v
 
       - name: Deep folder, c158adf wheel (must fail the old way)

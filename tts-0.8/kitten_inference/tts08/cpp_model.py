@@ -68,6 +68,12 @@ def _set_espeak_data_path():
     os.environ["ESPEAK_DATA_PATH"] = _espeak_path.usable_data_path(src, version)
 
 
+try:  # at import too, for code that starts phonemizer's espeak backend itself
+    _set_espeak_data_path()
+except (_espeak_path.EspeakPathError, OSError):
+    os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()  # KittenTTS() raises the error with the fix
+
+
 # Windows refuses to load a file whose full path has 260 characters or more unless long paths are enabled.
 WINDOWS_MAX_PATH = 260
 WINDOWS_LONG_PATHS_URL = "https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation"
