@@ -370,6 +370,56 @@ class CpuCheckTests(unittest.TestCase):
         self.cm._check_cpu()
 
 
+class TokenLimitTests(unittest.TestCase):
+    """Text that makes more phoneme tokens than the model's position table is refused with a clear message, not the
+    engine's weights-size mismatch (which reads like a damaged download)."""
+
+    def setUp(self):
+        self.cm = importlib.import_module("kitten_inference.tts08.cpp_model")
+
+    def test_pos_weight_rows_read_from_the_weights_file(self):
+        path = os.path.join(tempfile.mkdtemp(), "w.bin")
+        write_w1x1(path, {"bert_embed.pos_weight": ([512, 128], bytes(512 * 128 * 4)),
+                          "fc.weight": ([3, 4], bytes(48))})
+        self.assertEqual(self.cm._pos_weight_rows(path), 512)
+        write_w1x1(path, {"fc.weight": ([3, 4], bytes(48))})
+        self.assertIsNone(self.cm._pos_weight_rows(path))  # no position table: no Python-side check
+        Path(path).write_bytes(b"not a weights file")
+        self.assertIsNone(self.cm._pos_weight_rows(path))
+
+    def test_too_many_tokens_names_the_limit(self):
+        import numpy as np
+
+        stub = self.cm.KittenTTS_1_Cpp.__new__(self.cm.KittenTTS_1_Cpp)
+        stub._lock = threading.Lock()
+        stub._max_tokens = 512
+        stub._resolve_voice = lambda v: v
+        stub._effective_speed = lambda v, s: 1.0
+        stub._phoneme_ids = lambda t: np.zeros(600, dtype=np.float32)
+        with self.assertRaisesRegex(ValueError, r"600 phoneme tokens.*limit of 512"):
+            stub.generate_single_chunk("x", voice="v")
+        # within the limit: the guard does not fire (it reaches _style_for_voice)
+        stub._phoneme_ids = lambda t: np.zeros(10, dtype=np.float32)
+        stub._style_for_voice = lambda v, t, n: (_ for _ in ()).throw(RuntimeError("reached style"))
+        with self.assertRaisesRegex(RuntimeError, "reached style"):
+            stub.generate_single_chunk("x", voice="v")
+        stub._max_tokens = None  # unknown limit: no check, straight through to _style_for_voice
+        with self.assertRaisesRegex(RuntimeError, "reached style"):
+            stub.generate_single_chunk("x", voice="v")
+
+
+class GlibcCheckTests(unittest.TestCase):
+    def setUp(self):
+        self.cm = importlib.import_module("kitten_inference.tts08.cpp_model")
+
+    def test_old_glibc_is_refused_with_a_clear_message(self):
+        with self.assertRaisesRegex(RuntimeError, r"glibc is 2\.28.*2\.29.*espeak not installed"):
+            self.cm._check_glibc((2, 28))
+        self.cm._check_glibc((2, 29))  # exactly the floor is fine
+        self.cm._check_glibc((2, 35))
+        self.cm._check_glibc(None)     # not glibc, or cannot tell: no check
+
+
 class WindowsRuntimeTests(unittest.TestCase):
     """espeak-ng.dll needs MSVCP140.dll by that name: the wheel's copy is loaded only when Windows has none."""
 

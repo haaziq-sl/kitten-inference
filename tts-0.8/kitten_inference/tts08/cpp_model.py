@@ -2,6 +2,7 @@ import contextlib
 import json
 import os
 import platform
+import struct
 import sys
 import threading
 
@@ -109,6 +110,74 @@ _CPU_HINT = {
     "avx2": "Intel CPUs have them since 2013, AMD CPUs since 2015",
     "asimddp": "a Raspberry Pi 5 has them, a Raspberry Pi 4 does not",
 }
+
+
+GLIBC_FLOOR = (2, 29)
+
+
+def _glibc_version():
+    """(major, minor) of the GNU C library, or None when this is not glibc or it cannot be told."""
+    if not (sys.platform.startswith("linux") or sys.platform == "android"):
+        return None
+    try:
+        name = os.confstr("CS_GNU_LIBC_VERSION")  # e.g. "glibc 2.31"
+    except (ValueError, OSError, AttributeError):
+        return None
+    if not name or not name.startswith("glibc"):
+        return None
+    try:
+        major, minor = name.split()[1].split(".")[:2]
+        return (int(major), int(minor))
+    except (IndexError, ValueError):
+        return None
+
+
+def _check_glibc(version=None):
+    """espeak-ng (from espeakng_loader) needs glibc 2.29 or newer on Linux; an older glibc otherwise fails later
+    with a confusing "espeak not installed on your system". Refuse it here with a clear message instead. pip can
+    install the wheel on an older glibc because espeakng_loader's x86_64 wheel is tagged manylinux_2_17."""
+    v = _glibc_version() if version is None else version
+    if v is not None and v < GLIBC_FLOOR:
+        raise RuntimeError(
+            f"This system's glibc is {v[0]}.{v[1]}, older than the {GLIBC_FLOOR[0]}.{GLIBC_FLOOR[1]} that "
+            "kitten-inference-tts08 needs (the espeak-ng library it uses for text). On glibc older than 2.29 "
+            "(for example RHEL/Rocky 8, Debian 10, Ubuntu 18.04 or Amazon Linux 2) it would otherwise fail with "
+            "\"espeak not installed on your system\". Use a Linux with glibc 2.29 or newer."
+        )
+
+
+def _pos_weight_rows(weights_path, name=b"bert_embed.pos_weight"):
+    """The number of position rows in the text encoder's position table (bert_embed.pos_weight), read from the W1X1
+    weights file, or None when it cannot be told. That is the most phoneme tokens (ids) one chunk may have; past it
+    the engine reports a weights-size mismatch, which misleads users into re-downloading an intact model."""
+    try:
+        with open(weights_path, "rb") as f:
+            if f.read(4) != b"W1X1":
+                return None
+            _version, count = struct.unpack("<II", f.read(8))
+            offset = None
+            for _ in range(count):
+                entry = f.read(80)
+                if len(entry) < 80:
+                    return None
+                nm = entry[:64].split(b"\0", 1)[0]
+                if nm == name or (offset is None and nm.endswith(b".pos_weight")):
+                    offset = struct.unpack("<QII", entry[64:80])[0]
+                    if nm == name:
+                        break
+            if offset is None:
+                return None
+            f.seek(offset)
+            head = f.read(4)
+            if len(head) < 4:
+                return None
+            _dtype, _flags, ndim = struct.unpack("<BBH", head)
+            if ndim < 1:
+                return None
+            rows = struct.unpack("<i", f.read(4))[0]
+            return rows if rows > 0 else None
+    except (OSError, struct.error):
+        return None
 
 
 def _cpu_requirements(path=os.path.join(_HERE, "_cpu_requirements.txt")):
@@ -322,10 +391,14 @@ class KittenTTS_1_Cpp:
         sample_rate=SAMPLE_RATE,
     ):
         """Initialize KittenTTS with the native engine."""
+        _check_glibc()  # before espeak-ng is loaded below, so an old glibc fails with a clear message
         self.arch_path = arch_path
         self.weights_path = weights_path
         self.sample_rate = sample_rate
         self.style_index = style_index
+        # Most phoneme tokens one chunk may have (the model's position table); past it the engine reports a
+        # weights-size mismatch, so check it in Python and say what is really wrong.
+        self._max_tokens = _pos_weight_rows(weights_path)
 
         aliases = dict(DEFAULT_VOICE_ALIASES)
         aliases.update(voice_aliases or {})
@@ -460,6 +533,12 @@ class KittenTTS_1_Cpp:
 
         with self._lock:
             ids = self._phoneme_ids(text)
+            if self._max_tokens is not None and len(ids) > self._max_tokens:
+                raise ValueError(
+                    f"this text becomes {len(ids)} phoneme tokens in one chunk, more than the model's limit of "
+                    f"{self._max_tokens}. Use shorter sentences (chunks split on sentence breaks), or "
+                    "clean_text=True so numbers and symbols are normalized rather than spelled out at length."
+                )
             style_dec, style_pred = self._style_for_voice(voice, text, len(ids))
             with _ENGINE_GATE.use(self._mi, self.backend):
                 self._set_native_speed(effective_speed)
