@@ -87,10 +87,27 @@ jobs:
       - name: Machine
         run: |
           sw_vers; uname -m; sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
-          which -a python3; python3 --version; /usr/bin/python3 --version
-          curl -sS -o /dev/null -w "huggingface.co http=%{http_code} ssl_verify=%{ssl_verify_result}\n" https://huggingface.co/api/models/KittenML/meownn-models
-          curl -sS -o /dev/null -w "pypi.org http=%{http_code} ssl_verify=%{ssl_verify_result}\n" https://pypi.org/simple/pip/
+          echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
+          echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
+          ls -l /usr/local/bin/python3* 2>&1 | head -5
+          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"
+          echo "--- /etc/paths and /etc/paths.d"; cat /etc/paths; ls /etc/paths.d; cat /etc/paths.d/* 2>/dev/null | head -20
+          echo "--- env keys (names only)"; env | grep -o -E '^(PIP|PYTHON|HF_|HUGGING|XDG|OMP|VIRTUAL_ENV|CONDA|PIPX)[A-Za-z0-9_]*' | sort || true
+          echo "--- pip config"; python3 -m pip config debug 2>&1 | head -30
+          echo "--- runner home rc files"; ls -la "$HOME" | grep -E '\.(zsh|bash|profile)' || true
+          echo "--- Metal"; system_profiler SPDisplaysDataType 2>/dev/null | head -20
+          echo "--- TLS"
+          for u in https://huggingface.co/api/models/KittenML/meownn-models https://pypi.org/simple/pip/ https://files.pythonhosted.org/; do
+            curl -sS -o /dev/null -w "$u http=%{http_code} ssl_verify=%{ssl_verify_result} ip=%{remote_ip}\n" "$u" || echo "$u FAILED"
+          done
+          echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
           curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))'
+          curl -sS "https://pypi.org/pypi/$DIST-tts08/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("tts08 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]][:12])'
+      - name: Shell check (no doc lines)
+        run: |
+          for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
+            /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" | grep -a -E '@@RESULT|^one|interactive|^/' || echo "harness rc $?"
+          done
       - name: S1 bash, README.md TTS 0.8 block and Python example
         if: matrix.group == 'bash'
         timeout-minutes: 25
