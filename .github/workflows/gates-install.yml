@@ -21,11 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # second round: the uninstall order for a TTS 0.8-only install on macOS (no TTS 2 there), and Python 3.8
-          # with the docs' first line (python -m pip install -U pip)
-          - { os: macos-14, python: "3.12", label: macos-14-arm64-py3.12-r2, cases: "uninstall-tts08-umbrella-first,uninstall-tts08-engine-first,tts-2-min-0.2,both-min-0.2", pip: "" }
-          - { os: macos-15-intel, python: "3.12", label: macos-15-intel-py3.12-r2, cases: "uninstall-tts08-umbrella-first,uninstall-tts08-engine-first,tts-2-min-0.2,both-min-0.2", pip: "" }
-          - { os: windows-2022, python: "3.8", label: windows-2022-py3.8-pip-upgraded, cases: "plain,tts-0.8,tts-0-8,tts-2,both,both-0-8,tts-2-min-0.2,upgrade,uninstall-tts08-umbrella-first", pip: "--upgrade-pip" }
+          # third round: TTS 0.8 in a venv whose path is long (espeak-ng's data folder path length)
+          - { os: macos-14, python: "3.12", label: deep-path-macos-14-arm64, cases: "deep", pip: "--kittenml" }
+          - { os: ubuntu-24.04, python: "3.12", label: deep-path-ubuntu-24.04, cases: "deep", pip: "--kittenml" }
+          - { os: windows-2022, python: "3.12", label: deep-path-windows-2022, cases: "deep", pip: "--kittenml" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,10 +55,17 @@ jobs:
         shell: bash
         run: '"$PY" .github/gates-install/verify_dir.py wheels .github/gates-install/sha256sums.txt'
       - name: Install matrix
+        if: matrix.cases != 'deep'
         shell: bash
         run: |
           "$PY" -I .github/gates-install/gates_install.py --wheels wheels --out out --python "$PY" \
             --label "${{ matrix.label }}" --cases "${{ matrix.cases }}" ${{ matrix.pip }}
+      - name: Deep folder probe
+        if: matrix.cases == 'deep'
+        shell: bash
+        run: |
+          mkdir -p out
+          "$PY" -I .github/gates-install/deep_path_probe.py wheels out/deep.json "$PY" ${{ matrix.pip }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
