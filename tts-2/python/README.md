@@ -17,7 +17,7 @@ pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Window
   ROCm 7.x first (WSL2: step 1 of [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md); Linux
   without WSL2: [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution),
   then `pip install "kitten-inference[tts-2-rocm]"` in place of the last line. That package has no voice cloning.
-- Python 3.9 or newer. Other systems have no engine: pip then stops with "No matching distribution", or installs the
+- Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). Other systems have no engine: pip then stops with "No matching distribution", or installs the
   old version 0.1.1 of `kitten-inference` instead (`pip show kitten-inference` says which).
 - GeForce GTX 10, GTX 16 and RTX 20: supported, not optimal: these GPUs have no bf16 tensor cores, so part of the
   math runs in software (real-time factor 0.22 to 0.28, against 0.05 to 0.08 on RTX 40 and 50 cards; measured with

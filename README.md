@@ -35,7 +35,7 @@ pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Window
 kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 ```
 
-- Python 3.9 or newer. First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
+- Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
   our test machines (57 s with a 1 Gbit/s connection, 160 s on Windows). Later starts reuse the prepared model.
 - **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
   ROCm 7 first (WSL2: step 1 of [AMD Radeon](tts-2/docs/amd-radeon.md); Linux without WSL2:
@@ -71,7 +71,7 @@ pip install "kitten-inference[tts-0.8]"
 python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kitten-tts-nano-0.8').generate_to_file('Hello from Kitten TTS.', 'hello.wav', voice='Jasper')"
 ```
 
-- Python 3.8 to 3.15 on Linux x86-64 and ARM64, Windows x64 and Apple Silicon Macs. Intel Macs and Windows ARM64:
+- Python 3.8 to 3.14 on Linux x86-64 and ARM64, Windows x64 and Apple Silicon Macs (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). Intel Macs and Windows ARM64:
   built; passes an automated audio check, not tested by hand. Android ARM64: built, not tested.
 - On Windows, if `KittenTTS()` reports "espeak not installed", install the Microsoft Visual C++ Redistributable:
   `winget install Microsoft.VCRedist.2015+.x64`.
@@ -88,7 +88,7 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
   - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64.
 
 Both engines in one environment: `pip install "kitten-inference[tts-0.8,tts-2]"` (Linux x86-64 and Windows x64,
-Python 3.9 or newer).
+Python 3.9 to 3.14).
 
 ## Same audio?
 

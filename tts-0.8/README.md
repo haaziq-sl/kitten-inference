@@ -66,13 +66,15 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
 
 | Platform | Python | |
 |---|---|---|
-| Linux x86_64 | 3.8–3.15 | tested |
-| Linux ARM64 | 3.8–3.15 | tested |
-| Windows x64 | 3.8–3.15 | tested |
-| macOS Apple Silicon | 3.8–3.15 | tested |
-| macOS Intel | 3.8–3.15 | built; passes an automated audio check, not tested by hand |
+| Linux x86_64 | 3.8–3.14¹ | tested |
+| Linux ARM64 | 3.8–3.14¹ | tested |
+| Windows x64 | 3.8–3.14¹ | tested |
+| macOS Apple Silicon | 3.8–3.14¹ | tested |
+| macOS Intel | 3.8–3.14¹ | built; passes an automated audio check, not tested by hand |
 | Windows ARM64 | 3.11–3.15 | built; passes an automated audio check, not tested by hand |
 | Android ARM64 (experimental) | 3.13 | built, not tested |
+
+¹ Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages.
 
 - Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later. macOS needs version 11 or newer.
 - x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2

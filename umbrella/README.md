@@ -18,11 +18,11 @@ On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-g
 
 For Kitten TTS 2, install `"kitten-inference[tts-2]"` instead (NVIDIA, driver R570 or newer: kitten-inference-tts2 +
 kitten-inference-tts2-cu12) or `"kitten-inference[tts-2-rocm]"` (AMD Radeon with ROCm 7: kitten-inference-tts2 +
-kitten-inference-tts2-rocm; [setup](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md)). Kitten TTS 2 needs Python 3.9 or newer on Linux x86-64 or Windows x64
+kitten-inference-tts2-rocm; [setup](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md)). Kitten TTS 2 needs Python 3.9 to 3.14 on Linux x86-64 or Windows x64
 (AMD: Linux x86-64, tested inside WSL2).
 Other systems have no Kitten TTS 2 engine: pip then stops with "No matching distribution", or installs the old version
 0.1.1 of this package instead (`pip show kitten-inference` says which). Extras combine on Linux x86-64 and Windows x64
-with Python 3.9 or newer: `"kitten-inference[tts-0.8,tts-2]"`.
+with Python 3.9 to 3.14: `"kitten-inference[tts-0.8,tts-2]"`.
 
 - With a pip you cannot upgrade, write the extra as `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip
   22.0.2 to 23.2.1 install no engine for `[tts-0.8]` and still report success.

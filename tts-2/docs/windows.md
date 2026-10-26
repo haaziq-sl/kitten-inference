@@ -12,7 +12,7 @@ Tested on Windows Server 2022 with an NVIDIA L4 (a 24 GB data-centre GPU run wit
 
 ## Install with pip instead of building
 
-With Python 3.9 or newer from python.org, the NVIDIA driver 570 or newer and no other tools, in a Command Prompt:
+With Python 3.9 to 3.14 from python.org (3.15 also needs the Visual C++ Build Tools until PyYAML ships ready-made 3.15 packages), the NVIDIA driver 570 or newer and no other tools, in a Command Prompt:
 
 ```bat
 py -m venv .venv
