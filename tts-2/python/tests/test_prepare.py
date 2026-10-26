@@ -645,6 +645,36 @@ def test_frozen_app_is_told_to_prepare_first(env, monkeypatch):
     assert env.run() == env.cache / SHA and any("frozen app" in l for l in env.lines), env.lines
 
 
+def test_nuitka_app_is_told_to_prepare_first(env, monkeypatch):
+    # Nuitka sets no sys.frozen; it marks compiled modules with __compiled__, and its sys.executable is the app.
+    import sys
+    real_main = sys.modules["__main__"]
+    main = types.ModuleType("__main__")
+    main.__compiled__ = types.SimpleNamespace(containing_dir="/opt/app")
+    monkeypatch.setitem(sys.modules, "__main__", main)
+    with pytest.raises(_prepare.PrepareError, match="frozen app.*Nuitka"):
+        env.run()
+    monkeypatch.setitem(sys.modules, "__main__", real_main)
+    monkeypatch.setattr(_prepare, "__compiled__", object(), raising=False)  # this module compiled into the app
+    with pytest.raises(_prepare.PrepareError, match="frozen app"):
+        env.run()
+    assert not [c for c in env.hub.calls if c[0] in ("snapshot", "file")] and env.prep.runs == []
+
+
+@pytest.mark.parametrize("program", ["/usr/bin/uwsgi", "/usr/sbin/httpd", "C:/Program Files/Autodesk/maya.exe"])
+def test_python_embedded_in_another_program_is_told_to_prepare_first(env, monkeypatch, program):
+    monkeypatch.setattr(_prepare.sys, "executable", program)
+    with pytest.raises(_prepare.PrepareError, match="runs Python inside.*kitten-tts2 --prepare-only"):
+        env.run()
+    assert env.prep.runs == []
+
+
+@pytest.mark.parametrize("name", ["python", "python3.12", "python3.13t", "pythonw.exe", "python_d.exe", "pypy3.10",
+                                  "graalpy"])
+def test_python_interpreters_by_name_prepare(name):
+    assert _prepare._PYTHON_NAMES.fullmatch(name)
+
+
 def test_fallback_folder_that_is_a_junction_is_refused(monkeypatch, tmp_path):
     _Windows(monkeypatch, tmp_path, lambda path: path)
     root = _prepare.cache_root(log=lambda m: None)
@@ -724,3 +754,58 @@ def test_posix_group_write_of_a_private_group_is_allowed(tmp_path, monkeypatch):
     monkeypatch.setattr(_prepare, "_group_is_only_mine", lambda gid: False)
     with pytest.raises(_prepare.PrepareError, match="can be changed by other users"):
         _prepare.cache_root(folder)
+
+
+@posix_only
+def test_posix_drive_without_unix_permissions_is_used_with_a_note(env, monkeypatch, capsys):
+    # WSL's Windows drives (/mnt/d) and NTFS drives mounted without permissions show every folder as 0o777, and chmod
+    # changes nothing there: even a new folder cannot be made private, so a folder of this user's is used, with a note.
+    real_stat, real_lstat, drive = os.stat, os.lstat, str(env.cache)
+
+    def open_bits(real):
+        def stat(path, *args, **kw):
+            st = real(path, *args, **kw)
+            if not str(path).startswith(drive) or not __import__("stat").S_ISDIR(st.st_mode):
+                return st
+            return os.stat_result((st.st_mode | 0o777,) + tuple(st)[1:])
+        return stat
+
+    monkeypatch.setattr(_prepare.os, "stat", open_bits(real_stat))
+    monkeypatch.setattr(_prepare.os, "lstat", open_bits(real_lstat))
+    monkeypatch.setattr(_prepare.os, "chmod", lambda path, mode: None)
+    assert env.run() == env.cache / SHA  # a new folder
+    assert env.run() == env.cache / SHA  # and the same folder again, now with the model in it
+    err = capsys.readouterr().err
+    assert err.count("does not keep Linux permissions") == 1, err
+    monkeypatch.setattr(_prepare, "_keeps_permissions", lambda root: True)  # the same bits on a normal drive
+    with pytest.raises(_prepare.PrepareError, match="can be changed by other users"):
+        env.run()
+
+
+@posix_only
+def test_posix_permission_check_folder_swapped_by_another_user_is_not_trusted(tmp_path, monkeypatch):
+    assert _prepare._keeps_permissions(tmp_path)  # a normal drive
+    me = os.getuid()
+    real_lstat = os.lstat
+
+    def someone_elses(path, *args, **kw):  # the test folder was replaced by another user's open folder
+        st = real_lstat(path, *args, **kw)
+        if ".kitten-tts2-check-" not in str(path):
+            return st
+        values = list(st)
+        values[0] |= 0o777
+        values[4] = me + 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(_prepare.os, "lstat", someone_elses)
+    assert _prepare._keeps_permissions(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+@posix_only
+def test_posix_cache_dir_of_another_user_names_the_owner(env, monkeypatch):
+    env.cache.mkdir(mode=0o700)
+    owner = os.getuid()
+    monkeypatch.setattr(_prepare.os, "getuid", lambda: owner + 1)  # as root in a container with a host folder
+    with pytest.raises(_prepare.PrepareError, match=f"belongs to another user \\(user id {owner}\\).*run as the user"):
+        env.run()

@@ -328,11 +328,15 @@ def _set_private(path: Path) -> None:
         kernel32.LocalFree(sd)
 
 
-def _refuse_folder(root: Path, mine: bool) -> None:
-    why = "belongs to another user" if not mine else "can be changed by other users of this computer"
+def _refuse_folder(root: Path, mine: bool, owner: Optional[int] = None) -> None:
+    if mine:
+        why, other = "can be changed by other users of this computer", "or delete this one"
+    else:
+        who = f" (user id {owner})" if owner is not None else ""
+        why, other = f"belongs to another user{who}", "or run as the user it belongs to"
     raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
                        "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir), which is then made "
-                       "so that only you can change it, or delete this one")
+                       f"so that only you can change it, {other}")
 
 
 def _group_is_only_mine(gid: int) -> bool:
@@ -347,21 +351,52 @@ def _group_is_only_mine(gid: int) -> bool:
     return gid == os.getgid() and group.gr_name == me and set(group.gr_mem) <= {me}
 
 
+def _keeps_permissions(root: Path) -> bool:
+    """Whether the file system of ``root`` stores Unix permissions. A folder this process makes there for itself only
+    (mode 0o700) must not show write access for others. Some drives store none and show every folder as 0o777, where
+    chmod changes nothing: Windows drives in WSL (/mnt/c, /mnt/d without the "metadata" mount option) and NTFS or FAT
+    drives mounted without permissions. A test folder that is not a real folder of this user's (one that another user
+    swapped in, in a folder they can write to) counts as permissions kept, so the folder is then refused."""
+    import stat
+    import tempfile
+    probe = Path(tempfile.mkdtemp(prefix=".kitten-tts2-check-", dir=root))
+    try:
+        st = os.lstat(probe)
+        return not (stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and st.st_mode & 0o022)
+    finally:
+        with contextlib.suppress(OSError):
+            os.rmdir(probe)
+
+
+_NOTED_NO_PERMISSIONS: set = set()
+
+
 def _check_posix_folder(root: Path) -> None:
     """Linux and macOS: the cache_dir folder (and a symbolic link to it) must be this user's, and no other user may
     write to it, or a model (or a link that our log file would be written through) planted there by another user of
-    the machine would be used. An empty folder of this user's is made private (mode 0o700)."""
+    the machine would be used. An empty folder of this user's is made private (mode 0o700). On a drive that stores no
+    Unix permissions (see _keeps_permissions) a folder of this user's is used as it is, with a note: no folder there
+    can be made private, so refusing would also refuse every new folder on that drive."""
     try:
         link, st = os.lstat(root), os.stat(root)
         mine = link.st_uid == os.getuid() and st.st_uid == os.getuid()
         open_to_others = bool(st.st_mode & 0o002) or (bool(st.st_mode & 0o020) and not _group_is_only_mine(st.st_gid))
         if mine and open_to_others and not any(root.iterdir()):
-            os.chmod(root, 0o700)
+            with contextlib.suppress(OSError):  # FAT and exFAT drives can refuse chmod outright
+                os.chmod(root, 0o700)
             open_to_others = bool(os.stat(root).st_mode & 0o022) or any(root.iterdir())
+        no_permissions = mine and open_to_others and not _keeps_permissions(root)
     except OSError as exc:
         raise PrepareError(f"cannot check who may change the model folder {root}: {exc}") from None
+    if no_permissions:
+        if root not in _NOTED_NO_PERMISSIONS:
+            _NOTED_NO_PERMISSIONS.add(root)
+            _log(f"note: {root} is on a drive that does not keep Linux permissions (for example a Windows drive in "
+                 "WSL), so other users of this computer may be able to change the model files there; a folder on a "
+                 "Linux file system avoids that")
+        return
     if not mine or open_to_others:
-        _refuse_folder(root, mine)
+        _refuse_folder(root, mine, st.st_uid if st.st_uid != os.getuid() else link.st_uid)
 
 
 def _check_folder_is_yours(root: Path) -> None:
@@ -601,15 +636,36 @@ def _child_env(root: Path) -> dict:
     return env
 
 
+# File names of Python interpreters that run `-c CODE` (python, python3.12, python3.13t, pythonw.exe, python_d.exe,
+# pypy3, graalpy). A program that embeds Python (uWSGI, mod_wsgi in Apache, Maya, Houdini) has its own executable
+# there instead, which does something else with -c.
+_PYTHON_NAMES = re.compile(r"(python|pypy|graalpy)[0-9.]*[a-z_-]*(\.exe)?", re.IGNORECASE)
+
+
+def _is_frozen() -> bool:
+    """PyInstaller and cx_Freeze set sys.frozen. Nuitka does not: it marks every module it compiled with a
+    ``__compiled__`` global (also __main__, and this module when the app includes it compiled), and its
+    sys.executable is the compiled program."""
+    main = sys.modules.get("__main__")
+    return bool(getattr(sys, "frozen", False) or "__compiled__" in globals()
+                or (main is not None and hasattr(main, "__compiled__")))
+
+
 def _check_child_python() -> None:
-    """Preparation runs in a child Python (sys.executable -c ...). In an app frozen with PyInstaller, cx_Freeze or
-    similar, sys.executable is the app itself: it ignores -c and starts the app again, which then waits for ever on
-    the lock this process holds (or opens a second window). Refused before anything is downloaded."""
-    if getattr(sys, "frozen", False) or not sys.executable:
-        raise PrepareError("this program is a frozen app (PyInstaller, cx_Freeze or similar), which cannot start the "
-                           "Python process that prepares the model. Prepare it once from a normal Python install with "
-                           "kitten-tts2 --prepare-only (add --revision R and --cache-dir DIR as needed), then pass the "
-                           "same revision= and cache_dir= to KittenTTS2 in the app")
+    """Preparation runs in a child Python (sys.executable -c ...). In an app frozen with PyInstaller, cx_Freeze,
+    Nuitka or similar, sys.executable is the app itself: it ignores -c and starts the app again, which then waits for
+    ever on the lock this process holds (or opens a second window). In a program that embeds Python, sys.executable is
+    that program (uwsgi, httpd), not a Python. Both are refused before anything is downloaded."""
+    if _is_frozen() or not sys.executable:
+        raise PrepareError("this program is a frozen app (PyInstaller, cx_Freeze, Nuitka or similar), which cannot "
+                           "start the Python process that prepares the model. Prepare it once from a normal Python "
+                           "install with kitten-tts2 --prepare-only (add --revision R and --cache-dir DIR as needed), "
+                           "then pass the same revision= and cache_dir= to KittenTTS2 in the app")
+    if not _PYTHON_NAMES.fullmatch(Path(sys.executable).name):
+        raise PrepareError(f"this program runs Python inside {sys.executable} (as uWSGI or mod_wsgi do), which cannot "
+                           "start the Python process that prepares the model. Prepare it once from a normal Python "
+                           "install with kitten-tts2 --prepare-only (add --revision R and --cache-dir DIR as needed), "
+                           "then pass the same revision= and cache_dir= to KittenTTS2 here")
 
 
 def _run_prepare(argv: List[str], log_path: Path) -> None:
