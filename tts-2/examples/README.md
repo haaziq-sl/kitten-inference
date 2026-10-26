@@ -75,7 +75,8 @@ build/default/examples/clone speak models/kitten-tts-2 me.voice "Hello in a save
 
 `clone build` needs a library built with voice cloning (the `default` preset,
 or `-DKT2N_BUILD_CLONING=ON -DKT2N_VOICE_AV=ON`), a bundle prepared with the
-cloning files (README, "Voice cloning") and about 13 GB of free GPU memory. The
+cloning files (README, "Voice cloning") and about 11.3 GB of free GPU memory
+(the automatic profile builds with the low-memory profile when the default one's 15.6 GB do not fit). The
 recording can be WAV, MP3, FLAC, OGG and other common formats, at most 10 MiB,
 and the transcript must match what is said. `clone speak` needs neither: a saved
 voice file only needs the same prepared model files it was made with.
