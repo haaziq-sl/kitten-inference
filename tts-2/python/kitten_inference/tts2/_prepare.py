@@ -35,8 +35,25 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 # `python -c` puts the current folder first on sys.path (only -P, Python 3.11+, turns that off), so a json.py or a
 # kitten_inference/ folder where the user runs kitten-tts2 would be imported instead of the real modules: the child
 # drops that entry before its first import (os and sys are already loaded at startup).
-_CHILD = ("import os, sys; sys.path[:] = [p for i, p in enumerate(sys.path) if i or p not in ('', '.', os.getcwd())]; "
-          "from kitten_inference.tts2._assets.prepare import main; sys.exit(main(sys.argv[1:]))")
+# The folder that holds this kitten_inference comes in _PACKAGE_VAR, not PYTHONPATH: PYTHONPATH entries go before the
+# standard library, so a stale backport in site-packages with a standard-library name (PyPI's pathlib 1.0.1, enum34)
+# would replace that module in the child only. The child adds the folder only when its path lacks it (the usual case:
+# same interpreter, same site-packages), and then just before site-packages, where it takes precedence over another
+# installed copy as it did in this process.
+_PACKAGE_VAR = "_KITTEN_INFERENCE_TTS2_DIR"
+_CHILD = ("import os, sys\n"
+          "sys.path[:] = [p for i, p in enumerate(sys.path) if i or p not in ('', '.', os.getcwd())]\n"
+          f"d = os.environ.pop({_PACKAGE_VAR!r}, '')\n"
+          "if d and os.path.realpath(d) not in [os.path.realpath(p) for p in sys.path if p]:\n"
+          "    try:\n"
+          "        import site\n"
+          "        sp = {os.path.realpath(p) for p in [*site.getsitepackages(), site.getusersitepackages()]}\n"
+          "    except Exception:\n"
+          "        sp = set()\n"
+          "    at = [i for i, p in enumerate(sys.path) if os.path.realpath(p) in sp]\n"
+          "    sys.path.insert(at[0] if at else len(sys.path), d)\n"
+          "from kitten_inference.tts2._assets.prepare import main\n"
+          "sys.exit(main(sys.argv[1:]))\n")
 # Windows: a folder only this user (and SYSTEM and Administrators) can open, inherited by everything inside it. The
 # same security descriptor as os.mkdir(path, 0o700) on Python 3.13.
 _PRIVATE_SDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
@@ -311,12 +328,52 @@ def _set_private(path: Path) -> None:
         kernel32.LocalFree(sd)
 
 
+def _refuse_folder(root: Path, mine: bool) -> None:
+    why = "belongs to another user" if not mine else "can be changed by other users of this computer"
+    raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
+                       "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir), which is then made "
+                       "so that only you can change it, or delete this one")
+
+
+def _group_is_only_mine(gid: int) -> bool:
+    """Whether the group ``gid`` is this user's private group (Ubuntu and Fedora give every user one, named like the
+    user, and a umask of 002): its group-write bit lets no one else in."""
+    try:
+        import grp
+        import pwd
+        group, me = grp.getgrgid(gid), pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError, OSError):
+        return False
+    return gid == os.getgid() and group.gr_name == me and set(group.gr_mem) <= {me}
+
+
+def _check_posix_folder(root: Path) -> None:
+    """Linux and macOS: the cache_dir folder (and a symbolic link to it) must be this user's, and no other user may
+    write to it, or a model (or a link that our log file would be written through) planted there by another user of
+    the machine would be used. An empty folder of this user's is made private (mode 0o700)."""
+    try:
+        link, st = os.lstat(root), os.stat(root)
+        mine = link.st_uid == os.getuid() and st.st_uid == os.getuid()
+        open_to_others = bool(st.st_mode & 0o002) or (bool(st.st_mode & 0o020) and not _group_is_only_mine(st.st_gid))
+        if mine and open_to_others and not any(root.iterdir()):
+            os.chmod(root, 0o700)
+            open_to_others = bool(os.stat(root).st_mode & 0o022) or any(root.iterdir())
+    except OSError as exc:
+        raise PrepareError(f"cannot check who may change the model folder {root}: {exc}") from None
+    if not mine or open_to_others:
+        _refuse_folder(root, mine)
+
+
 def _check_folder_is_yours(root: Path) -> None:
-    """Windows: a model folder given as cache_dir that already exists must be this user's, and no other user may
-    change it. Folders made under C:\\ or on another drive let every signed-in user add and change files by default,
-    so a model there could be replaced with one that says something else. An empty folder of this user's is made
-    private; anything else is refused. Folders that do not exist yet are made private when they are created."""
-    if not _windows() or not root.exists():
+    """A model folder given as cache_dir that already exists must be this user's, and no other user may change it.
+    On Windows, folders made under C:\\ or on another drive let every signed-in user add and change files by default,
+    so a model there could be replaced with one that says something else; elsewhere see _check_posix_folder. An empty
+    folder of this user's is made private; anything else is refused. Folders that do not exist yet are made private
+    when they are created."""
+    if not root.exists():
+        return
+    if not _windows():
+        _check_posix_folder(root)
         return
     _reject_reparse(root, "folder")
     try:
@@ -328,15 +385,12 @@ def _check_folder_is_yours(root: Path) -> None:
     except OSError as exc:
         raise PrepareError(f"cannot check who may change the model folder {root}: {exc}") from None
     if not mine or others:
-        why = "belongs to another user" if not mine else "can be changed by other users of this computer"
-        raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
-                           "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir), which is then made "
-                           "so that only you can change it, or delete this one")
+        _refuse_folder(root, mine)
 
 
 def _make_root(root: Path) -> None:
-    """Creates the model folder if it is missing. On Windows only this user can change it (a folder made under C:\\
-    would otherwise let every signed-in user replace the model files)."""
+    """Creates the model folder if it is missing, so that only this user can change it (on Windows a folder made under
+    C:\\ would otherwise let every signed-in user replace the model files; elsewhere it gets mode 0o700)."""
     if root.is_dir():
         return
     root.parent.mkdir(parents=True, exist_ok=True)
@@ -347,8 +401,38 @@ def _make_root(root: Path) -> None:
     if sys.platform == "win32" and not _under_profile(root):
         with contextlib.suppress(FileExistsError):
             _private_mkdir(root)
-    else:
+    elif sys.platform == "win32":
         root.mkdir(exist_ok=True)
+    else:
+        root.mkdir(mode=0o700, exist_ok=True)
+
+
+def _check_fallback(fallback: Path) -> None:
+    """The %PROGRAMDATA% folder for this user's models (see cache_root): any user can make it first, and its name
+    can be worked out from the user folder's path, so it must be a real folder (not a junction, which the owner and
+    access checks would follow, to a folder of this user's that could be re-pointed later), owned by this user and
+    changeable by no one else. OSError when it cannot be checked."""
+    _reject_reparse(fallback, "folder")
+    if not _owned_by_me(fallback) or (_windows() and _other_writers(fallback)):
+        raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user or can be changed by "
+                           "other users; pass a new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") "
+                           "or kitten-tts2 --cache-dir C:\\kitten-tts2), which is then made for you only")
+
+
+def _recheck_root(root: Path, cache_dir: Optional[os.PathLike]) -> bool:
+    """Checks again a model folder that another user could reach (a given cache_dir, or the %PROGRAMDATA% fallback):
+    a folder or junction planted since cache_root() looked (the Hugging Face request can take up to HF_TIMEOUT
+    seconds) must not be used. Returns whether the folder needed the check."""
+    if cache_dir is not None:
+        _check_folder_is_yours(root)
+        return True
+    if root == DEFAULT_CACHE or root != _fallback_root():
+        return False
+    try:
+        _check_fallback(root)
+    except OSError as exc:
+        raise PrepareError(f"cannot check who may change the model folder {root}: {exc}") from None
+    return True
 
 
 def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[str], None]] = None) -> Path:
@@ -385,11 +469,7 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
                     with contextlib.suppress(FileExistsError):
                         _private_mkdir(fallback)
                         made = True
-                if not _owned_by_me(fallback) or (_windows() and _other_writers(fallback)):
-                    raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user or can "
-                                       "be changed by other users; pass a "
-                                       "new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
-                                       "kitten-tts2 --cache-dir C:\\kitten-tts2), which is then made for you only")
+                _check_fallback(fallback)
                 if made:  # say it once, when the folder is made
                     (log or _log)(f"the path of your user folder has characters the engine cannot open on this "
                                   f"Windows setup; models are kept in {fallback} instead (cache_dir= chooses another "
@@ -499,15 +579,19 @@ def _locked(path: Path):
         lock.release()
 
 
+def _package_dir() -> str:
+    """The folder that holds this kitten_inference/tts2 (site-packages for an installed package)."""
+    import kitten_inference.tts2 as package
+    return str(Path(package.__file__).resolve().parents[2])
+
+
 def _child_env(root: Path) -> dict:
-    """The environment of the prepare child: this package on its path, and UTF-8 output. On Windows before Python
-    3.15 output sent to a file uses the ANSI code page, so printing a path outside it (C:\\Users\\Łukasz under
+    """The environment of the prepare child: where this package is (see _CHILD), and UTF-8 output. On Windows before
+    Python 3.15 output sent to a file uses the ANSI code page, so printing a path outside it (C:\\Users\\Łukasz under
     cp1252) would stop the child after the conversion. Where the engine opens only ASCII paths, the child's temporary
     folder is also under the (ASCII) model folder, because the text-data tool reads its input from there."""
-    import kitten_inference.tts2 as package
-    site = str(Path(package.__file__).resolve().parents[2])  # the folder that holds kitten_inference/tts2
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join([site, *filter(None, [os.environ.get("PYTHONPATH")])]),
-               PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    env[_PACKAGE_VAR] = _package_dir()
     if not _narrow_paths_are_utf8():
         temp = env.get("TEMP") or env.get("TMP") or ""
         if not _ascii(temp) or not temp:
@@ -515,6 +599,17 @@ def _child_env(root: Path) -> dict:
             tmp.mkdir(parents=True, exist_ok=True)
             env["TEMP"] = env["TMP"] = str(tmp)
     return env
+
+
+def _check_child_python() -> None:
+    """Preparation runs in a child Python (sys.executable -c ...). In an app frozen with PyInstaller, cx_Freeze or
+    similar, sys.executable is the app itself: it ignores -c and starts the app again, which then waits for ever on
+    the lock this process holds (or opens a second window). Refused before anything is downloaded."""
+    if getattr(sys, "frozen", False) or not sys.executable:
+        raise PrepareError("this program is a frozen app (PyInstaller, cx_Freeze or similar), which cannot start the "
+                           "Python process that prepares the model. Prepare it once from a normal Python install with "
+                           "kitten-tts2 --prepare-only (add --revision R and --cache-dir DIR as needed), then pass the "
+                           "same revision= and cache_dir= to KittenTTS2 in the app")
 
 
 def _run_prepare(argv: List[str], log_path: Path) -> None:
@@ -608,12 +703,10 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
     root = cache_root(cache_dir, log)
     sha = resolve_revision(repo, revision, root, log)
     final = root / sha
-    if cache_dir is not None:
-        # resolve_revision may have waited on Hugging Face; a folder or junction another user planted in that window
-        # must not be trusted. Re-check the folder now that it exists, and refuse a <sha> reached through a junction.
-        _check_folder_is_yours(root)  # no-op off Windows; refuses a reparse-point root
-        if _windows():
-            _reject_reparse(final, "folder")
+    # resolve_revision may have waited on Hugging Face; a folder or junction another user planted in that window must
+    # not be trusted. Re-check the folder now that it exists, and refuse a <sha> reached through a junction.
+    if _recheck_root(root, cache_dir) and _windows():
+        _reject_reparse(final, "folder")
     if is_prepared(final, with_cloning):
         _record_ref(root, repo, revision, sha)
         return final
@@ -641,10 +734,10 @@ def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_d
              with_cloning: bool, repo: str, log: Callable[[str], None]) -> None:
     """Downloads and prepares ``sha`` into ``final`` under the revision's lock (see ensure)."""
     _make_root(root)
-    if cache_dir is not None:
-        _check_folder_is_yours(root)  # a folder planted while the root was being created is caught here
+    _recheck_root(root, cache_dir)  # a folder planted while the root was being created is caught here
     with _locked(root / f".{sha}.lock"):
         if not is_prepared(final, with_cloning):
+            _check_child_python()
             prepare = _assets()
             common = ["--repo", repo, "--revision", sha, "--weight-norm-device", "numpy"]  # numpy: no torch
             if cache_dir is not None:
