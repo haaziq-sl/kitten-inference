@@ -1,4 +1,6 @@
 """kitten-tts2: wrapper options, --assets injection, --prepare-only, and pass-through to kitten-tts-native."""
+import types
+
 import pytest
 
 from kitten_inference.tts2 import _cli, _prepare
@@ -142,3 +144,63 @@ def test_device_value():
     assert _cli._device(["--text", "x", "--device", "2"]) == 2
     assert _cli._device(["--device=3"]) == 3 and _cli._device(["--text", "x"]) == 0
     assert _cli._device(["--device", "gpu"]) == 0
+
+
+# A saved voice works only with the prepared model it was made with. kitten-tts-native would only say
+# "voice_artifact_version_mismatch ... (status 210)"; kitten-tts2 names the revision the voice needs.
+OLD, NEW = "a" * 40, "b" * 40
+
+
+@pytest.fixture
+def voices(no_backends, fake_backend, monkeypatch, tmp_path):
+    from test_api import _blob, _model
+    fake_backend("cuda")
+    cache = tmp_path / "cache"
+    _model(cache, OLD, "c-old", "s1")
+    voice = tmp_path / "me.voice"
+    voice.write_bytes(_blob({"format": "kt2n", "checkpoint": "c-old", "s3gen_sha256": "s1", "voices": []}))
+    ran, prepared = [], []
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(args) or 0)
+    return types.SimpleNamespace(cache=cache, voice=voice, ran=ran, prepared=prepared, model=_model)
+
+
+def test_a_voice_of_a_prepared_older_revision_stops_before_the_download(voices, monkeypatch, capsys):
+    from kitten_inference.tts2 import _gpu
+    monkeypatch.setattr(_gpu, "check", lambda *a, **k: None)
+
+    def ensure(**kw):  # main moved to NEW, which is not prepared yet
+        kw["before_download"]()
+        raise AssertionError("downloaded")
+
+    monkeypatch.setattr(_prepare, "ensure", ensure)
+    argv = ["--cache-dir", str(voices.cache), "--load-voice", str(voices.voice), "--text", "hi", "--output", "o.wav"]
+    assert _cli.main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"made with the model revision {OLD}" in err and f"--revision {OLD}" in err, err
+    assert voices.ran == []
+
+
+def test_a_voice_of_another_model_is_named_before_the_engine_runs(voices, monkeypatch, capsys):
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: voices.model(voices.cache, NEW, "c-new", "s1"))
+    argv = ["--cache-dir", str(voices.cache), "--load-voice", str(voices.voice), "--text", "hi"]
+    assert _cli.main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"revision {OLD}, which is still prepared" in err and f"this run uses {NEW}" in err, err
+    assert f"add --revision {OLD}" in err and voices.ran == []
+    (voices.cache / OLD / "config.json").unlink()  # the old model is gone: say what to pass
+    assert _cli.main(argv) == 1
+    assert "--save-voice prints it" in capsys.readouterr().err
+
+
+def test_a_voice_of_this_model_runs(voices, monkeypatch, capsys):
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: voices.cache / OLD)
+    assert _cli.main(["--cache-dir", str(voices.cache), f"--load-voice={voices.voice}", "--text", "hi"]) == 0
+    assert voices.ran[0][:2] == ["--assets", str(voices.cache / OLD)]
+
+
+def test_save_voice_names_the_revision(voices, monkeypatch, capsys):
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: voices.cache / OLD)
+    argv = ["--cache-dir", str(voices.cache), "--reference-audio", "r.wav", "--reference-transcript", "w",
+            "--save-voice", "me2.voice", "--text", "hi"]
+    assert _cli.main(argv) == 0
+    assert f"model revision {OLD}; a voice saved now loads only with this revision" in capsys.readouterr().err

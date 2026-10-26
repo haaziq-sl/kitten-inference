@@ -18,12 +18,14 @@ class FakeHub:
         import huggingface_hub
         self.sha = sha
         self.calls = []
+        self.timeouts = []
         self.online = True
         hub = self
 
         class Api:
-            def model_info(self, repo, revision=None, token=None):
+            def model_info(self, repo, revision=None, token=None, timeout=None):
                 hub.calls.append(("model_info", repo, revision, token))
+                hub.timeouts.append(timeout)
                 if not hub.online:
                     raise ConnectionError("no network")
                 return types.SimpleNamespace(sha=hub.sha)
@@ -69,8 +71,13 @@ class FakePrepare:
         self.runs.append(list(argv))
         out = Path(argv[argv.index("--out") + 1])
         if self.fail_with is not None:
-            (out / "native").mkdir(parents=True, exist_ok=True)
-            (out / "native" / "model.kt2n").write_bytes(b"partial")
+            if "--cloning-only" in argv:  # what a stopped cloning preparation leaves
+                (out / "native" / "cloning").mkdir(parents=True, exist_ok=True)
+                (out / "native" / "cloning" / "s3gen.safetensors").write_bytes(b"partial")
+                (out / "native" / ".clone-prepare-1234").mkdir(exist_ok=True)
+            else:
+                (out / "native").mkdir(parents=True, exist_ok=True)
+                (out / "native" / "model.kt2n").write_bytes(b"partial")
             raise self.fail_with
         if "--cloning-only" in argv:
             config = json.loads((out / "config.json").read_text())
@@ -150,7 +157,7 @@ def test_interrupted_run_leaves_nothing_and_resumes(env):
     with pytest.raises(KeyboardInterrupt):
         env.run()
     assert not (env.cache / SHA).exists()
-    assert (env.cache / f".partial-{SHA}").exists()  # cleaned at the next run
+    assert not (env.cache / f".partial-{SHA}").exists()  # removed at once, not at the next start
     env.prep.fail_with = None
     d = env.run()
     assert _prepare.is_prepared(d) and not (env.cache / f".partial-{SHA}").exists()
@@ -177,6 +184,8 @@ def test_a_new_main_that_cannot_be_prepared_falls_back(env):
     assert env.run() == env.cache / SHA
     assert any(l.startswith("warning: the new KittenML/kitten-tts-2 revision 000000000000 could not be prepared")
                and "No space left on device" in l and f'revision="{SHA}"' in l for l in env.lines), env.lines
+    # The stopped conversion's files are gone at once: after a full disk they would keep it full until the next start.
+    assert not (env.cache / f".partial-{OTHER}").exists() and not (env.cache / OTHER).exists()
     assert _prepare._ref_file(env.cache, "KittenML/kitten-tts-2", "main").read_text().strip() == SHA
     with pytest.raises(_prepare.PrepareError, match="No space left"):  # an explicit revision: no fallback
         env.run(revision=OTHER)
@@ -184,6 +193,27 @@ def test_a_new_main_that_cannot_be_prepared_falls_back(env):
         env.run(with_cloning=True)
     env.prep.fail_with = None
     assert env.run() == env.cache / OTHER  # tried again at the next start
+
+
+def test_asking_for_the_latest_revision_has_a_time_limit(env):
+    # Every start without a pinned revision asks Hugging Face which commit main is; a network that drops packets
+    # must not hold the start for minutes before the prepared model is used.
+    env.run()
+    assert env.hub.timeouts and all(t is not None and 0 < t <= 10 for t in env.hub.timeouts), env.hub.timeouts
+    env.hub.online = False
+    env.lines.clear()
+    assert env.run() == env.cache / SHA
+    assert any("HF_HUB_OFFLINE=1" in l for l in env.lines), env.lines
+
+
+def test_failed_cloning_files_are_removed(env):
+    env.run()
+    env.prep.fail_with = OSError(28, "No space left on device")
+    with pytest.raises(_prepare.PrepareError, match="No space left"):
+        env.run(with_cloning=True)
+    native = env.cache / SHA / "native"
+    assert not (native / "cloning").exists() and not list(native.glob(".clone-prepare-*"))
+    assert _prepare.is_prepared(env.cache / SHA) and not _prepare.is_prepared(env.cache / SHA, True)
 
 
 def test_no_fallback_without_an_earlier_revision(env):
@@ -343,8 +373,83 @@ def test_fallback_folder_is_private_and_must_be_this_users(monkeypatch, tmp_path
     if os.name != "nt":
         assert root.stat().st_mode & 0o777 == 0o700
     monkeypatch.setattr(_prepare, "_owned_by_me", lambda path: False)
-    with pytest.raises(_prepare.PrepareError, match="belongs to another user; pass a new ASCII folder as cache_dir"):
+    with pytest.raises(_prepare.PrepareError, match="belongs to another user or can be changed by other users; pass "
+                                                     "a new ASCII folder as cache_dir"):
         _prepare.cache_root(log=lambda m: None)
+
+
+class _Acl:
+    """cache_root() on Windows with the owner and the access list chosen by the test."""
+
+    def __init__(self, monkeypatch, owner_is_me=True, others=("S-1-5-11",)):
+        self.others = list(others)
+        self.made_private = []
+        monkeypatch.setattr(_prepare, "_windows", lambda: True)
+        monkeypatch.setattr(_prepare, "_owned_by_me", lambda path: owner_is_me)
+        monkeypatch.setattr(_prepare, "_other_writers", lambda path: list(self.others))
+
+        def set_private(path):
+            self.made_private.append(path)
+            self.others = []
+
+        monkeypatch.setattr(_prepare, "_set_private", set_private)
+
+
+def test_an_existing_cache_dir_others_can_change_is_refused(monkeypatch, tmp_path):
+    # A folder made under C:\ or on another drive lets every signed-in user add files: a model planted there would
+    # be used without a warning.
+    folder = tmp_path / "kitten-tts2"
+    (folder / SHA).mkdir(parents=True)
+    acl = _Acl(monkeypatch)
+    with pytest.raises(_prepare.PrepareError, match="can be changed by other users of this computer.*Pass a new "
+                                                     "folder as cache_dir"):
+        _prepare.cache_root(folder)
+    assert acl.made_private == []
+    acl = _Acl(monkeypatch, owner_is_me=False, others=())
+    with pytest.raises(_prepare.PrepareError, match="belongs to another user"):
+        _prepare.cache_root(folder)
+
+
+def test_an_empty_cache_dir_of_this_user_is_made_private(monkeypatch, tmp_path):
+    folder = tmp_path / "kitten-tts2"
+    folder.mkdir()
+    acl = _Acl(monkeypatch)
+    assert _prepare.cache_root(folder) == folder and acl.made_private == [folder]
+    acl = _Acl(monkeypatch, others=())  # already private: used as it is
+    (folder / SHA).mkdir()
+    assert _prepare.cache_root(folder) == folder and acl.made_private == []
+    acl = _Acl(monkeypatch)  # a new folder: not checked here, _make_root makes it private
+    assert _prepare.cache_root(tmp_path / "new") == tmp_path / "new" and acl.made_private == []
+
+
+def test_the_default_folder_is_not_checked(monkeypatch, tmp_path):
+    # It is in the user's own profile, which Windows keeps private.
+    _Acl(monkeypatch, owner_is_me=False)
+    monkeypatch.setattr(_prepare, "DEFAULT_CACHE", tmp_path / "home" / ".cache" / "kitten-inference" / "tts2")
+    assert _prepare.cache_root() == _prepare.DEFAULT_CACHE
+
+
+@pytest.mark.skipif(os.name != "nt", reason="platform: Windows only")
+def test_windows_cache_dir_access_list(tmp_path):
+    """On a real Windows file system: a folder that every signed-in user may change is refused while it has files,
+    made private when it is empty, and then used."""
+    import subprocess
+    folder = tmp_path / "shared"
+    folder.mkdir()
+    assert _prepare._other_writers(folder) == [], subprocess.run(["icacls", str(folder)], capture_output=True,
+                                                                   text=True).stdout
+    subprocess.run(["icacls", str(folder), "/grant", "*S-1-5-11:(OI)(CI)M"], check=True, capture_output=True)
+    assert _prepare._other_writers(folder) == ["S-1-5-11"]
+    (folder / "planted.txt").write_text("x")
+    with pytest.raises(_prepare.PrepareError, match="can be changed by other users"):
+        _prepare.cache_root(folder)
+    (folder / "planted.txt").unlink()
+    assert _prepare.cache_root(folder) == folder
+    acl = subprocess.run(["icacls", str(folder)], capture_output=True, text=True, check=True).stdout
+    print(acl)
+    assert "Authenticated Users" not in acl and _prepare._other_writers(folder) == []
+    (folder / "model").mkdir()
+    assert _prepare._other_writers(folder / "model") == []  # inherited by what is made inside
 
 
 def test_non_ascii_cache_dir_is_refused_before_any_download(monkeypatch, tmp_path, env):

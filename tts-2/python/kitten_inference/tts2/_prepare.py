@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -24,6 +25,10 @@ from typing import Callable, List, Optional
 
 MODEL_REPO = "KittenML/kitten-tts-2"
 DEFAULT_CACHE = Path.home() / ".cache" / "kitten-inference" / "tts2"
+# Seconds to wait for Hugging Face when a start asks which commit main is (every start without a pinned revision).
+# Without a limit, a network that drops packets (a firewall, a captive portal) holds the start for minutes or for
+# ever before it falls back to the prepared model. HF_HUB_OFFLINE=1 skips the question.
+HF_TIMEOUT = 10
 _SHA = re.compile(r"[0-9a-f]{40}")
 # The child process that runs prepare.main(argv) (kitten_inference.tts2._assets.prepare, the bundled copy of
 # tts-2/tools/kt2n_assets): its output goes to a log file, and the memory the conversion uses is returned afterwards.
@@ -35,6 +40,12 @@ _CHILD = ("import os, sys; sys.path[:] = [p for i, p in enumerate(sys.path) if i
 # Windows: a folder only this user (and SYSTEM and Administrators) can open, inherited by everything inside it. The
 # same security descriptor as os.mkdir(path, 0o700) on Python 3.13.
 _PRIVATE_SDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
+# Windows access rights that let someone change a folder's contents or its access list.
+_WRITE_RIGHTS = (0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000  # add file/folder, EA, delete child,
+                 | 0x10000000 | 0x40000000)                                      # attributes, delete, DAC, owner; ALL, WRITE
+# Who may hold them besides this user: SYSTEM, Administrators, CREATOR OWNER, OWNER RIGHTS, TrustedInstaller.
+_TRUSTED_SIDS = {"S-1-5-18", "S-1-5-32-544", "S-1-3-0", "S-1-3-4",
+                 "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
 
 
 class PrepareError(RuntimeError):
@@ -117,41 +128,39 @@ def _private_mkdir(path: Path) -> None:
         free(sd)
 
 
-def _owned_by_me(path: Path) -> bool:
-    """Whether this user owns ``path`` (on Windows: its owner is this process's user, or the owner the process gives
-    new files, which is Administrators in an elevated window). OSError when it cannot be read."""
-    if sys.platform != "win32":
-        return path.stat().st_uid == os.getuid()
+def _windows() -> bool:
+    return sys.platform == "win32"
+
+
+def _win32():
+    """advapi32, kernel32 and wintypes, with the prototypes used here."""
     from ctypes import wintypes
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    free = kernel32.LocalFree
-    free.argtypes = [ctypes.c_void_p]
-    free.restype = ctypes.c_void_p
-    to_text = advapi32.ConvertSidToStringSidW
-    to_text.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-    to_text.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    advapi32.GetNamedSecurityInfoW.argtypes = ([wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD]
+                                               + [ctypes.POINTER(ctypes.c_void_p)] * 5)
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    return advapi32, kernel32, wintypes
 
-    def sid_text(psid) -> str:
-        out = ctypes.c_void_p()
-        if not to_text(psid, ctypes.byref(out)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            return ctypes.wstring_at(out.value)
-        finally:
-            free(out)
 
-    get = advapi32.GetNamedSecurityInfoW
-    get.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD] + [ctypes.POINTER(ctypes.c_void_p)] * 5
-    get.restype = wintypes.DWORD
-    owner, sd = ctypes.c_void_p(), ctypes.c_void_p()
-    code = get(str(path), 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(sd))  # SE_FILE_OBJECT, OWNER_...
-    if code != 0:
-        raise ctypes.WinError(code)
+def _sid_text(psid) -> str:
+    advapi32, kernel32, _ = _win32()
+    out = ctypes.c_void_p()
+    if not advapi32.ConvertSidToStringSidW(psid, ctypes.byref(out)):
+        raise ctypes.WinError(ctypes.get_last_error())
     try:
-        owner_sid = sid_text(owner)
+        return ctypes.wstring_at(out.value)
     finally:
-        free(sd)
+        kernel32.LocalFree(out)
+
+
+def _my_sids() -> set:
+    """This process's user and the owner it gives new files (Administrators in an elevated window)."""
+    advapi32, kernel32, wintypes = _win32()
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
     open_token = advapi32.OpenProcessToken
     open_token.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
@@ -171,10 +180,123 @@ def _owned_by_me(path: Path) -> bool:
             buf = ctypes.create_string_buffer(max(size.value, 64))
             if not info(token, token_class, buf, len(buf), ctypes.byref(size)):
                 raise ctypes.WinError(ctypes.get_last_error())
-            mine.add(sid_text(ctypes.c_void_p.from_buffer(buf).value))
+            mine.add(_sid_text(ctypes.c_void_p.from_buffer(buf).value))
     finally:
         kernel32.CloseHandle(token)
-    return owner_sid in mine
+    return mine
+
+
+def _owned_by_me(path: Path) -> bool:
+    """Whether this user owns ``path`` (on Windows: its owner is this process's user, or the owner the process gives
+    new files, which is Administrators in an elevated window). OSError when it cannot be read."""
+    if not _windows():
+        return path.stat().st_uid == os.getuid()
+    advapi32, kernel32, _ = _win32()
+    owner, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    code = advapi32.GetNamedSecurityInfoW(str(path), 1, 1, ctypes.byref(owner), None, None, None,
+                                          ctypes.byref(sd))  # SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION
+    if code != 0:
+        raise ctypes.WinError(code)
+    try:
+        owner_sid = _sid_text(owner)
+    finally:
+        kernel32.LocalFree(sd)
+    return owner_sid in _my_sids()
+
+
+def _other_writers(path: Path) -> List[str]:
+    """Windows: who besides this user (and SYSTEM, Administrators) may add, change or delete files in ``path``, or
+    change its access list, as SID strings. OSError when it cannot be read."""
+    advapi32, kernel32, wintypes = _win32()
+    dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    code = advapi32.GetNamedSecurityInfoW(str(path), 1, 4, None, None, ctypes.byref(dacl), None,
+                                          ctypes.byref(sd))  # DACL_SECURITY_INFORMATION
+    if code != 0:
+        raise ctypes.WinError(code)
+    try:
+        if not dacl.value:
+            return ["everyone (the folder has no access list)"]
+
+        class AclSizeInformation(ctypes.Structure):
+            _fields_ = [("AceCount", wintypes.DWORD), ("AclBytesInUse", wintypes.DWORD),
+                        ("AclBytesFree", wintypes.DWORD)]
+
+        advapi32.GetAclInformation.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int]
+        advapi32.GetAclInformation.restype = wintypes.BOOL
+        advapi32.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.GetAce.restype = wintypes.BOOL
+        size = AclSizeInformation()
+        if not advapi32.GetAclInformation(dacl, ctypes.byref(size), ctypes.sizeof(size), 2):  # AclSizeInformation
+            raise ctypes.WinError(ctypes.get_last_error())
+        trusted = _TRUSTED_SIDS | _my_sids()
+        others = []
+        for i in range(size.AceCount):
+            ace = ctypes.c_void_p()
+            if not advapi32.GetAce(dacl, i, ctypes.byref(ace)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            ace_type, _flags, _size, mask = struct.unpack("<BBHI", ctypes.string_at(ace.value, 8))
+            if ace_type in (1, 10):  # access denied (also callback): takes nothing away from this check
+                continue
+            if ace_type not in (0, 9):  # not a plain (or callback) allow entry: count it, to be safe
+                others.append(f"an access entry of type {ace_type}")
+                continue
+            if mask & _WRITE_RIGHTS:
+                sid = _sid_text(ace.value + 8)
+                if sid not in trusted:
+                    others.append(sid)
+        return others
+    finally:
+        kernel32.LocalFree(sd)
+
+
+def _set_private(path: Path) -> None:
+    """Windows: gives ``path`` the private access list of _private_mkdir (inherited ones from its parent removed)."""
+    advapi32, kernel32, wintypes = _win32()
+    convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
+    convert.restype = wintypes.BOOL
+    get_dacl = advapi32.GetSecurityDescriptorDacl
+    get_dacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p),
+                         ctypes.POINTER(wintypes.BOOL)]
+    get_dacl.restype = wintypes.BOOL
+    set_info = advapi32.SetNamedSecurityInfoW
+    set_info.argtypes = [wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+                         ctypes.c_void_p, ctypes.c_void_p]
+    set_info.restype = wintypes.DWORD
+    sd = ctypes.c_void_p()
+    if not convert(_PRIVATE_SDDL, 1, ctypes.byref(sd), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
+        if not get_dacl(sd, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        code = set_info(str(path), 1, 0x4 | 0x80000000, None, None, dacl, None)  # DACL + PROTECTED_DACL
+        if code != 0:
+            raise ctypes.WinError(code)
+    finally:
+        kernel32.LocalFree(sd)
+
+
+def _check_folder_is_yours(root: Path) -> None:
+    """Windows: a model folder given as cache_dir that already exists must be this user's, and no other user may
+    change it. Folders made under C:\\ or on another drive let every signed-in user add and change files by default,
+    so a model there could be replaced with one that says something else. An empty folder of this user's is made
+    private; anything else is refused. Folders that do not exist yet are made private when they are created."""
+    if not _windows() or not root.exists():
+        return
+    try:
+        mine = _owned_by_me(root)
+        others = _other_writers(root) if mine else []
+        if mine and others and not any(root.iterdir()):
+            _set_private(root)
+            others = _other_writers(root) if not any(root.iterdir()) else others
+    except OSError as exc:
+        raise PrepareError(f"cannot check who may change the model folder {root}: {exc}") from None
+    if not mine or others:
+        why = "belongs to another user" if not mine else "can be changed by other users of this computer"
+        raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
+                           "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir), which is then made "
+                           "so that only you can change it, or delete this one")
 
 
 def _make_root(root: Path) -> None:
@@ -200,7 +322,11 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
     # the program changed its working folder.
     root = Path(cache_dir).expanduser().absolute() if cache_dir is not None else DEFAULT_CACHE
     if _ascii(str(root)) or _narrow_paths_are_utf8():
+        if cache_dir is not None:
+            _check_folder_is_yours(root)
         return root
+    if cache_dir is not None:
+        _check_folder_is_yours(root)
     try:
         _make_root(root)
     except OSError:
@@ -220,8 +346,9 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
                     with contextlib.suppress(FileExistsError):
                         _private_mkdir(fallback)
                         made = True
-                if not _owned_by_me(fallback):
-                    raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user; pass a "
+                if not _owned_by_me(fallback) or (_windows() and _other_writers(fallback)):
+                    raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user or can "
+                                       "be changed by other users; pass a "
                                        "new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
                                        "kitten-tts2 --cache-dir C:\\kitten-tts2), which is then made for you only")
                 if made:  # say it once, when the folder is made
@@ -264,7 +391,7 @@ def resolve_revision(repo: str, revision: Optional[str], root: Path,
     ref = _ref_file(root, repo, rev)
     try:
         from huggingface_hub import HfApi
-        sha = HfApi().model_info(repo, revision=rev, token=False).sha
+        sha = HfApi().model_info(repo, revision=rev, token=False, timeout=HF_TIMEOUT).sha
         if not sha or not _SHA.fullmatch(sha):
             raise PrepareError(f"Hugging Face returned no commit for {repo}@{rev}")
         return sha
@@ -275,7 +402,7 @@ def resolve_revision(repo: str, revision: Optional[str], root: Path,
             sha = ref.read_text(encoding="utf-8").strip()
             if _SHA.fullmatch(sha) and (root / sha / "config.json").is_file():
                 (log or _log)(f"cannot reach Hugging Face ({type(exc).__name__}); using the prepared {repo}@{rev} "
-                              f"from {root / sha}")
+                              f"from {root / sha} (HF_HUB_OFFLINE=1 skips this check)")
                 return sha
         raise PrepareError(f"cannot find {repo} revision {rev!r} on Hugging Face: {exc}") from exc
 
@@ -476,12 +603,18 @@ def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_d
                         *common]
                 if with_cloning:
                     argv.append("--with-cloning")
-                _run_prepare(argv, root / f"prepare-{sha[:12]}.log")
-                if not is_prepared(partial, with_cloning):
-                    raise PrepareError(f"preparation finished without a complete model in {partial}")
-                if final.exists():  # an unprepared leftover (no config.json): replace it
-                    shutil.rmtree(final)
-                os.replace(partial, final)
+                try:
+                    _run_prepare(argv, root / f"prepare-{sha[:12]}.log")
+                    if not is_prepared(partial, with_cloning):
+                        raise PrepareError(f"preparation finished without a complete model in {partial}")
+                    if final.exists():  # an unprepared leftover (no config.json): replace it
+                        shutil.rmtree(final)
+                    os.replace(partial, final)
+                except BaseException:
+                    # A failed or stopped conversion leaves up to about 2 GB here: removed now, not at the next
+                    # start (after a full disk, the disk would otherwise stay full).
+                    shutil.rmtree(partial, ignore_errors=True)
+                    raise
             else:
                 log(f"[1/3] downloading the voice cloning files of {repo} at {sha[:12]} (first use only)")
                 snapshot = _snapshot(repo, sha, list(prepare.MODEL_ALLOW_PATTERNS)
@@ -496,9 +629,16 @@ def _prepare(root: Path, final: Path, sha: str, *, text_data_tool: Path, cache_d
                     shutil.rmtree(staging, ignore_errors=True)
                 log("[2/3] preparing the voice cloning files")
                 argv = ["--model-dir", str(snapshot), "--out", str(final), "--cloning-only", *common]
-                _run_prepare(argv, root / f"prepare-cloning-{sha[:12]}.log")
-                if not is_prepared(final, True):
-                    raise PrepareError(f"preparation finished without the cloning files in {final}")
+                try:
+                    _run_prepare(argv, root / f"prepare-cloning-{sha[:12]}.log")
+                    if not is_prepared(final, True):
+                        raise PrepareError(f"preparation finished without the cloning files in {final}")
+                except BaseException:
+                    if not is_prepared(final, True):  # the files of the stopped attempt (up to about 1.1 GB)
+                        shutil.rmtree(final / "native" / "cloning", ignore_errors=True)
+                        for staging in (final / "native").glob(".clone-prepare-*"):
+                            shutil.rmtree(staging, ignore_errors=True)
+                    raise
             done = time.monotonic()
             log(f"[3/3] model ready in {done - started:.0f} s (downloads {downloaded - started:.0f} s, preparation "
                 f"{done - downloaded:.0f} s): {final}")

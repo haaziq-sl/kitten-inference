@@ -31,8 +31,10 @@ First use checks the GPU driver, then downloads about 4.6 GB (the latest model r
 `revision=` / `--revision` pins one) and prepares it once per revision: 35 to 100 s of preparation on our test
 machines, plus the download time. No PyTorch and no Hugging Face account are needed. The downloads stay in the
 Hugging Face cache (`~/.cache/huggingface`); the prepared model (2 GB) is in `~/.cache/kitten-inference/tts2/`.
-`cache_dir=` / `--cache-dir` keeps both in one folder instead. When a newer revision cannot be prepared (for example
-for lack of disk space), the one prepared before is used, with a warning. On Windows, a user folder path with
+`cache_dir=` / `--cache-dir` keeps both in one folder instead; on Windows it must be a new folder or one only you can
+change. When a newer revision cannot be prepared (for example for lack of disk space), the one prepared before is
+used, with a warning. Each start without a pinned revision asks Hugging Face for the latest one (at most 10 s);
+without a connection the prepared model is used, and `HF_HUB_OFFLINE=1` skips the question. On Windows, a user folder path with
 non-ASCII characters can move the model to a folder of yours in `C:\ProgramData\kitten-inference`: supported, not
 optimal (with the usual Windows code page the engine opens only ASCII paths; the command says where the model went).
 
@@ -47,8 +49,8 @@ audio = tts.generate("New speech in my voice.", voice=voice)
 ```
 
 A saved voice works only with the model revision it was made with. When Hugging Face has a newer model, keep using
-the voice with `KittenTTS2(revision="...")`: `tts.revision` is the one in use, and `load_voice()` names the one a
-voice needs. The Python API gives the same audio and first-audio time as the command (19.0 ms vs 19.1 ms). After
+the voice with `KittenTTS2(revision="...")` or `kitten-tts2 --revision ...`: `tts.revision` is the one in use,
+`kitten-tts2 --save-voice` prints it, and `load_voice()` and `kitten-tts2 --load-voice` name the one a voice needs. The Python API gives the same audio and first-audio time as the command (19.0 ms vs 19.1 ms). After
 `clone_voice()`, each request starts about 14 ms later (33 ms instead of 19 ms on an RTX 4090): supported, not
 optimal. The engine then keeps no voice ready between requests, so that building a voice still fits a 12 GB GPU.
 

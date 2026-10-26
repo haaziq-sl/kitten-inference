@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 # kitten-tts-native's options that take a value (cli/cli_core.cc); every other --option is a flag.
@@ -105,6 +106,68 @@ def _device(native: Sequence[str]) -> int:
     return 0
 
 
+def _value(native: Sequence[str], option: str) -> Optional[str]:
+    """The value of ``option`` in a native argument list (the last one wins, as in kitten-tts-native)."""
+    found = None
+    for i, arg in enumerate(native):
+        if arg.startswith(option + "="):
+            found = arg.partition("=")[2]
+        elif arg == option and i + 1 < len(native):
+            found = native[i + 1]
+    return found
+
+
+def _voice_identity(path: Optional[str]) -> Optional[Tuple[str, str]]:
+    """The prepared model a saved voice file belongs to, as kitten-tts-native compares it; None when the file cannot
+    be read as a voice (the native tool reports that)."""
+    from . import _bundle
+    if not path:
+        return None
+    try:
+        p = Path(path)
+        if p.stat().st_size > 64 << 20:
+            return None
+        identity = _bundle.identity(_bundle.blob_meta(p.read_bytes()))
+    except (OSError, ValueError, _bundle.BundleError):
+        return None
+    return identity if all(identity) else None
+
+
+def _model_identity(directory: Path) -> Optional[Tuple[str, str]]:
+    from . import _bundle
+    try:
+        return _bundle.identity(_bundle.file_meta(_bundle.load(directory).voices))
+    except (OSError, ValueError, _bundle.BundleError):
+        return None
+
+
+def _revisions_for(root: Path, identity: Tuple[str, str]) -> List[str]:
+    """The prepared revisions in ``root`` that a voice with ``identity`` belongs to."""
+    found = []
+    try:
+        configs = sorted(root.glob("*/config.json"))
+    except OSError:
+        return found
+    for config in configs:
+        if _model_identity(config.parent) == identity:
+            found.append(config.parent.name)
+    return found
+
+
+class _VoiceNeedsRevision(Exception):
+    pass
+
+
+def _voice_message(path: str, revision: str, other: Optional[str], root: Path) -> str:
+    if other:
+        return (f"the voice {path} was made with the model revision {other}, which is still prepared in {root}; this "
+                f"run uses {revision}. A saved voice works only with the model it was made with: add --revision "
+                f"{other}, or clone the voice again with this model")
+    return (f"the voice {path} was made with another model than revision {revision}, and that model is not prepared "
+            f"in {root}. A saved voice works only with the model it was made with: pass its revision with "
+            "--revision (kitten-tts2 --save-voice prints it), or clone the voice again with this model")
+
+
 def _run(cli: str, args: List[str]) -> int:
     sys.stdout.flush()
     sys.stderr.flush()
@@ -159,24 +222,54 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     if own.get("--prepare-only") or "--assets" not in names:
         from . import _gpu
-        # Before the first download, unless only preparing (that needs no GPU): a missing driver or GPU is reported
-        # now, not after minutes of work. The native tool checks again when it starts.
-        gpu_check = None if own.get("--prepare-only") else (
-            lambda: _gpu.check(backend.name, _device(native), log=_prepare._log))
+        # A saved voice works only with the model it was made with (the native tool would only print its status code).
+        voice_path = _value(native, "--load-voice")
+        voice = _voice_identity(voice_path)
+
+        def before_download():
+            # ensure() calls this only when the revision to run is not prepared yet. When the voice belongs to a
+            # revision that is, that one is what the user needs: say so now, instead of downloading and preparing a
+            # model the voice cannot use.
+            if voice is not None:
+                other = _revisions_for(_prepare.cache_root(own.get("--cache-dir")), voice)
+                if other:
+                    raise _VoiceNeedsRevision(other[0])
+            # A missing driver or GPU is reported now, not after minutes of work. The native tool checks again when
+            # it starts.
+            _gpu.check(backend.name, _device(native), log=_prepare._log)
+
         try:
             directory = _prepare.ensure(text_data_tool=backend.text_data_tool, revision=own.get("--revision"),
                                         cache_dir=own.get("--cache-dir"),
                                         with_cloning=bool(own.get("--with-cloning")) or "--reference-audio" in names,
-                                        before_download=gpu_check)
+                                        before_download=None if own.get("--prepare-only") else before_download)
         except KeyboardInterrupt:
             print("kitten-tts2: cancelled", file=sys.stderr)
             return 130
+        except _VoiceNeedsRevision as needed:
+            asked = f"revision {own['--revision']}" if own.get("--revision") else "the latest revision"
+            print(f"kitten-tts2: the voice {voice_path} was made with the model revision {needed}, which is prepared "
+                  f"in {_prepare.cache_root(own.get('--cache-dir'))}; {asked} is not prepared yet, and the voice would "
+                  f"not work with it. Add --revision {needed} to use the voice (kitten-tts2 --prepare-only prepares "
+                  "the latest revision)", file=sys.stderr)
+            return 1
         except Exception as exc:
             print(f"kitten-tts2: {exc}", file=sys.stderr)
             return 1
         if own.get("--prepare-only"):
             print(directory)
             return 0
+        if voice is not None and _model_identity(Path(directory)) not in (None, voice):
+            model = Path(directory)
+            others = [r for r in _revisions_for(model.parent, voice) if r != model.name]
+            message = _voice_message(voice_path, model.name, others[0] if others else None, model.parent)
+            print(f"kitten-tts2: {message}", file=sys.stderr)
+            return 1
+        if "--save-voice" in names:
+            revision = Path(directory).name
+            print(f"kitten-tts2: model revision {revision}; a voice saved now loads only with this revision "
+                  f"(kitten-tts2 --revision {revision} --load-voice ... once Hugging Face has a newer one)",
+                  file=sys.stderr)
         native = ["--assets", str(directory), *native]
     elif own.get("--revision") or own.get("--cache-dir"):
         print("kitten-tts2: --revision and --cache-dir have no effect with --assets", file=sys.stderr)
