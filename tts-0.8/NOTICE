@@ -62,6 +62,13 @@ Windows wheels (in kitten_inference_tts08.libs/):
   (https://learn.microsoft.com/visualstudio/releases/2026/redistribution).
   Copyright (c) Microsoft Corporation.
 
+- kitten_inference/tts08/_msvc/msvcp140.dll, vcruntime140.dll and (x64)
+  vcruntime140_1.dll: the same Microsoft Visual C++ runtime libraries under
+  their own file names, copied unchanged from the same redistributable folder
+  under the same terms. espeak-ng (from espeakng_loader) needs them by these
+  names; the package loads them only when Windows cannot load an installed
+  Visual C++ runtime.
+
 Android wheel (in kitten_inference_tts08.libs/):
 
 - libc++_shared-*.so: the LLVM C++ standard library (libc++) from the Android
@@ -70,8 +77,11 @@ Android wheel (in kitten_inference_tts08.libs/):
 Not included
 ------------
 - Model weights. On first use the package downloads them from Hugging Face
-  (KittenML/meownn-models, revision 5e9bca0cc3a4e2a617f604b1333d5f34536c1eed);
-  they are subject to the terms on their Hugging Face page.
+  (KittenML/meownn-models, revision 5e9bca0cc3a4e2a617f604b1333d5f34536c1eed).
+  They are the Kitten TTS 0.8 models, converted to this engine's format,
+  which KittenML publishes under the Apache License, Version 2.0
+  (https://huggingface.co/KittenML/kitten-tts-nano-0.8, -micro-0.8 and
+  -mini-0.8, and their int8 versions).
 - Runtime dependencies, which pip installs separately under their own
   licenses. Among them, phonemizer and the espeak-ng library shipped by
   espeakng_loader are GPL-3.0.

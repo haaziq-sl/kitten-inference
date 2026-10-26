@@ -13,7 +13,41 @@ from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
 from .preprocess import TextPreprocessor, chunk_text, normalize_text
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# Windows: the Microsoft Visual C++ runtime files that espeak-ng.dll (from espeakng_loader) imports by these names.
+# Python ships only some of them and a fresh Windows has none; phonemizer then reports "espeak not installed".
+MSVC_RUNTIME = ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")  # in load order
+_msvc_loaded = []  # handles of the copies loaded from this package (kept for the life of the process)
 
+
+def _load_msvc_runtime(folder=os.path.join(_HERE, "_msvc"), windll=None):
+    """Loads this package's copy of each MSVC_RUNTIME file (the Windows wheels carry one in _msvc/) that Windows
+    cannot load by name. An installed runtime is always used first: it can be newer, and other modules in the
+    process share it. Returns the names loaded from ``folder``."""
+    if windll is None:
+        if sys.platform != "win32":
+            return []
+        import ctypes
+        windll = ctypes.WinDLL
+    loaded = []
+    for name in MSVC_RUNTIME:
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            windll(name)  # already loaded, or found next to python.exe, in System32 or an added DLL folder
+            continue
+        except OSError:
+            pass
+        try:
+            _msvc_loaded.append(windll(path))
+            loaded.append(name)
+        except OSError:
+            pass  # espeak's own error follows; the README names the redistributable
+    return loaded
+
+
+_load_msvc_runtime()
 EspeakWrapper.set_library(espeakng_loader.get_library_path())
 os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
 
@@ -65,7 +99,101 @@ class TextCleaner:
         return indexes
 
 
+SKIP_CPU_CHECK = "KITTEN_TTS08_SKIP_CPU_CHECK"
+_CPU_FEATURES = {
+    "avx2": "AVX2",
+    "fma": "FMA",
+    "asimddp": "the ARMv8.2 dot-product instructions (asimddp)",
+}
+_CPU_HINT = {
+    "avx2": "Intel CPUs have them since 2013, AMD CPUs since 2015",
+    "asimddp": "a Raspberry Pi 5 has them, a Raspberry Pi 4 does not",
+}
+
+
+def _cpu_requirements(path=os.path.join(_HERE, "_cpu_requirements.txt")):
+    """The instruction sets the engine was compiled for, as the build wrote them ("native": the build machine's own
+    CPU, which cannot be checked here). Empty when the file is missing (a build without it)."""
+    try:
+        with open(path, encoding="ascii") as f:
+            return f.read().split()
+    except OSError:
+        return []
+
+
+def _cpuinfo_features(text, machine):
+    """The feature names /proc/cpuinfo lists for the first CPU ("flags" on x86, "Features" on Arm)."""
+    key = "features" if machine in ("aarch64", "arm64", "armv8l") else "flags"
+    for line in text.splitlines():
+        name, sep, value = line.partition(":")
+        if sep and name.strip().lower() == key:
+            return set(value.split())
+    return None
+
+
+def _cpu_features():
+    """The features of this CPU that the engine's builds can need, or None when they cannot be told."""
+    machine = platform.machine().lower()
+    if sys.platform.startswith("linux") or sys.platform == "android":
+        if machine in ("aarch64", "arm64"):
+            try:  # the kernel's view, also inside containers: getauxval(AT_HWCAP) & HWCAP_ASIMDDP
+                import ctypes
+                libc = ctypes.CDLL(None)
+                libc.getauxval.restype = ctypes.c_ulong
+                libc.getauxval.argtypes = [ctypes.c_ulong]
+                return {"asimddp"} if libc.getauxval(16) & (1 << 20) else set()
+            except (OSError, AttributeError):
+                pass
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                return _cpuinfo_features(f.read(), machine)
+        except OSError:
+            return None
+    if sys.platform == "win32" and machine in ("amd64", "x86_64"):
+        import ctypes
+        present = ctypes.windll.kernel32.IsProcessorFeaturePresent
+        if present(40):  # PF_AVX2_INSTRUCTIONS_AVAILABLE (every AVX2 CPU also has FMA)
+            return {"avx2", "fma"}
+        # Windows versions that do not know these feature numbers answer "no" for all of them; SSE4.2 (38) is on
+        # every x86-64 CPU that runs a current Windows, so "no" for it means this Windows cannot tell.
+        return set() if present(38) else None
+    if sys.platform == "darwin" and machine == "x86_64":
+        import ctypes
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        libc.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                      ctypes.c_void_p, ctypes.c_size_t]
+        have = set()
+        for feature, key in (("avx2", b"hw.optional.avx2_0"), ("fma", b"hw.optional.fma")):
+            value, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+            if libc.sysctlbyname(key, ctypes.byref(value), ctypes.byref(size), None, 0) != 0:
+                return None
+            if value.value:
+                have.add(feature)
+        return have
+    return None
+
+
+def _check_cpu(requirements=None, features=None):
+    """Refuses to load the engine on a CPU without the instructions it was compiled for: it would stop the whole
+    Python process with "Illegal instruction" instead of raising an error."""
+    need = [f for f in (_cpu_requirements() if requirements is None else requirements) if f != "native"]
+    if not need or os.environ.get(SKIP_CPU_CHECK):
+        return
+    have = _cpu_features() if features is None else features
+    if have is None:
+        return
+    lacking = [f for f in need if f not in have]
+    if lacking:
+        hint = next((_CPU_HINT[f] for f in lacking if f in _CPU_HINT), "")
+        raise RuntimeError(
+            f"This CPU does not have {' and '.join(_CPU_FEATURES.get(f, f) for f in lacking)}, which the native "
+            f"engine of kitten-inference-tts08 is built for{f' ({hint})' if hint else ''}. Loading it would stop "
+            f"Python with \"Illegal instruction\". If this check is wrong, set {SKIP_CPU_CHECK}=1."
+        )
+
+
 def _import_engine():
+    _check_cpu()
     try:
         from . import _engine
     except ImportError as exc:

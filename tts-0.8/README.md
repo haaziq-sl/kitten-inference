@@ -3,9 +3,12 @@
 Small, fast text-to-speech that runs on a CPU. Three models from 15M to 80M parameters, eight voices,
 24 kHz audio, on a native C++ engine.
 
-<!-- HEADLINE NUMBERS PLACEHOLDER: replace this block with the benchmark results
-     (speed and peak memory vs the ONNX path in kittenml, on Linux x86, Apple Silicon and Linux ARM). -->
-> **Headline numbers: to be added from the benchmark.**
+**The nano model speaks about 60 times faster than real time on a 12-core desktop CPU, and 1.1 to 2.3 times
+faster than kittenml 0.9.6 (ONNX Runtime) on every machine we compared: macOS, Linux (x86-64 and Arm) and
+Windows.** On Linux x86-64 and Windows it also uses 3 to 42% less memory than kittenml.
+
+Default settings of both packages on the same machine, a 41-word text (about 16 s of speech), median of 10 calls.
+On Apple Silicon this engine runs nano on the GPU (Metal) and ONNX Runtime on the CPU.
 
 ## Install
 
@@ -65,15 +68,18 @@ models, different CPU types (within about 2%).
 | Android ARM64 (experimental) | 3.13 | built, not tested |
 
 - Linux needs glibc 2.29 or newer: Ubuntu 20.04, Debian 11, RHEL 9 or later. macOS needs version 11 or newer.
-- x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015).
-- Linux ARM64 needs an ARMv8.2 CPU with dot-product instructions, such as a Raspberry Pi 5.
-  A Raspberry Pi 4 is not supported.
+- x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2
+  CPU with dot-product instructions, such as a Raspberry Pi 5 (a Raspberry Pi 4 is not supported).
+  On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
   CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
   macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
+- Windows: the wheel brings the Microsoft Visual C++ runtime that the text front end (espeak-ng)
+  needs, and uses it only when Windows has none. If `KittenTTS()` still reports "espeak not installed",
+  install the Microsoft Visual C++ Redistributable: `winget install Microsoft.VCRedist.2015+.x64`.
 
 ## Upgrading from kitten-inference 0.1.x
 
@@ -82,5 +88,14 @@ Version 0.2 replaces the `model_inference` module with `kitten_inference.tts08`.
 
 ## License
 
-Apache-2.0. See `LICENSE` and `NOTICE` in this folder. The model weights are downloaded separately
-and have their own terms.
+The code is licensed under Apache-2.0. The wheels also contain third-party code under its own licences
+(MIT, BSD-3-Clause, GPL-3.0-or-later with the GCC Runtime Library Exception, Apache-2.0 with LLVM
+exceptions, and the Microsoft Visual C++ runtime terms): see
+[NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-0.8/NOTICE), which each wheel also
+carries in its `.dist-info/licenses/` folder.
+
+The models are downloaded on first use. They are the Kitten TTS 0.8 models, which KittenML publishes under
+Apache-2.0 ([nano](https://huggingface.co/KittenML/kitten-tts-nano-0.8),
+[micro](https://huggingface.co/KittenML/kitten-tts-micro-0.8),
+[mini](https://huggingface.co/KittenML/kitten-tts-mini-0.8)); this package downloads them converted to its
+engine's format from [KittenML/meownn-models](https://huggingface.co/KittenML/meownn-models).

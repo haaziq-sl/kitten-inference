@@ -291,6 +291,31 @@ foreach(flag IN LISTS ARCH_FLAGS)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${flag}>)
 endforeach()
 
+# The instruction sets those flags let the compiler use anywhere in the engine (not only in its vector kernels).
+# The Python package checks the CPU for them before it loads the engine (kitten_inference/tts08/cpp_model.py), so an
+# older CPU gets an error message instead of "Illegal instruction". "native": tuned for the build machine (not
+# checked). Apple Silicon needs no check: every Apple Silicon Mac runs -mcpu=apple-m1 code.
+set(KITTEN_CPU_REQUIRES "")
+if(MSVC)
+    if(TARGET_PROCESSOR_LC MATCHES "^(amd64|x86_64)$" AND ENABLE_X86_AVX2)
+        set(KITTEN_CPU_REQUIRES "avx2 fma")
+    endif()
+elseif(TARGET_PROCESSOR_LC MATCHES "aarch64|arm64")
+    if(APPLE AND NOT ANDROID AND NOT DEFINED ENV{TERMUX_VERSION})
+        set(KITTEN_CPU_REQUIRES "")
+    elseif(ENABLE_ARM_DOTPROD)
+        set(KITTEN_CPU_REQUIRES "asimddp")
+    elseif(ENABLE_NATIVE_ARCH AND NOT ANDROID AND NOT DEFINED ENV{TERMUX_VERSION})
+        set(KITTEN_CPU_REQUIRES "native")
+    endif()
+elseif(ENABLE_NATIVE_ARCH)
+    set(KITTEN_CPU_REQUIRES "native")
+elseif(ENABLE_X86_AVX2)
+    set(KITTEN_CPU_REQUIRES "avx2 fma")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cpu_requirements.txt" "${KITTEN_CPU_REQUIRES}\n")
+message(STATUS "CPU features the engine needs: ${KITTEN_CPU_REQUIRES}")
+
 # ── Source lists ───────────────────────────────────────────────
 set(OPS_SOURCES
     src/backend/cpu/ops/profile.cpp
@@ -630,6 +655,8 @@ if(TARGET _engine)
     if(HAVE_METAL)
         install(FILES "${METAL_LIB}" DESTINATION ${KITTEN_PY_DEST} COMPONENT python)
     endif()
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/cpu_requirements.txt" DESTINATION ${KITTEN_PY_DEST}
+            RENAME _cpu_requirements.txt COMPONENT python)
 endif()
 
 if(KITTEN_BUILD_EXTRAS)

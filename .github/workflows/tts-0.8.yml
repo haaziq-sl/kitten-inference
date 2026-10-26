@@ -168,15 +168,16 @@ jobs:
             echo "::endgroup::"
           done
 
-      # One Python per platform: micro and mini (fp32 and int8), two backends in one process, and
-      # several models generating at once from different threads. Every check runs; the step fails if any did.
-      - name: Every model, two backends, threads (CPython 3.12)
+      # One Python per platform: micro and mini (fp32 and int8), two backends in one process,
+      # several models generating at once from different threads, and memory over 100 calls.
+      # Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads, memory (CPython 3.12)
         shell: bash
         run: |
           set -uo pipefail
           py=venv-cp312/bin/python
           status=0
-          for mode in models auto mix threads; do
+          for mode in models auto mix threads memory; do
             echo "::group::$mode"
             "$py" tts-0.8/tests/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
               || { echo "::error::audio_smoke --mode $mode failed (exit $?)"; status=1; }
@@ -194,6 +195,36 @@ jobs:
               --out-dir "audio-smoke/omp33-$i" --cache-dir .hf-cache --expect-backend cpu > /dev/null
             echo "run $i ok"
           done
+
+      # The ARM64 wheels are built for the ARMv8.2 dot-product instructions. On an Arm CPU without them (here an
+      # emulated Cortex-A72, the CPU of a Raspberry Pi 4) KittenTTS() must raise a clear error; with the check turned
+      # off the same run stops with "Illegal instruction" (exit status 132). An emulated CPU that has them works.
+      - name: An Arm CPU without dot-product instructions gets an error (emulated Cortex-A72)
+        if: matrix.arch == 'aarch64'
+        shell: bash
+        run: |
+          set -uo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user > /dev/null
+          qemu-aarch64 --version | head -1
+          py=venv-cp312/bin/python
+          code='from kitten_inference.tts08 import KittenTTS
+          tts = KittenTTS("KittenML/kitten-tts-nano-0.8-int8", cache_dir=".hf-cache")
+          print("generated", len(tts.generate("Hello there.", voice="Jasper")), "samples")'
+          code=$(printf '%s\n' "$code" | sed 's/^ *//')
+          status=0
+          qemu-aarch64 -cpu cortex-a72 "$py" -c "$code" > a72.txt 2>&1; rc=$?
+          tail -2 a72.txt; echo "Cortex-A72: exit status $rc"
+          if [ "$rc" != 1 ] || ! grep -q "This CPU does not have the ARMv8.2 dot-product instructions" a72.txt; then
+            echo "::error::Cortex-A72: expected the CPU check's error"; status=1
+          fi
+          KITTEN_TTS08_SKIP_CPU_CHECK=1 timeout 1800 qemu-aarch64 -cpu cortex-a72 "$py" -c "$code" > a72-unchecked.txt 2>&1
+          rc=$?
+          tail -2 a72-unchecked.txt; echo "Cortex-A72 without the check: exit status $rc"
+          [ "$rc" = 132 ] || { echo "::error::without the check, expected 'Illegal instruction' (132)"; status=1; }
+          timeout 1800 qemu-aarch64 -cpu max "$py" -c "$code" > max.txt 2>&1; rc=$?
+          tail -2 max.txt; echo "emulated CPU with dot-product instructions: exit status $rc"
+          [ "$rc" = 0 ] || { echo "::error::the emulated CPU with dot-product instructions failed"; status=1; }
+          exit $status
 
       - run: ls -l wheelhouse
 
@@ -360,7 +391,8 @@ jobs:
           "KITTEN_MSVC_REDIST=$($dirs.FullName -join ';')" >> $env:GITHUB_ENV
 
       # kitten_inference is a namespace package, so delvewheel must not create its __init__.py. delvewheel is pinned
-      # and runs on its own Python, so every wheel (cp38 included) is repaired by the same version.
+      # and runs on its own Python, so every wheel (cp38 included) is repaired by the same version. Then
+      # add_msvc_runtime.py adds the runtime under its own names for espeak-ng (loaded only when Windows has none).
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.4.1
         env:
@@ -372,7 +404,8 @@ jobs:
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
             uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
-            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel} &&
+            uv run --no-project --python 3.12 "%GITHUB_WORKSPACE%\.github\scripts\add_msvc_runtime.py" {dest_dir}
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_TEST_SKIP: ${{ matrix.test_skip }}
           CIBW_BUILD_VERBOSITY: "1"
@@ -391,7 +424,8 @@ jobs:
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
             uvx --python 3.12 --from delvewheel==1.13.2 delvewheel repair --add-path "%KITTEN_MSVC_REDIST%"
-            --namespace-pkg kitten_inference -w {dest_dir} {wheel}
+            --namespace-pkg kitten_inference -w {dest_dir} {wheel} &&
+            uv run --no-project --python 3.12 "%GITHUB_WORKSPACE%\.github\scripts\add_msvc_runtime.py" {dest_dir}
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
@@ -417,9 +451,9 @@ jobs:
           done
 
       # One Python per platform: micro and mini (fp32 and int8; on Apple Silicon on Metal, then on the CPU,
-      # compared), two backends in one process, and several models generating at once from different threads.
-      # Every check runs; the step fails if any did.
-      - name: Every model, two backends, threads (CPython 3.12)
+      # compared), two backends in one process, several models generating at once from different threads, and
+      # memory over 100 calls (on Apple Silicon on both backends). Every check runs; the step fails if any did.
+      - name: Every model, two backends, threads, memory (CPython 3.12)
         shell: bash
         run: |
           set -uo pipefail
@@ -439,8 +473,11 @@ jobs:
             # int8 models default to the CPU on Apple Silicon; Metal stays available with backend="metal".
             run --mode models --out-dir models-metal --backend metal --expect-backend metal
             run --mode models --out-dir models-cpu --backend cpu --expect-backend cpu --compare-to models-metal
+            run --mode memory --out-dir memory-metal --backend metal --expect-backend metal
+            run --mode memory --out-dir memory-cpu --backend cpu --expect-backend cpu
           else
             run --mode models --out-dir models --expect-backend cpu
+            run --mode memory --out-dir memory --expect-backend cpu
           fi
           run --mode auto --out-dir auto
           run --mode mix --out-dir mix
@@ -638,6 +675,15 @@ jobs:
                   bad.append(f"{w.name}: no model_defs")
               if "macosx" in w.name and "kitten_inference/tts08/metal_kernels.metallib" not in names:
                   bad.append(f"{w.name}: no metallib")
+              # The CPU features the engine was compiled for, which the package checks before it loads the engine.
+              plat = w.name.rsplit("-", 1)[1][:-4]
+              want_cpu = ("" if "arm64" in plat and ("macosx" in plat or "win" in plat) else
+                          "asimddp" if "aarch64" in plat or "arm64" in plat else "avx2 fma")
+              req = "kitten_inference/tts08/_cpu_requirements.txt"
+              if req not in names:
+                  bad.append(f"{w.name}: no {req}")
+              elif z.read(req).decode().split() != want_cpu.split():
+                  bad.append(f"{w.name}: {req} says {z.read(req).decode().split()}, expected {want_cpu.split()}")
               notice = next((n for n in names if n.endswith(".dist-info/licenses/NOTICE")), None)
               notice_text = z.read(notice).decode() if notice else ""
               for lic in ("LICENSE", "licenses/pybind11.txt", "licenses/GPL-3.0.txt",
@@ -657,7 +703,14 @@ jobs:
                   for dll in ("msvcp140", "vcomp140"):
                       if not any(l.split("/")[-1].lower().startswith(dll) for l in libs):
                           bad.append(f"{w.name}: {dll} not bundled")
-                  for lib in libs:
+                  # The same runtime under its own names, for espeak-ng (add_msvc_runtime.py).
+                  msvc = [n for n in names if n.startswith("kitten_inference/tts08/_msvc/")]
+                  for dll in ("msvcp140.dll", "vcruntime140.dll") + (("vcruntime140_1.dll",) if "amd64" in w.name else ()):
+                      if "kitten_inference/tts08/_msvc/" + dll not in msvc:
+                          bad.append(f"{w.name}: no kitten_inference/tts08/_msvc/{dll}")
+                  if "kitten_inference/tts08/_msvc/" not in notice_text:
+                      bad.append(f"{w.name}: NOTICE does not name kitten_inference/tts08/_msvc/")
+                  for lib in libs + msvc:
                       if re.match(r"(msvcp|vcomp|vcruntime|concrt)\d", lib.split("/")[-1].lower()):
                           have = file_version(z.read(lib))
                           runtimes.append(f"{w.name}: {lib.split('/')[-1]} {'.'.join(map(str, have))}"

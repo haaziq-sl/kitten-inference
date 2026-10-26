@@ -343,6 +343,68 @@ def threads_check(cache_dir, rounds=2, timeout=900):
     return [dict(o, rounds=rounds, wall_seconds=seconds) for o in outcomes]
 
 
+def process_memory_mb():
+    """This process's memory in MB: the footprint on macOS (it counts GPU memory too), private bytes on Windows,
+    resident memory elsewhere."""
+    import ctypes
+    import os
+
+    if sys.platform == "darwin":
+        class RusageInfoV2(ctypes.Structure):  # struct rusage_info_v2 up to ri_phys_footprint, and the rest
+            _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(f"f{i}", ctypes.c_uint64) for i in range(18)]
+
+        info = RusageInfoV2()
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        if libc.proc_pid_rusage(os.getpid(), 2, ctypes.byref(info)) != 0:  # RUSAGE_INFO_V2
+            raise OSError("proc_pid_rusage failed")
+        return info.f7 / 1e6  # ri_phys_footprint
+    if sys.platform == "win32":
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS_EX
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                                               "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                                               "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage",
+                                               "PrivateUsage")]
+
+        c = Counters()
+        c.cb = ctypes.sizeof(c)
+        psapi = ctypes.WinDLL("psapi")
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+            raise OSError("GetProcessMemoryInfo failed")
+        return c.PrivateUsage / 1e6
+    with open("/proc/self/statm") as f:
+        return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+
+
+def memory_check(cache_dir, backend, model_name=NANO, warmup=10, calls=100, limit_mb=100.0):
+    """The same short text again and again: once warm, memory must stay level (a leak of a few MB per call adds up
+    in a long-running program)."""
+    model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
+    for _ in range(warmup):
+        model.generate(TEXT, voice="Jasper")
+    before = process_memory_mb()
+    samples = [before]
+    for i in range(calls):
+        audio = as_audio(model.generate(TEXT, voice="Jasper"))
+        if (i + 1) % 25 == 0:
+            samples.append(process_memory_mb())
+    validate_audio(audio, f"{model_name} memory check")
+    growth = samples[-1] - before
+    result = {"model": model_name, "backend": backend or "default", "active_backend": _engine.active_backend(),
+              "calls": calls, "memory_mb": [round(m, 1) for m in samples], "growth_mb": round(growth, 1),
+              "growth_mb_per_call": round(growth / calls, 3), "limit_mb": limit_mb}
+    print(json.dumps(result))
+    if growth > limit_mb:
+        raise AssertionError(f"{model_name} on {result['active_backend']}: memory grew {growth:.0f} MB over {calls} "
+                             f"calls after warm-up ({growth / calls:.2f} MB per call; limit {limit_mb:.0f} MB)")
+    return [result]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate KittenTTS release smoke audio.")
     parser.add_argument("--out-dir", default="audio-smoke")
@@ -353,12 +415,12 @@ def main():
     parser.add_argument("--compare-to", default=None, help="Output dir of a run on another backend to compare with.")
     parser.add_argument(
         "--mode",
-        choices=["quick", "release", "speed", "models", "paths", "mix", "threads", "auto"],
+        choices=["quick", "release", "speed", "models", "paths", "mix", "threads", "auto", "memory"],
         default="release",
         help="quick: one WAV; release: nano voices, speeds and int8; speed: the speed check only; "
         "models: micro and mini, fp32 and int8; paths: a model folder with non-ASCII characters in its path; "
         "mix: CPU and default-backend models in one process; threads: several models generating at once; "
-        "auto: the default backend of every model, with warm timings.",
+        "auto: the default backend of every model, with warm timings; memory: memory stays level over 100 calls.",
     )
     args = parser.parse_args()
 
@@ -382,6 +444,8 @@ def main():
         results.extend(threads_check(cache_dir))
     elif args.mode == "auto":
         results.extend(auto_backend_check(cache_dir))
+    elif args.mode == "memory":
+        results.extend(memory_check(cache_dir, args.backend))
     else:
         if args.mode == "release":
             results.extend(
