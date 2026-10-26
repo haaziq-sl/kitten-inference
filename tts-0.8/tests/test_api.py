@@ -349,7 +349,8 @@ class CpuCheckTests(unittest.TestCase):
         self.cm._check_cpu(["avx2", "fma"], {"avx2", "fma", "sse4_2"})
         self.cm._check_cpu(["native"], set())  # tuned for the build machine: cannot be checked
         self.cm._check_cpu([], set())
-        self.cm._check_cpu(["avx2", "fma"], None)  # this system cannot tell
+        with mock.patch.object(self.cm, "_cpu_features", return_value=None):  # this system cannot tell
+            self.cm._check_cpu(["avx2", "fma"])
         os.environ[self.cm.SKIP_CPU_CHECK] = "1"
         self.cm._check_cpu(["avx2", "fma"], set())
 

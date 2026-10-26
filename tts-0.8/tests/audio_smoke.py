@@ -381,9 +381,10 @@ def process_memory_mb():
         return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
 
 
-def memory_check(cache_dir, backend, model_name=NANO, warmup=10, calls=100, limit_mb=100.0):
+def memory_check(cache_dir, backend, model_name=NANO, warmup=10, calls=100, limit_mb=8.0):
     """The same short text again and again: once warm, memory must stay level (a leak of a few MB per call adds up
-    in a long-running program)."""
+    in a long-running program). Without an emptied autorelease pool, Metal grew 0.17 MB per call on the CI's
+    virtual M1 (6.3 MB per call on an Apple M4); with it, by at most 0.1 MB over 100 calls."""
     model = KittenTTS(model_name, cache_dir=str(cache_dir), backend=backend)
     for _ in range(warmup):
         model.generate(TEXT, voice="Jasper")
