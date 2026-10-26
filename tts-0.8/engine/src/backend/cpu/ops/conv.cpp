@@ -1,3 +1,4 @@
+#include "work_split.hpp"
 #include "../ops_neon.hpp"
 #include "profile_internal.hpp"
 #include <cstdlib>
@@ -2827,11 +2828,23 @@ void conv1d_int8_ksplit(
 #endif
         const int t_s = (T_out * tid) / nT;
         const int t_e = (T_out * (tid + 1)) / nT;
+        // Rows are independent: a dynamic split (row chunks handed out as threads finish) gives the same values.
+        const bool dyn = kt_dynamic_chunks() > 0 && nT > 1;
+        const int row_chunk = std::max(1, T_out / (nT * std::max(1, kt_dynamic_chunks())));
 
         for (int k = 0; k < kernel_size; ++k) {
             const float* src = A_base + (size_t)k * dilation * C_in_g;
             float*       dst = (k == 0) ? out_buf : tmp_buf;
 
+            if (dyn) {
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, row_chunk)
+#endif
+                for (int t = 0; t < T_out; ++t)
+                    quantize_row_fp32_to_int8(src + (size_t)t * C_in_g,
+                                             inp_scratch + (size_t)t * C_in_g,
+                                             row_scale_buf[t], C_in_g);
+            } else {
             for (int t = t_s; t < t_e; ++t)
                 quantize_row_fp32_to_int8(src + (size_t)t * C_in_g,
                                          inp_scratch + (size_t)t * C_in_g,
@@ -2839,6 +2852,7 @@ void conv1d_int8_ksplit(
 #ifdef _OPENMP
 #pragma omp barrier
 #endif
+            }
 
             gemm_int8(inp_scratch, w_per_k_packed[k],
                       eff_zeros, nullptr, nullptr,
@@ -2850,6 +2864,18 @@ void conv1d_int8_ksplit(
 #pragma omp barrier
 #endif
 
+            if (dyn) {
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, row_chunk)
+#endif
+                for (int t = 0; t < T_out; ++t) {
+                    if (k == 0)
+                        dequant_bias_row_fp32(out_buf + (size_t)t * C_out, row_scale_buf[t], bias, C_out);
+                    else
+                        dequant_accum_row_fp32(out_buf + (size_t)t * C_out, dst + (size_t)t * C_out,
+                                               row_scale_buf[t], C_out);
+                }
+            } else {
             if (k == 0) {
                 for (int t = t_s; t < t_e; ++t)
                     dequant_bias_row_fp32(out_buf + (size_t)t * C_out,
@@ -2863,6 +2889,7 @@ void conv1d_int8_ksplit(
 #ifdef _OPENMP
 #pragma omp barrier
 #endif
+            }
         }
     }
 }

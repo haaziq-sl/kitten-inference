@@ -14,6 +14,8 @@
 #include <pybind11/stl.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <cctype>
 
 #ifdef _OPENMP
@@ -22,6 +24,7 @@
 
 #include "engine/model.hpp"
 #include "backend/backend.hpp"
+#include "backend/cpu/ops/work_split.hpp"
 #ifdef HAVE_METAL
 #include "backend/metal/metal_backend.hpp"
 #endif
@@ -38,6 +41,42 @@ static void in_autorelease_pool(F&& fn) {
     fn();
 #endif
 }
+
+// ── CPU threads ──────────────────────────────────────────────────────────────
+// set_num_threads() sets the OpenMP thread count of the calling thread. A thread that has not called it runs its
+// forward calls with the package's default (set_default_threads: kitten_inference/tts08/_threads.py sets one on
+// CPUs with performance and efficiency cores), or with OpenMP's own default when there is none (OMP_NUM_THREADS,
+// else one thread per logical CPU). The default is set around each call and the thread's own OpenMP setting is
+// put back afterwards.
+static std::atomic<int> g_default_threads{0};  // 0: no package default
+static thread_local bool t_threads_set = false;  // this thread called set_num_threads()
+
+static int package_default_threads() {
+    return t_threads_set ? 0 : g_default_threads.load(std::memory_order_relaxed);
+}
+
+class DefaultThreadsScope {
+public:
+    DefaultThreadsScope() {
+#ifdef _OPENMP
+        const int n = package_default_threads();
+        if (n > 0) {
+            saved_ = omp_get_max_threads();
+            omp_set_num_threads(n);
+        }
+#endif
+    }
+    ~DefaultThreadsScope() {
+#ifdef _OPENMP
+        if (saved_ > 0) omp_set_num_threads(saved_);
+#endif
+    }
+    DefaultThreadsScope(const DefaultThreadsScope&) = delete;
+    DefaultThreadsScope& operator=(const DefaultThreadsScope&) = delete;
+
+private:
+    int saved_ = 0;
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,6 +147,10 @@ PYBIND11_MODULE(_engine, m) {
         "                              'weights/resnet50_fp32.bin')\n"
         "    logits = model.forward(np.zeros((224, 224, 3), dtype=np.float32))\n";
 
+    // EXPERIMENT (hybrid CPUs): dynamic split of the GEMM tiles, chunks per thread from the environment.
+    if (const char* v = std::getenv("KITTEN_TTS08_EXP_DYNAMIC")) kt_dynamic_chunks_setting().store(std::atoi(v));
+    m.def("dynamic_chunks", []() { return kt_dynamic_chunks(); });
+
     // ── Backend selection ─────────────────────────────────────────────────
     m.def("set_backend",
         [](const std::string& name) -> bool {
@@ -135,6 +178,7 @@ PYBIND11_MODULE(_engine, m) {
         [](int threads) {
             if (threads < 1)
                 throw std::invalid_argument("threads must be at least 1");
+            t_threads_set = true;
 #ifdef _OPENMP
             omp_set_dynamic(0);
             omp_set_num_threads(threads);
@@ -149,12 +193,29 @@ PYBIND11_MODULE(_engine, m) {
     m.def("max_threads",
         []() -> int {
 #ifdef _OPENMP
-            return omp_get_max_threads();
+            const int n = package_default_threads();
+            return n > 0 ? n : omp_get_max_threads();
 #else
             return 1;
 #endif
         },
         "Return the native CPU thread budget visible to this Python thread."
+    );
+
+    m.def("set_default_threads",
+        [](int threads) {
+            if (threads < 0)
+                throw std::invalid_argument("threads must be 0 (none) or more");
+            g_default_threads.store(threads, std::memory_order_relaxed);
+        },
+        py::arg("threads"),
+        "Set the CPU thread budget for forward calls made by Python threads that have not called set_num_threads() "
+        "(0: none, OpenMP's own default). The package sets it on CPUs with performance and efficiency cores."
+    );
+
+    m.def("default_threads",
+        []() -> int { return g_default_threads.load(std::memory_order_relaxed); },
+        "Return the thread budget set by set_default_threads() (0: none)."
     );
 
     // ── InputSpec ─────────────────────────────────────────────────────────
@@ -245,6 +306,7 @@ PYBIND11_MODULE(_engine, m) {
                 std::unordered_map<std::string, ModelIOTensor> outputs;
                 {
                     py::gil_scoped_release release;
+                    DefaultThreadsScope threads;
                     in_autorelease_pool([&] { outputs = self.forward(named); });
                 }
                 std::vector<float> result;
@@ -309,6 +371,7 @@ PYBIND11_MODULE(_engine, m) {
                 std::unordered_map<std::string, ModelIOTensor> outputs;
                 {
                     py::gil_scoped_release release;
+                    DefaultThreadsScope threads;
                     in_autorelease_pool([&] { outputs = self.forward(named); });
                 }
 

@@ -1,3 +1,4 @@
+#include "work_split.hpp"
 #include "../ops_neon.hpp"
 #include "profile_internal.hpp"
 #include <cstdlib>
@@ -1719,10 +1720,6 @@ void gemm_int8(
     const int Co8   = (N + 7) / 8;
     const bool n_part = (nT > 1) && (M < N);
     const int m8_c  = M / 8;
-    const int mi_s  = n_part ? 0     : (tid * m8_c) / nT;
-    const int mi_e  = n_part ? m8_c  : ((tid + 1) * m8_c) / nT;
-    const int co_s  = n_part ? (tid * Co8) / nT       : 0;
-    const int co_e  = n_part ? ((tid + 1) * Co8) / nT : Co8;
     const int k_full = K / 4;
 #if defined(__AVXVNNI__)
     const bool use_avx_vnni = (b_row_sums != nullptr);
@@ -1773,6 +1770,9 @@ void gemm_int8(
         }
     };
 
+    // Integer sums: every split gives the same values.
+    kt_split_tiles(n_part, m8_c, Co8, tid, nT, in_parallel,
+                   [&](const int mi_s, const int mi_e, const int co_s, const int co_e, const bool tail) {
     // ── 8-row tile loop (M-cache blocked, inline AVXK8 kernel) ──────────────
     // Inline kernel eliminates function-call overhead and kloop_out store/load.
     // 4× K-loop unrolling reduces loop overhead and improves OOO scheduling.
@@ -1881,9 +1881,9 @@ void gemm_int8(
     }   // end 8-row mi loop
 
     // ── Row tail: remaining < 8 rows (K-pair layout) ─────────────────────────
-    if (n_part || tid == 0) {
-        const int co_s2 = n_part ? co_s : 0;
-        const int co_e2 = n_part ? co_e : Co8;
+    if (tail) {
+        const int co_s2 = co_s;
+        const int co_e2 = co_e;
         for (int m_row = m8_c * 8; m_row < M; ++m_row) {
             const int8_t* a_row = A + (size_t)m_row * K;
             for (int co_blk = co_s2; co_blk < co_e2; ++co_blk) {
@@ -1927,6 +1927,7 @@ void gemm_int8(
             }
         }
     }
+    });
 }
 #else
     // Scalar fallback (no SIMD)

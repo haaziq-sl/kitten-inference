@@ -12,6 +12,7 @@ import phonemizer
 import soundfile as sf
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
+from . import _threads
 from .preprocess import TextPreprocessor, chunk_text, normalize_text
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -261,6 +262,23 @@ def _check_cpu(requirements=None, features=None):
         )
 
 
+_thread_default_lock = threading.Lock()
+_thread_default_done = False
+
+
+def _set_thread_default(engine):
+    """Once per process: on a CPU with performance and efficiency cores, give the engine its default thread count
+    (kitten_inference/tts08/_threads.py). OMP_NUM_THREADS and set_num_threads() still take precedence."""
+    global _thread_default_done
+    with _thread_default_lock:
+        if _thread_default_done:
+            return
+        _thread_default_done = True
+        threads = _threads.default_threads()
+        if threads and hasattr(engine, "set_default_threads"):
+            engine.set_default_threads(threads)
+
+
 def _import_engine():
     _check_cpu()
     try:
@@ -270,6 +288,7 @@ def _import_engine():
             "The native engine (kitten_inference.tts08._engine) is missing or does not match "
             'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
         ) from exc
+    _set_thread_default(_engine)
     return _engine
 
 
