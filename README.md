@@ -93,7 +93,7 @@ Python 3.9 or newer).
   cards, which cut long streamed text into shorter pieces (word error rate 1.43% against 0.58%). Streamed audio with
   the same seed can differ from run to run on any GPU.
 - **Kitten TTS 0.8:** audio can differ slightly between Metal and the CPU, between CPU types and with the number of
-  threads; on Metal the same text can also differ slightly from one run to the next.
+  threads.
 
 ## Use from Python
 

@@ -60,8 +60,7 @@ Options:
   time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
 
 Audio can differ slightly between Metal and the CPU (clip lengths within about 3.5%), between CPU types, and with
-the number of threads (the same clip lengths). On Metal, the same text can also give slightly different audio from
-one run to the next.
+the number of threads (the same clip lengths).
 
 ## Platforms
 
