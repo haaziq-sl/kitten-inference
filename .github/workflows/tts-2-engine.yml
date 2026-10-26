@@ -150,7 +150,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
       - name: Install ffmpeg
         shell: bash
-        timeout-minutes: 15  # package managers on the runners can stall: retried, with a time limit
+        timeout-minutes: 40  # package managers on the runners can be slow or stall: retried, with a time limit
         run: |
           if [ "$RUNNER_OS" = Windows ]; then
             for try in 1 2 3; do
