@@ -71,7 +71,9 @@ against 0.051 on a 16 GB card). Sizes for each card class:
 
 ## Model license
 
-The package code is Apache-2.0. The Kitten TTS 2 model this downloads on first use is under the
+The package code is Apache-2.0 AND MIT: KittenML's own code is Apache-2.0, and the model preparation includes ported
+MIT-licensed code (see [NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-2/NOTICE)). The Kitten TTS 2
+model this downloads on first use is under the
 [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md), not Apache or
 MIT: commercial use needs registration, the license ends once your revenue or funding passes US$1M, training on or
 distilling from the outputs is not allowed, and redistribution must include the agreement, a notice file and

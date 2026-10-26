@@ -31,7 +31,8 @@ with Python 3.9 or newer: `"kitten-inference[tts-0.8,tts-2]"`.
 
 Docs, speed tables and examples: https://github.com/KittenML/kitten-inference
 
-Licenses: the package code is Apache-2.0. The models each engine downloads keep their own licenses. The Kitten TTS 2
+Licenses: this package's code is Apache-2.0. The engine packages that the extras install also contain third-party code
+under other licenses, listed in their NOTICE files. The models each engine downloads keep their own licenses. The Kitten TTS 2
 model is under the [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md),
 not Apache or MIT: commercial use needs registration, the license ends once your revenue or funding passes US$1M,
 training on or distilling from the outputs is not allowed, and redistribution must include the agreement, a notice

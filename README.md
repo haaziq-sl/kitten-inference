@@ -126,8 +126,8 @@ KittenTTS("KittenML/kitten-tts-nano-0.8").generate_to_file("Hello from Kitten TT
 
 ## License
 
-The code is Apache-2.0 ([LICENSE](LICENSE)); bundled third-party components keep their own licences
-([NOTICE](NOTICE)). The models download on first use and keep their publishers' licences. The Kitten TTS 2 model is
+KittenML's code is Apache-2.0 ([LICENSE](LICENSE)); the packages also contain third-party code under other licences
+([NOTICE](NOTICE), [tts-2/NOTICE](tts-2/NOTICE), [tts-0.8/NOTICE](tts-0.8/NOTICE)). The models download on first use and keep their publishers' licences. The Kitten TTS 2 model is
 under the [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md), not
 Apache or MIT: it limits commercial use, training on the outputs and redistribution, so read it before you build on
 Kitten TTS 2. The Kitten TTS 0.8 model licences are in [tts-0.8/README.md](tts-0.8/README.md#license).
