@@ -9,7 +9,7 @@ Fast inference engines for the Kitten TTS text-to-speech models:
   every machine we tested, and about **60 times faster than real time** on a 12-core desktop CPU.
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
 python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
 pip install "kitten-inference[tts-0.8]"         # Kitten TTS 0.8 on the CPU (kitten-inference-tts08)
 ```
@@ -18,7 +18,8 @@ On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-v
 
 For Kitten TTS 2, install `"kitten-inference[tts-2]"` instead (NVIDIA, driver R570 or newer: kitten-inference-tts2 +
 kitten-inference-tts2-cu12) or `"kitten-inference[tts-2-rocm]"` (AMD Radeon with ROCm 7: kitten-inference-tts2 +
-kitten-inference-tts2-rocm). Kitten TTS 2 needs Python 3.9 or newer on Linux x86-64 or Windows x64 (AMD: Linux x86-64).
+kitten-inference-tts2-rocm; [setup](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md)). Kitten TTS 2 needs Python 3.9 or newer on Linux x86-64 or Windows x64
+(AMD: Linux x86-64, tested inside WSL2).
 Other systems have no Kitten TTS 2 engine: pip then stops with "No matching distribution", or installs the old version
 0.1.1 of this package instead (`pip show kitten-inference` says which). Extras combine on Linux x86-64 and Windows x64
 with Python 3.9 or newer: `"kitten-inference[tts-0.8,tts-2]"`.

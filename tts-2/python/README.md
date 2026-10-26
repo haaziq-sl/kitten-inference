@@ -7,17 +7,23 @@ is smaller: first audio after 22 ms and 4.5 to 6.9 times faster on an RTX 4090, 
 RTX 3060.
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
 python -m pip install -U pip                    # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
 pip install "kitten-inference[tts-2]"           # NVIDIA: Linux x86-64 or Windows x64, driver R570 or newer
 ```
 
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-venv` first.
-- AMD Radeon RX 7000 and RX 9000 on Linux x86-64: install ROCm 7.x first (step 1 of
-  [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md)), then
-  `pip install "kitten-inference[tts-2-rocm]"` in place of the last line. No voice cloning there.
+- AMD Radeon RX 7000 and RX 9000, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
+  ROCm 7.x first (WSL2: step 1 of [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md); Linux
+  without WSL2: [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution),
+  then `pip install "kitten-inference[tts-2-rocm]"` in place of the last line. That package has no voice cloning.
 - Python 3.9 or newer. Other systems have no engine: pip then stops with "No matching distribution", or installs the
   old version 0.1.1 of `kitten-inference` instead (`pip show kitten-inference` says which).
+- GeForce GTX 10, GTX 16 and RTX 20: supported, not optimal: these GPUs have no bf16 tensor cores, so part of the
+  math runs in software (real-time factor 0.22 to 0.28, against 0.05 to 0.08 on RTX 40 and 50 cards; measured with
+  an earlier model revision).
+- Cards with 4 to 8 GB: supported, not optimal: one request at a time, complete files about 1.5% slower (measured
+  with the command-line tool and an earlier model revision), and no voice cloning (load a voice saved on a larger GPU).
 
 ```python
 from kitten_inference.tts2 import KittenTTS2
@@ -50,7 +56,7 @@ optimal (with the usual Windows code page the engine opens only ASCII paths; the
 
 Voice cloning (NVIDIA only) needs about 11,300 MiB (11 GB) of free GPU memory while the voice is built, and the
 system `ffmpeg`: `sudo apt-get install -y ffmpeg` on Ubuntu, `winget install --id Gyan.FFmpeg -e` on Windows (then open
-a new terminal and activate the venv again; Windows 10 and 11 include winget, Windows Server 2022 needs it installed
+a new Command Prompt and activate the venv again; Windows 10 and 11 include winget, Windows Server 2022 needs it installed
 first). On a 12 GB card other programs may then use at most about 500 MiB of it: cloning worked with
 11,285 MiB free and failed with 11,157 MiB free. The first clone adds 1.1 GB to the prepared model.
 
@@ -65,14 +71,20 @@ the voice with `KittenTTS2(revision="...")` or `kitten-tts2 --revision ...`: `tt
 `kitten-tts2 --save-voice` prints it, and `load_voice()` and `kitten-tts2 --load-voice` name the one a voice needs.
 
 The Python API gives the same audio and the same first-audio time as the command (11.4 ms both on an RTX PRO 6000).
-After `clone_voice()`, each request starts about 15 ms later (34 ms instead of 19 ms on an RTX 4090): supported, not
+After `clone_voice()`, each request's first audio comes about 15 ms later (measured on an RTX 4090): supported, not
 optimal. The engine then keeps no voice ready between requests, so that building a voice still fits a 12 GB GPU.
 
 GPU memory: `memory_profile="auto"` (the default) uses the default profile (about 13,500 MiB with one voice) when it
 fits and the low-memory profile (about 9,100 MiB) otherwise, as on most 12 GB cards: supported, not optimal, because
-requests at the same time then share smaller buffers; one request at a time runs as fast (real-time factor 0.050
-against 0.051 on a 16 GB card). Sizes for each card class:
+requests at the same time then share smaller buffers; one request at a time runs about as fast (real-time factor 0.050
+against 0.051 on a 16 GB card, measured on an earlier build and model revision). Sizes for each card class:
 [GPU memory](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/memory.md).
+
+Same audio: a seeded complete file (`generate(..., seed=N)`) is bit for bit the same on Linux and Windows with the
+same GPU model. Other GPU models give slightly different samples with the same words and voice. AMD Radeon, GeForce
+GTX 10, GTX 16 and RTX 20, and 4 GB cards (long streamed text) can differ more
+([details](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/consumer-gpus.md#output-differences)).
+Streamed audio with the same seed can differ from run to run on any GPU.
 
 ## Model license
 

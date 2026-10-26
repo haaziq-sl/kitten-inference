@@ -14,7 +14,7 @@ runs nano on the GPU (Metal) and ONNX Runtime on the CPU: 0.37 s against 0.71 s 
 ## Install
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python3 -m venv .venv && . .venv/bin/activate   # Windows, in a Command Prompt: py -m venv .venv, then .venv\Scripts\activate.bat
 python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
 pip install "kitten-inference[tts-0.8]"
 ```
@@ -45,9 +45,9 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
 (116, 71 and 19 MB). On the AMD and Linux ARM64 machines we tested they are faster than kittenml. Supported, not
-optimal on Intel CPUs and on the Mac CPU: 1.6 to 2.4 times the kittenml time on the Intel CPUs we tested, because
-the int8 kernels for x86 are not tuned yet, and 1.4 to 1.8 times on an Apple M4, because the macOS build uses one
-CPU core. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
+optimal on Intel CPUs and on the Mac CPU, because the int8 kernels for x86 are not tuned yet and the macOS build uses
+one CPU core: 1.6 to 2.2 times the kittenml time on an Intel Xeon, 1.7 to 2.4 times on a Core i9-12900 (measured
+before this release's fix for hybrid Intel CPUs, which made it faster), and 1.4 to 1.8 times on an Apple M4. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -78,16 +78,18 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
 - x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2
   CPU with dot-product instructions, such as a Raspberry Pi 5 (a Raspberry Pi 4 is not supported).
   On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
-- Linux and macOS: keep the virtual environment's full path under about 100 characters. With a longer
-  path, the text front end (espeak-ng) cannot find its data and ends the Python process; kittenml 0.9.6
-  has the same limit.
+- Keep the virtual environment's full path short: under about 100 characters on Linux and macOS, under
+  about 180 on Windows, and on Windows without non-ASCII letters (for example not inside a user folder named José).
+  Otherwise the text front end (espeak-ng) cannot find its data and ends the Python process, or on Windows
+  a longer path stops the import with a misleading "native engine ... is missing" error. kittenml 0.9.6
+  has the same limit on Linux and macOS.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
 - Intel CPUs with performance and efficiency cores: by default the engine runs on the performance
   cores' threads and lets the faster threads take more of its main matrix work, instead of splitting
-  it evenly over every core (`OMP_NUM_THREADS` still sets the thread count). A short sentence took
-  0.12 s instead of 0.26 s on a Core i9-12900, and 0.09 s instead of 1.99 s on a Core i9-14900K.
+  it evenly over every core (`OMP_NUM_THREADS` still sets the thread count). A short sentence (nano)
+  took 0.12 s instead of 0.30 s on a Core i9-12900, and 0.09 s instead of 2.0 s on a Core i9-14900K.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
   CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
   macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
