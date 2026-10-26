@@ -1,5 +1,6 @@
-// Generated from Python 3.11.16 unicodedata (Unicode 14.0.0); generator not
-// included. Do not edit.
+// Generated from Python 3.11.16 unicodedata (Unicode 14.0.0), except kMosesIsAlpha and kMosesIsSc, the Moses
+// character classes (perluniprops) of sacremoses 0.2.0 (MIT License, Copyright (c) 2020 alvations; see NOTICE and
+// licenses/Sacremoses.txt); generator not included. Do not edit.
 static const CpRange kPyAlpha[] = {
   {0x41,0x5A},{0x61,0x7A},{0xAA,0xAA},{0xB5,0xB5},{0xBA,0xBA},{0xC0,0xD6},{0xD8,0xF6},{0xF8,0x2C1},
   {0x2C6,0x2D1},{0x2E0,0x2E4},{0x2EC,0x2EC},{0x2EE,0x2EE},{0x370,0x374},{0x376,0x377},{0x37A,0x37D},{0x37F,0x37F},

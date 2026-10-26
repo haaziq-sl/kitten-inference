@@ -104,6 +104,14 @@ Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
 https://github.com/NVIDIA/NeMo-text-processing
 KittenML ported it to C++ and changed it to run on the engine's OpenFst
 graphs.
+The detokenizer in src/text/nemo.cc ports the English MosesDetokenizer of
+sacremoses 0.2.0, and the Moses character classes kMosesIsAlpha and kMosesIsSc
+in src/text/unicode_tables.inc (perluniprops) are exported from sacremoses
+0.2.0 (MIT License; see licenses/Sacremoses.txt):
+Copyright (c) 2020 alvations
+https://github.com/alvations/sacremoses
+This code is compiled into the engine library (both Python engine wheels and
+every source build with text normalization).
 Preparation reads English word lists from the nemo_text_processing 1.2.0 wheel
 on PyPI (Apache-2.0; read as data, never installed) and English grammar data
 from KittenML/kitten-text-processing at commit 1988d61 (Apache-2.0):
