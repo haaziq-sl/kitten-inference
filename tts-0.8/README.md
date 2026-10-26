@@ -78,6 +78,9 @@ the number of threads (the same clip lengths).
 - x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2
   CPU with dot-product instructions, such as a Raspberry Pi 5 (a Raspberry Pi 4 is not supported).
   On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
+- Linux and macOS: keep the virtual environment's full path under about 100 characters. With a longer
+  path, the text front end (espeak-ng) cannot find its data and ends the Python process; kittenml 0.9.6
+  has the same limit.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
