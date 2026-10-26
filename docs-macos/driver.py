@@ -30,7 +30,7 @@ SESSIONS = {
     'S3-bash-deep':        ('bash-script',   'runner', ['deep'], True),
     'S4-bash-pty-replay':  ('bash-pty',      'runner', ['top', 'pkg'], True),
     'S5-zsh-pty':          ('zsh-pty',       'runner', ['top', 'pkg'], False),
-    'S6-zsh-login-system': ('zsh-login-pty', 'system', ['top', 'pkg'], False),
+    'S6-zsh-system':       ('zsh-pty',       'system', ['top', 'pkg'], False),
     'S7-bash-system':      ('bash-script',   'system', ['top'], True),
     'S8-bash-system-oldpip': ('bash-script', 'system', ['oldpip'], True),
     # machine check before the release exists: no doc lines
@@ -171,15 +171,18 @@ def run_pty(argv, steps, env, out, stop):
         pass
     fh = open(out / 'session.log', 'wb')
     buf = bytearray()
+    notes = []
 
     def pump(pattern, timeout):
         rx = re.compile(pattern)
         end = time.time() + timeout
-        while time.time() < end:
+        while True:
             m = rx.search(buf.decode('utf-8', 'replace'))
             if m:
                 return m
-            r, _, _ = select.select([fd], [], [], 1.0)
+            if time.time() >= end:
+                return None
+            r, _, _ = select.select([fd], [], [], 0.5)
             if r:
                 try:
                     data = os.read(fd, 65536)
@@ -192,40 +195,67 @@ def run_pty(argv, steps, env, out, stop):
                 sys.stdout.flush()
                 fh.write(data)
                 fh.flush()
-        return None
 
     def send(s):
         os.write(fd, s.encode() + b'\n')
 
+    def finish():
+        try:
+            send('exit')
+        except OSError:
+            pass
+        end = time.time() + 10
+        while time.time() < end:
+            try:
+                if os.waitpid(pid, os.WNOHANG) != (0, 0):
+                    break
+            except ChildProcessError:
+                break
+            pump(r'(?!)', 0.5)
+        else:
+            for sig in (signal.SIGHUP, signal.SIGKILL):
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    break
+                time.sleep(1)
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+        fh.close()
+        os.close(fd)
+
+    # let the shell start; zsh shows its new-user menu when HOME has no startup files
+    m = pump(r'configuration function for new users|\(q\)\s+Quit', 4)
+    if m:
+        notes.append('zsh-newuser-install menu shown at start (HOME has no startup files); answered q')
+        log(fh, '\n@@HARNESS zsh new-user menu shown; answering q\n')
+        os.write(fd, b'q')
+        pump(r'(?!)', 2)
     send('echo "@@READY $((40+2))"')
-    if not pump(r'@@READY 42', 60):
-        log(fh, '\n@@HARNESS shell did not start\n')
+    if not pump(r'@@READY 42', 30):
+        tail = buf.decode('utf-8', 'replace')[-3000:]
+        log(fh, '\n@@HARNESS shell did not become ready; last output:\n' + repr(tail) + '\n')
+        finish()
+        return [{'i': 0, 'kind': 'harness', 'line': 'shell start', 'rc': None, 'seconds': None}], notes
     res = []
     for i, (kind, line, d) in enumerate(steps, 1):
         log(fh, f'\n@@STEP {i} {kind}: {line}\n')
         t = time.time()
         send(line)
         send(f'echo "@@EXIT {i} $?"')
-        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT)
+        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT if kind in ('doc', 'check') else 60)
         rc = int(m.group(1)) if m else None
         res.append({'i': i, 'kind': kind, 'line': line, 'rc': rc, 'seconds': round(time.time() - t)})
         if rc is None:
-            log(fh, f'\n@@HARNESS step {i} timed out\n')
+            tail = buf.decode('utf-8', 'replace')[-2000:]
+            log(fh, f'\n@@HARNESS step {i} timed out; last output:\n' + repr(tail) + '\n')
             break
         if rc != 0 and ((stop and kind in ('doc', 'check')) or kind == 'setup'):
             break
-    send('exit')
-    time.sleep(2)
-    try:
-        os.kill(pid, signal.SIGHUP)
-    except ProcessLookupError:
-        pass
-    try:
-        os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
-    fh.close()
-    return res, 0
+    finish()
+    return res, notes
 
 
 def main():
@@ -243,16 +273,17 @@ def main():
                           'command -v python3; python3 --version; command -v pip pip3 || true'],
                          env=env, capture_output=True, text=True)
     print('@@INFO python3 for this shell before the doc lines (bash lookup):', who.stdout.replace('\n', ' | '), flush=True)
+    notes = []
     if shell == 'bash-script':
         res, rc = run_script(steps, env, out, stop)
     else:
         argv = {'bash-pty': ['/bin/bash', '-i'], 'zsh-pty': ['/bin/zsh', '-i'],
                 'zsh-login-pty': ['/bin/zsh', '-il']}[shell]
-        res, rc = run_pty(argv, steps, env, out, stop)
+        res, notes = run_pty(argv, steps, env, out, stop)
     first_fail = next((r for r in res if r['rc'] != 0 and r['kind'] != 'info'), None)
     summary = {'session': name, 'shell': shell, 'path': path_kind, 'units': units, 'stop_on_fail': stop,
                'home': str(home), 'root': str(root), 'steps': res,
-               'all_ran': len(res) == len(steps), 'first_failure': first_fail}
+               'all_ran': len(res) == len(steps), 'first_failure': first_fail, 'notes': notes}
     (out / 'steps.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding='utf-8')
     print('\n@@RESULT ' + json.dumps({'session': name, 'first_failure': first_fail,
                                       'rcs': [r['rc'] for r in res], 'n_steps': len(steps)}, ensure_ascii=False))

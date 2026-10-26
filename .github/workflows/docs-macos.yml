@@ -53,7 +53,7 @@ jobs:
           echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
           echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
           ls -l /usr/local/bin/python3* 2>&1 | head -5
-          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"
+          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"; ls /usr/share/zsh/*/scripts /usr/share/zsh/*/functions/zsh-newuser-install 2>&1 | head -5; ls -la /etc/zshrc /etc/zprofile /etc/zshenv 2>&1; grep -n -i -E 'setopt|newuser' /etc/zshrc 2>&1 | head
           echo "--- /etc/paths and /etc/paths.d"; cat /etc/paths; ls /etc/paths.d; cat /etc/paths.d/* 2>/dev/null | head -20
           echo "--- env keys (names only)"; env | grep -o -E '^(PIP|PYTHON|HF_|HUGGING|XDG|OMP|VIRTUAL_ENV|CONDA|PIPX)[A-Za-z0-9_]*' | sort || true
           echo "--- pip config"; python3 -m pip config debug 2>&1 | head -30
@@ -67,6 +67,7 @@ jobs:
           done
           echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
       - name: Shell smoke (zsh, zsh login, bash in a pseudo-terminal)
+        timeout-minutes: 6
         run: |
           for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
             /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" || echo "harness rc $?"
@@ -101,7 +102,7 @@ jobs:
           echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
           echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
           ls -l /usr/local/bin/python3* 2>&1 | head -5
-          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"
+          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"; ls /usr/share/zsh/*/scripts /usr/share/zsh/*/functions/zsh-newuser-install 2>&1 | head -5; ls -la /etc/zshrc /etc/zprofile /etc/zshenv 2>&1; grep -n -i -E 'setopt|newuser' /etc/zshrc 2>&1 | head
           echo "--- /etc/paths and /etc/paths.d"; cat /etc/paths; ls /etc/paths.d; cat /etc/paths.d/* 2>/dev/null | head -20
           echo "--- env keys (names only)"; env | grep -o -E '^(PIP|PYTHON|HF_|HUGGING|XDG|OMP|VIRTUAL_ENV|CONDA|PIPX)[A-Za-z0-9_]*' | sort || true
           echo "--- pip config"; python3 -m pip config debug 2>&1 | head -30
@@ -139,9 +140,10 @@ jobs:
           (cd "$RUNNER_TEMP/wheels" && ls -la && shasum -a 256 *) | tee "$RUNNER_TEMP/out/find-links-sha256.txt"
           echo "SESSION_PIP_FIND_LINKS=$RUNNER_TEMP/wheels" >> "$GITHUB_ENV"
       - name: Shell check (no doc lines)
+        timeout-minutes: 6
         run: |
           for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
-            /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" | grep -a -E '@@RESULT|^one|interactive|^/' || echo "harness rc $?"
+            /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" || echo "harness rc $?"
           done
       - name: S1 bash, README.md TTS 0.8 block and Python example
         if: matrix.group == 'bash'
@@ -173,12 +175,12 @@ jobs:
         run: |
           /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S5-zsh-pty "$RUNNER_TEMP/out/S5-zsh-pty" || echo "driver rc $?"
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S5-zsh-pty" || echo "post rc $?"
-      - name: S6 zsh login shell with the stock macOS PATH (python3 from Apple), lines as pasted
+      - name: S6 interactive zsh with the stock macOS PATH (python3 from Apple), lines as pasted
         if: matrix.group == 'zsh'
         timeout-minutes: 30
         run: |
-          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S6-zsh-login-system "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "driver rc $?"
-          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "post rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S6-zsh-system "$RUNNER_TEMP/out/S6-zsh-system" || echo "driver rc $?"
+          PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-system" || echo "post rc $?"
       - name: S7 bash with the stock macOS PATH, README.md TTS 0.8 block
         if: matrix.group == 'zsh'
         timeout-minutes: 20
