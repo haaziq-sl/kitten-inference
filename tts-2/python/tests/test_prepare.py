@@ -458,12 +458,21 @@ def test_default_cache_is_not_made_private_on_windows(monkeypatch, tmp_path):
     # Under the user profile Windows already keeps the folder private; giving it the OWNER-RIGHTS descriptor would
     # lock the same user out of it after a run in an elevated window. A folder outside the profile is still private.
     monkeypatch.setattr(_prepare.sys, "platform", "win32")
-    default = tmp_path / "home" / ".cache" / "kitten-inference" / "tts2"
+    # Path.home() reads USERPROFILE on Windows and HOME elsewhere. On a Windows runner tmp_path itself lies inside the
+    # real profile (AppData\Local\Temp), so the profile is pinned here.
+    home = tmp_path / "home"
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    assert Path.home() == home
+    default = home / ".cache" / "kitten-inference" / "tts2"
     monkeypatch.setattr(_prepare, "DEFAULT_CACHE", default)
     private = []
     monkeypatch.setattr(_prepare, "_private_mkdir", lambda p: private.append(p))
     _prepare._make_root(default)
     assert default.is_dir() and private == []
+    inside = home / "models" / "kitten-tts2"
+    _prepare._make_root(inside)
+    assert inside.is_dir() and private == []  # inside the profile: the profile's access list covers it
     custom = tmp_path / "C" / "kitten-tts2"
     _prepare._make_root(custom)
     assert private == [custom]  # outside the profile: made private
