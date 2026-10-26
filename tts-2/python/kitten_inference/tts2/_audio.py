@@ -52,20 +52,28 @@ def _id3v2_len(data: bytes) -> int:
 
 def is_playlist(data: bytes) -> bool:
     """Whether ``data`` is a playlist, manifest or session description (HLS/M3U, DASH, IMF, ffconcat, SDP) rather than
-    a recording, as kitten-tts-native checks it (cli/ffmpeg_decode.cc). Such a file makes ffmpeg open the files or
+    a recording (kitten-tts-native's check in cli/ffmpeg_decode.cc, except that its DASH/IMF/SDP search also reads
+    past the first NUL byte, see below). Such a file makes ffmpeg open the files or
     URLs it names: the DASH demuxer of FFmpeg 6.1 (Ubuntu 24.04's ffmpeg) fetches them even from standard input, and
     the by-name fallback would allow local files. Found as FFmpeg's probes find them, after a leading ID3v2 tag (which
-    FFmpeg skips before probing): HLS and ffconcat at the start, DASH and IMF anywhere, SDP by a "c=IN IP" line. DASH
-    is matched on "<mpd" alone: FFmpeg's dash_probe needs only "<MPD" plus any of several profile strings, one of
-    which ("3GPP:PSS:profile:DASH1") does not contain "dash:profile"."""
+    FFmpeg skips before probing): HLS and ffconcat at the start, DASH and IMF anywhere in the text, SDP by a "c=IN IP"
+    line. DASH is matched on "<mpd" alone: FFmpeg's dash_probe needs only "<MPD" plus any of several profile strings,
+    one of which ("3GPP:PSS:profile:DASH1") does not contain "dash:profile".
+
+    The DASH, IMF and SDP probes read the probe buffer as a C string (av_stristr, strstr, a loop up to '\\0'), so
+    they never look past the first NUL byte. A real recording has one within its first bytes (the RIFF size, the
+    MP4 box size, the FLAC and Ogg headers), so only the text before it is searched: the compressed audio after it is
+    close to random and contains "<mpd" in some case about once in 500 million bytes, which refused about 0.4% of
+    2 MB recordings and 2% of 10 MiB ones although ffmpeg reads them as audio."""
     head = data[_id3v2_len(data):]
+    text = head.split(b"\0", 1)[0]  # what FFmpeg's C-string probes see
     head = head[3:] if head.startswith(b"\xef\xbb\xbf") else head
     if head[:4096].lstrip(b" \t\r\n").startswith((b"#EXTM3U", b"ffconcat")):
         return True
-    low = data.lower()
+    low = text.lower()
     if b"<mpd" in low or b"<compositionplaylist" in low:
         return True
-    return data.startswith(b"c=IN IP") or b"\nc=IN IP" in data or b"\n\rc=IN IP" in data
+    return text.startswith(b"c=IN IP") or b"\nc=IN IP" in text or b"\n\rc=IN IP" in text
 
 
 def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:

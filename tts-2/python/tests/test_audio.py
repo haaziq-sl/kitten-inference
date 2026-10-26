@@ -110,6 +110,38 @@ def test_playlists_and_manifests_are_refused(tmp_path):
         assert not _audio.is_playlist(data), data
 
 
+def test_marker_bytes_inside_compressed_audio_are_not_a_playlist(tmp_path):
+    # FFmpeg's DASH, IMF and SDP probes read the probe buffer as a C string, so they stop at the first NUL byte, which
+    # a real recording has within its first bytes. Compressed audio after it can hold "<mPd" by chance (about 1 file
+    # in 250 at 2 MB): such a recording is decoded by ffmpeg and must not be refused as a manifest.
+    payload = bytes(range(1, 256)) * 40
+    for data in (b"\x00\x00\x00\x20ftypM4A \x00\x00\x02\x00" + payload + b"<mPd" + payload,       # M4A: box size
+                 b"RIFF\x24\x08\x00\x00WAVEfmt " + payload + b"<MPD profiles=" + payload,          # WAV: RIFF size
+                 b"fLaC\x00\x00\x00\x22" + payload + b"<CompositionPlaylist" + payload,             # FLAC
+                 b"OggS\x00\x02" + payload + b"\nc=IN IP4 127.0.0.1\n" + payload,                   # Ogg
+                 b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x00" + payload + b"<mpd" + payload):  # MP3 after ID3
+        assert not _audio.is_playlist(data), data[:16]
+    # A manifest is text: the markers before the first NUL byte still count, also with binary data after them.
+    assert _audio.is_playlist(b'<?xml version="1.0"?><MPD profiles="urn:mpeg:dash:profile:full:2011">\x00' + payload)
+    assert _audio.is_playlist(b"ID3\x04\x00\x00\x00\x00\x00\x00<MPD profiles=\"x\">")  # after the ID3 tag ffmpeg skips
+    assert _audio.is_playlist(b"ID3\x04\x00\x00\x00\x00\x00\x00v=0\nc=IN IP4 127.0.0.1\n")
+
+
+@needs_ffmpeg
+def test_recording_whose_samples_spell_a_marker_is_decoded(tmp_path):
+    # 16-bit samples 0x6D3C, 0x6450 are the bytes "<mPd" (loud speech has such samples): ffmpeg reads the WAV as audio.
+    src = tmp_path / "loud.wav"
+    samples = np.tile(np.array([0x6D3C, 0x6450, -1200, 300], dtype="<i2"), 6000)
+    assert b"<mPd" in samples.tobytes()
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(samples.tobytes())
+    pcm = _audio.decode_reference(src)
+    assert pcm.size == samples.size and np.abs(pcm - _audio.to_float(samples.tobytes())).max() < 1e-6
+
+
 def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
     a = _audio.ffmpeg_args()
     assert a[a.index("-i") + 1] == "pipe:0" and a[-1] == "pipe:1" and "-nostdin" in a
