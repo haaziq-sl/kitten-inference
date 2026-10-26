@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="708" viewBox="0 0 1000 708" role="img" aria-labelledby="t d">
+<title id="t">Kitten TTS 2: time to the first streamed audio</title>
+<desc id="d">Median time to the first streamed audio on short texts; for vLLM and llama.cpp this is the complete file, because they stream whole sentences. RTX PRO 6000 (96 GB): Kitten TTS 2 11.4 ms, vLLM, 4-bit 481 ms, vLLM, bf16 (default) 643 ms, llama.cpp (GPU) 538 ms; RTX 4090 (24 GB): Kitten TTS 2 22.1 ms, vLLM, 4-bit 887 ms, vLLM, bf16 (default) 1171 ms, llama.cpp (GPU) 971 ms; RTX 3060 (12 GB): Kitten TTS 2 57.5 ms, vLLM, 4-bit 1185 ms, vLLM, bf16 (default) 2018 ms, llama.cpp (GPU) 1182 ms</desc>
+<rect x="0.5" y="0.5" width="999" height="707" rx="12" fill="#ffffff" stroke="rgba(11,11,11,0.10)"/>
+<text x="40.0" y="50.0" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#0b0b0b" text-anchor="start">Kitten TTS 2: time to the first streamed audio</text>
+<text x="40.0" y="78.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#52514e" text-anchor="start">Short texts, median, lower is better. Gray bars are the complete file: vLLM and llama.cpp stream whole sentences.</text>
+<rect x="40" y="101" width="14" height="14" rx="3" fill="#2a78d6"/>
+<text x="62.0" y="112.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">Kitten TTS 2 native (pip package)</text>
+<rect x="340" y="101" width="14" height="14" rx="3" fill="#93918a"/>
+<text x="362.0" y="112.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">Kitten TTS 2 on vLLM (kittenml 0.9.6) or llama.cpp (kitten-tts-2-cpp)</text>
+<text x="270.0" y="148.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="start">Time to the first audio</text>
+<line x1="270.0" y1="162" x2="270.0" y2="576" stroke="#c3c2b7" stroke-width="1"/>
+<text x="270.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">0</text>
+<line x1="394.0" y1="162" x2="394.0" y2="576" stroke="#e1e0d9" stroke-width="1"/>
+<text x="394.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">500</text>
+<line x1="518.0" y1="162" x2="518.0" y2="576" stroke="#e1e0d9" stroke-width="1"/>
+<text x="518.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">1,000</text>
+<line x1="642.0" y1="162" x2="642.0" y2="576" stroke="#e1e0d9" stroke-width="1"/>
+<text x="642.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">1,500</text>
+<line x1="766.0" y1="162" x2="766.0" y2="576" stroke="#e1e0d9" stroke-width="1"/>
+<text x="766.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">2,000</text>
+<line x1="890.0" y1="162" x2="890.0" y2="576" stroke="#e1e0d9" stroke-width="1"/>
+<text x="890.0" y="594.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="middle">2,500</text>
+<text x="890.0" y="612.0" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="400" fill="#6d6b66" text-anchor="end">milliseconds</text>
+<text x="40.0" y="186.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="start">RTX PRO 6000 (96 GB)</text>
+<text x="52.0" y="212.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#0b0b0b" text-anchor="start">Kitten TTS 2</text>
+<path d="M270.0,200.0 H271.4 Q272.8,200.0 272.8,201.4 V214.6 Q272.8,216.0 271.4,216.0 H270.0 Z" fill="#2a78d6"/>
+<text x="278.8" y="212.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">11.4 ms</text>
+<text x="52.0" y="236.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, 4-bit</text>
+<path d="M270.0,224.0 H385.3 Q389.3,224.0 389.3,228.0 V236.0 Q389.3,240.0 385.3,240.0 H270.0 Z" fill="#93918a"/>
+<text x="395.3" y="236.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">481 ms (complete file)</text>
+<text x="52.0" y="260.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, bf16 (default)</text>
+<path d="M270.0,248.0 H425.5 Q429.5,248.0 429.5,252.0 V260.0 Q429.5,264.0 425.5,264.0 H270.0 Z" fill="#93918a"/>
+<text x="435.5" y="260.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">643 ms (complete file)</text>
+<text x="52.0" y="284.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">llama.cpp (GPU)</text>
+<path d="M270.0,272.0 H399.4 Q403.4,272.0 403.4,276.0 V284.0 Q403.4,288.0 399.4,288.0 H270.0 Z" fill="#93918a"/>
+<text x="409.4" y="284.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">538 ms (complete file)</text>
+<text x="40.0" y="326.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="start">RTX 4090 (24 GB)</text>
+<text x="52.0" y="352.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#0b0b0b" text-anchor="start">Kitten TTS 2</text>
+<path d="M270.0,340.0 H272.7 Q275.5,340.0 275.5,342.7 V353.3 Q275.5,356.0 272.7,356.0 H270.0 Z" fill="#2a78d6"/>
+<text x="281.5" y="352.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">22.1 ms</text>
+<text x="52.0" y="376.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, 4-bit</text>
+<path d="M270.0,364.0 H486.0 Q490.0,364.0 490.0,368.0 V376.0 Q490.0,380.0 486.0,380.0 H270.0 Z" fill="#93918a"/>
+<text x="496.0" y="376.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">887 ms (complete file)</text>
+<text x="52.0" y="400.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, bf16 (default)</text>
+<path d="M270.0,388.0 H556.4 Q560.4,388.0 560.4,392.0 V400.0 Q560.4,404.0 556.4,404.0 H270.0 Z" fill="#93918a"/>
+<text x="566.4" y="400.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">1,171 ms (complete file)</text>
+<text x="52.0" y="424.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">llama.cpp (GPU)</text>
+<path d="M270.0,412.0 H506.8 Q510.8,412.0 510.8,416.0 V424.0 Q510.8,428.0 506.8,428.0 H270.0 Z" fill="#93918a"/>
+<text x="516.8" y="424.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">971 ms (complete file)</text>
+<text x="40.0" y="466.0" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="start">RTX 3060 (12 GB)</text>
+<text x="52.0" y="492.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#0b0b0b" text-anchor="start">Kitten TTS 2</text>
+<path d="M270.0,480.0 H280.3 Q284.3,480.0 284.3,484.0 V492.0 Q284.3,496.0 280.3,496.0 H270.0 Z" fill="#2a78d6"/>
+<text x="290.3" y="492.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">57.5 ms</text>
+<text x="52.0" y="516.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, 4-bit</text>
+<path d="M270.0,504.0 H559.9 Q563.9,504.0 563.9,508.0 V516.0 Q563.9,520.0 559.9,520.0 H270.0 Z" fill="#93918a"/>
+<text x="569.9" y="516.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">1,185 ms (complete file)</text>
+<text x="52.0" y="540.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">vLLM, bf16 (default)</text>
+<path d="M270.0,528.0 H766.5 Q770.5,528.0 770.5,532.0 V540.0 Q770.5,544.0 766.5,544.0 H270.0 Z" fill="#93918a"/>
+<text x="776.5" y="540.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">2,018 ms (complete file)</text>
+<text x="52.0" y="564.0" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#52514e" text-anchor="start">llama.cpp (GPU)</text>
+<path d="M270.0,552.0 H559.1 Q563.1,552.0 563.1,556.0 V564.0 Q563.1,568.0 559.1,568.0 H270.0 Z" fill="#93918a"/>
+<text x="569.1" y="564.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">1,182 ms (complete file)</text>
+<text x="40.0" y="638.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">Kitten TTS 2 native: 300 texts per GPU, streamed through the Python API. One request at a time.</text>
+<text x="40.0" y="660.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">vLLM and llama.cpp: 100 texts per GPU (300 on the RTX 4090). RTX 3060: low-memory profile, chosen automatically.</text>
+<text x="40.0" y="682.0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">Measured 26 Oct 2026.</text>
+</svg>

@@ -25,6 +25,10 @@ When streaming, the native engine sends its first audio after **11.4 ms** (media
 
 On smaller GPUs the same comparison gives a smaller lead, because the native engine's speed follows the GPU's memory speed while vLLM and llama.cpp lose a roughly fixed time per token on the processor: complete files 4.5 to 6.9 times faster and first audio after 22 ms on an RTX 4090, 2.4 to 4.3 times and 58 ms on a 12 GB RTX 3060 (with the low-memory profile, which the tool picks there by itself). Tables: [docs/consumer-gpus.md](docs/consumer-gpus.md#against-vllm-and-llamacpp).
 
+![Time to make a complete file: Kitten TTS 2 native against vLLM and llama.cpp on an RTX PRO 6000, RTX 4090 and RTX 3060](docs/assets/benchmarks/tts2-complete-files.svg)
+
+![Time to the first streamed audio: Kitten TTS 2 native against vLLM and llama.cpp, whose first audio is the complete file, on an RTX PRO 6000, RTX 4090 and RTX 3060](docs/assets/benchmarks/tts2-first-audio.svg)
+
 ## Supported GPUs
 
 | GPU group | Status |

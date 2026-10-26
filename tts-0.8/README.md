@@ -11,6 +11,14 @@ Default settings of both packages on the same machine, a 41-word text (15 to 17 
 On a Ryzen 9 9900X, nano speaks it in 0.29 s against 0.54 s (real-time factor 0.017). On Apple Silicon this engine
 runs nano on the GPU (Metal) and ONNX Runtime on the CPU: 0.37 s against 0.71 s on an Apple M4.
 
+![Kitten TTS 0.8 engine against ONNX Runtime on the CPU, 80M int8 model: latency and peak memory on an Android phone (Cortex-A77), a Core i7-12650H laptop and an Apple M2 Pro](https://raw.githubusercontent.com/KittenML/kitten-inference/v0.2.0/tts-0.8/docs/assets/benchmarks/cpu_onnx_summary.svg)
+
+The chart is from June 2026 runs of the engine's own benchmark program, not of this release's package: the 80M int8
+(mini) model against plain ONNX Runtime, both given the same phonemes, so text processing is not timed; an 18-word
+text; `t=1` and `t=8` threads (the Mac, an M2 Pro, uses one core either way). Its Android engine and ONNX bars come
+from different runs. The other numbers on this page compare this release's package with kittenml 0.9.6 at default
+settings.
+
 ## Install
 
 ```bash

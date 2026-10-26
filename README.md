@@ -20,6 +20,16 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
   this engine runs nano on the GPU (Metal) and ONNX Runtime on the CPU. "Times faster than real time" is speech length
   divided by compute time over six test clips (real-time factor 0.017).
 
+![Kitten TTS 2 native against vLLM and llama.cpp: time to make a complete file on an RTX PRO 6000, RTX 4090 and RTX 3060](tts-2/docs/assets/benchmarks/tts2-complete-files.svg)
+
+![Kitten TTS 0.8 engine against ONNX Runtime on the CPU, 80M int8 model: latency and peak memory on an Android phone (Cortex-A77), a Core i7-12650H laptop and an Apple M2 Pro](tts-0.8/docs/assets/benchmarks/cpu_onnx_summary.svg)
+
+The Kitten TTS 0.8 chart is from June 2026 runs of the engine's own benchmark program, not of this release's package:
+the 80M int8 (mini) model against plain ONNX Runtime, both given the same phonemes, so text processing is not timed;
+an 18-word text; `t=1` and `t=8` threads (the Mac, an M2 Pro, uses one core either way). Its Android engine and ONNX
+bars come from different runs. The table above compares this release's package with kittenml 0.9.6 at default
+settings.
+
 ## Install
 
 Each block starts a Python virtual environment and upgrades pip in it (pip older than 23.3 skips the `[tts-0.8]` extra with only a warning). On Ubuntu and Debian, `python3 -m venv` needs
