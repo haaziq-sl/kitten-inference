@@ -115,3 +115,32 @@ def test_kittentts2_checks_the_gpu_before_downloading(no_backends, fake_backend,
     with pytest.raises(_gpu.GPUError, match="device 2"):
         _api.KittenTTS2(device=2)
     assert prepared == []  # nothing was downloaded
+
+
+def test_eager_module_loading_is_asked_for_before_the_driver_starts(monkeypatch):
+    # The check is the process's first driver call (cuInit / hipGetDeviceCount), and the driver reads its module
+    # loading mode then: the engine's own request at create would come too late, so the check makes it first.
+    environ = {}
+    monkeypatch.setattr(_gpu.os, "environ", environ)
+    seen = []
+    monkeypatch.setattr(_gpu, "check_cuda", lambda device, log=None: seen.append(dict(environ)) or 1)
+    monkeypatch.setattr(_gpu, "check_rocm", lambda device: seen.append(dict(environ)) or 1)
+    _gpu.check("cuda", 0)
+    assert seen[-1] == {"CUDA_MODULE_LOADING": "EAGER"}
+    environ.clear()
+    _gpu.check("rocm", 0)
+    assert seen[-1] == {"CUDA_MODULE_LOADING": "EAGER", "HIP_ENABLE_DEFERRED_LOADING": "0"}
+    # As in the engine: a value already set wins, and KT2N_CUDA_EAGER=0 (atoi) keeps the driver's lazy default.
+    environ.clear()
+    environ.update(CUDA_MODULE_LOADING="LAZY", HIP_ENABLE_DEFERRED_LOADING="1")
+    _gpu.check("rocm", 0)
+    assert seen[-1] == {"CUDA_MODULE_LOADING": "LAZY", "HIP_ENABLE_DEFERRED_LOADING": "1"}
+    for off in ("0", " 0", "00", "no"):
+        environ.clear()
+        environ["KT2N_CUDA_EAGER"] = off
+        _gpu.check("rocm", 0)
+        assert seen[-1] == {"KT2N_CUDA_EAGER": off}, off
+    environ.clear()
+    environ["KT2N_CUDA_EAGER"] = "1"
+    _gpu.check("cuda", 0)
+    assert seen[-1] == {"KT2N_CUDA_EAGER": "1", "CUDA_MODULE_LOADING": "EAGER"}
