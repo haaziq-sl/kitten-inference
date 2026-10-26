@@ -646,11 +646,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v5  # before the download: a checkout cleans the folder
+
       - uses: actions/download-artifact@v7
         with:
           pattern: tts08-wheels-*
           path: dist
           merge-multiple: true
+
+      # The umbrella publishes only once every one of these wheels is on PyPI (pypi_ready.py COMPLETE), so an upload
+      # that stopped partway cannot let it out: this keeps that list and the build matrix in step.
+      - name: The wheels are the set the umbrella's release check waits for
+        run: python3 .github/scripts/pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
 
       # Besides the package files, this checks two things per wheel: every bundled library is named in the
       # shipped NOTICE, and on Windows every bundled MSVC runtime DLL is at least as new as the toolset that
