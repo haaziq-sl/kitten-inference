@@ -10,10 +10,13 @@ nothing (pip then fails, or falls back to the earlier kitten-inference 0.1.1).
 check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout;
 a failed request (an error answer from PyPI, a timeout, a dropped connection) counts as "not ready yet" and is tried
 again at the next check.
+A file counts only when PyPI's provenance for it (PEP 740, the attestation trusted publishing uploads with it) names
+this repository and the distribution's own workflow as its publisher. So a release someone else uploaded under one of
+the names (a squatted project name) never makes the umbrella publish; --publisher sets the repository.
 --only: just these distributions of the extras (the release order: the engine wheels before kitten-inference-tts2
 and kitten-inference-tts08, those before the umbrella). Without --only it also warns (GitHub annotation) while the
 earlier kitten-inference 0.1.0 / 0.1.1 are not yanked.
-Read-only: it only reads PyPI's JSON API.
+Read-only: it only reads PyPI's JSON and integrity APIs.
 """
 import argparse
 import http.client
@@ -36,6 +39,15 @@ PLATFORMS = {
     "kitten-inference-tts2-rocm": ["manylinux_2_28_x86_64"],
 }
 EARLIER = ("kitten-inference", ["0.1.0", "0.1.1"])
+# The workflow that publishes each distribution (RELEASING.md), as PyPI's provenance names it.
+WORKFLOWS = {
+    "kitten-inference": "packages.yml",
+    "kitten-inference-tts2": "packages.yml",
+    "kitten-inference-tts08": "tts-0.8.yml",
+    "kitten-inference-tts2-cu12": "tts-2-engine.yml",
+    "kitten-inference-tts2-rocm": "tts-2-rocm.yml",
+}
+PUBLISHER = "KittenML/kitten-inference"
 
 
 def requirements(pyproject: Path) -> dict:
@@ -87,6 +99,27 @@ def fetch(index: str, name: str):
         raise
 
 
+def fetch_provenance(index: str, name: str, version: str, filename: str):
+    """PyPI's provenance of one uploaded file (None when the file has none)."""
+    try:
+        with urllib.request.urlopen(f"{index}/integrity/{name}/{version}/{filename}/provenance", timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+
+
+def published_by(provenance, repository: str, workflow: str) -> bool:
+    """Whether a provenance names GitHub Actions in ``repository`` with ``workflow`` as the file's publisher."""
+    for bundle in (provenance or {}).get("attestation_bundles") or []:
+        pub = bundle.get("publisher") or {}
+        if (pub.get("kind") == "GitHub" and str(pub.get("repository", "")).lower() == repository.lower()
+                and str(pub.get("workflow", "")).rsplit("/", 1)[-1] == workflow):
+            return True
+    return False
+
+
 def only(reqs: dict, names: list) -> dict:
     """The requirements of just `names` (normalised); a name the extras do not list is an error."""
     if not names:
@@ -98,8 +131,9 @@ def only(reqs: dict, names: list) -> dict:
     return {n: reqs[n] for n in wanted}
 
 
-def missing(index: str, reqs: dict, get=fetch) -> list:
-    """What is not on the index yet: one line per distribution."""
+def missing(index: str, reqs: dict, get=fetch, provenance=None, publisher: str = PUBLISHER) -> list:
+    """What is not on the index yet: one line per distribution. With ``provenance`` (a fetch_provenance-like
+    function), only files that this repository's own workflow published count."""
     problems = []
     for name, spec in sorted(reqs.items()):
         info = get(index, name)
@@ -118,6 +152,15 @@ def missing(index: str, reqs: dict, get=fetch) -> list:
         absent = [p for p in PLATFORMS.get(name, []) if not any(w.endswith(f"-{p}.whl") for w in good[best])]
         if absent:
             problems.append(f"{name} {best}: no wheel for {', '.join(absent)}")
+            continue
+        if provenance is not None:
+            # One wheel per required platform (or the first one): a squatted project has none from this repository.
+            checks = [next(w for w in good[best] if w.endswith(f"-{p}.whl")) for p in PLATFORMS.get(name, [])]
+            for wheel in checks or sorted(good[best])[:1]:
+                if not published_by(provenance(index, name, best, wheel), publisher, WORKFLOWS.get(name, "")):
+                    problems.append(f"{name} {best}: {wheel} was not published by {publisher} "
+                                    f"({WORKFLOWS.get(name, '?')}); is the project name someone else's?")
+                    break
     return problems
 
 
@@ -134,13 +177,13 @@ TRANSIENT = (urllib.error.URLError, OSError, http.client.HTTPException, ValueErr
 
 
 def wait(index: str, reqs: dict, mode: str, timeout_s: float, every_s: float, get=fetch, sleep=time.sleep,
-         clock=time.monotonic) -> list:
+         clock=time.monotonic, provenance=None, publisher: str = PUBLISHER) -> list:
     """[] once every distribution is there; else the problems of the last check (mode check: after one check;
     mode wait: when the timeout has passed)."""
     deadline = clock() + timeout_s
     while True:
         try:
-            problems = missing(index, reqs, get=get)
+            problems = missing(index, reqs, get=get, provenance=provenance, publisher=publisher)
         except TRANSIENT as exc:
             problems = [f"PyPI request failed ({type(exc).__name__}: {exc}); trying again"]
         if not problems:
@@ -159,11 +202,13 @@ def main() -> int:
     p.add_argument("--timeout-minutes", type=float, default=120)
     p.add_argument("--every-seconds", type=float, default=60)
     p.add_argument("--only", action="append", default=[], help="just this distribution (repeatable)")
+    p.add_argument("--publisher", default=PUBLISHER, help="the repository whose workflows must have published the files")
     a = p.parse_args()
     reqs = only(requirements(a.pyproject), a.only)
     print("waiting for" if a.only else "the umbrella's extras need:",
           ", ".join(f"{n}{s}" for n, s in sorted(reqs.items())))
-    problems = wait(a.index, reqs, a.mode, a.timeout_minutes * 60, a.every_seconds)
+    problems = wait(a.index, reqs, a.mode, a.timeout_minutes * 60, a.every_seconds, provenance=fetch_provenance,
+                    publisher=a.publisher)
     if problems:
         what = "this distribution" if a.only else "the umbrella"
         print(f"::error::{what} must not be published before these are on PyPI: " + "; ".join(problems))

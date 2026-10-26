@@ -110,3 +110,34 @@ def test_wait_retries_a_failed_request(guard, capsys):
     clock = iter([0, 7201])
     answers.append(urllib.error.URLError("no route"))
     assert guard.wait("idx", reqs, "wait", 7200, 60, get=flaky, sleep=slept.append, clock=lambda: next(clock))
+
+
+def _provenance(guard, repository="KittenML/kitten-inference", asked=None):
+    def provenance(index, name, version, filename):
+        if asked is not None:
+            asked.append(filename)
+        if repository is None:
+            return None  # no attestation (an upload with an API token, or another publisher's tool)
+        return {"version": 1, "attestation_bundles": [{"publisher": {
+            "kind": "GitHub", "repository": repository, "workflow": guard.WORKFLOWS[name], "environment": "pypi"},
+            "attestations": []}]}
+    return provenance
+
+
+def test_only_files_this_repository_published_count(guard):
+    # The four new project names are public before the release. Someone who registers one and uploads 0.2.0 wheels
+    # must not make the umbrella (or kitten-inference-tts2) publish, pointing its extras at their package.
+    reqs = guard.requirements(PYPROJECT)
+    asked = []
+    assert guard.missing("idx", reqs, get=_pypi(FULL), provenance=_provenance(guard, asked=asked)) == []
+    assert "kitten_inference_tts2_cu12-0.2.0-py3-none-win_amd64.whl" in asked  # every required platform
+    for repository in ("someone/kitten-inference", None):
+        problems = guard.missing("idx", reqs, get=_pypi(FULL), provenance=_provenance(guard, repository))
+        assert len(problems) == 4 and all("was not published by KittenML/kitten-inference" in p for p in problems)
+    wrong_workflow = {"attestation_bundles": [{"publisher": {"kind": "GitHub", "repository": "KittenML/kitten-inference",
+                                                             "workflow": "other.yml"}}]}
+    assert not guard.published_by(wrong_workflow, "KittenML/kitten-inference", "tts-2-engine.yml")
+    assert guard.published_by({"attestation_bundles": [{"publisher": {
+        "kind": "GitHub", "repository": "kittenml/Kitten-Inference", "workflow": ".github/workflows/tts-2-engine.yml"}}]},
+        "KittenML/kitten-inference", "tts-2-engine.yml")
+    assert set(guard.WORKFLOWS) >= set(reqs) | {"kitten-inference"}

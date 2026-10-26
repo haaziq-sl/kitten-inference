@@ -33,14 +33,26 @@ On PyPI, add one trusted publisher (GitHub Actions) per project, all with owner 
 four do not exist yet: add each as a pending publisher (Your account, Publishing, "Add a new pending publisher"),
 which creates the project at its first upload.
 
-On GitHub, create the environment `pypi` (Settings, Environments). Adding required reviewers to it makes every upload
-wait for a manual approval.
+On GitHub, create the environment `pypi` (Settings, Environments) and protect it. Without that, anyone who can push a
+`v*` tag (any collaborator with write access, or a leaked token) chooses the workflow code that runs, and that code
+gets upload rights for all five projects:
+
+- Required reviewers: the maintainers who release. Every upload then waits for one of them to approve it in the run.
+- Deployment branches and tags: "Selected branches and tags", with one rule for the tag pattern `v*`. ("Protected
+  branches only" would never let a tag-triggered job use the environment.)
+- A tag ruleset (Settings, Rules, Rulesets; target: tags matching `v*`) that lets only those maintainers create,
+  update or delete such tags.
 
 No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`) are about 31 MB, under PyPI's
 100 MB limit.
 
 ## Release
 
+0. Just before tagging, check the four new names on PyPI: `https://pypi.org/project/<name>/` must still answer "Not
+   Found", and each must still be listed as a pending publisher in your account. A pending publisher does not reserve a
+   name. The jobs that wait for other distributions count only files whose PyPI provenance names
+   `KittenML/kitten-inference` and the distribution's own workflow (`.github/scripts/pypi_ready.py`), so a name someone
+   else took stops the release instead of being used by it.
 1. Tag the commit whose CI was tested. Every distribution's version must be the release's version, in each place it
    is written:
    - `kitten-inference`: `umbrella/pyproject.toml` and `__version__` in `umbrella/kitten_inference/__init__.py`;
