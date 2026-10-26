@@ -22,8 +22,22 @@
 
 #include "engine/model.hpp"
 #include "backend/backend.hpp"
+#ifdef HAVE_METAL
+#include "backend/metal/metal_backend.hpp"
+#endif
 
 namespace py = pybind11;
+
+// Every call into the engine that can run Metal work (loading, forward passes, backend selection) runs inside an
+// autorelease pool that is emptied when it returns: Python threads never empty one themselves.
+template <class F>
+static void in_autorelease_pool(F&& fn) {
+#ifdef HAVE_METAL
+    metal_autorelease_scope(std::forward<F>(fn));
+#else
+    fn();
+#endif
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +111,9 @@ PYBIND11_MODULE(_engine, m) {
     // ── Backend selection ─────────────────────────────────────────────────
     m.def("set_backend",
         [](const std::string& name) -> bool {
-            return set_active_backend(name.c_str());
+            bool ok = false;
+            in_autorelease_pool([&] { ok = set_active_backend(name.c_str()); });
+            return ok;
         },
         py::arg("name") = "cpu",
         "Select the active backend.\n\n"
@@ -179,7 +195,9 @@ PYBIND11_MODULE(_engine, m) {
         "    y1 = outputs['y1']\n")
 
         .def(py::init([](const std::string& arch_path, const std::string& weights_path) {
-                return std::make_unique<InferenceModel>(arch_path, weights_path);
+                std::unique_ptr<InferenceModel> model;
+                in_autorelease_pool([&] { model = std::make_unique<InferenceModel>(arch_path, weights_path); });
+                return model;
              }),
              py::arg("arch_path"), py::arg("weights_path"),
              "Load model from a JSON arch file and a W1X1 binary weights file.\n\n"
@@ -227,7 +245,7 @@ PYBIND11_MODULE(_engine, m) {
                 std::unordered_map<std::string, ModelIOTensor> outputs;
                 {
                     py::gil_scoped_release release;
-                    outputs = self.forward(named);
+                    in_autorelease_pool([&] { outputs = self.forward(named); });
                 }
                 std::vector<float> result;
                 const auto& out_names = self.output_names();
@@ -291,7 +309,7 @@ PYBIND11_MODULE(_engine, m) {
                 std::unordered_map<std::string, ModelIOTensor> outputs;
                 {
                     py::gil_scoped_release release;
-                    outputs = self.forward(named);
+                    in_autorelease_pool([&] { outputs = self.forward(named); });
                 }
 
                 std::unordered_map<std::string, py::array_t<float>> result;

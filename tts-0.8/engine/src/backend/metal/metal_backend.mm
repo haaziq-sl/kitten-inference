@@ -16,6 +16,7 @@
 #include "ops/metal_ops.hpp"
 #include "backend/cpu/ops_neon.hpp"
 
+#include <exception>
 #include <unordered_map>
 #include <mutex>
 #include <cstring>
@@ -308,6 +309,19 @@ id<MTLComputePipelineState> metal_get_pso(const char* name) {
         g_pso_cache[key] = pso;
     }
     return pso;
+}
+
+void metal_autorelease_scope(const std::function<void()>& fn) {
+    // No exception crosses the pool's end: it would skip emptying the pool.
+    std::exception_ptr error;
+    @autoreleasepool {
+        try {
+            fn();
+        } catch (...) {
+            error = std::current_exception();
+        }
+    }
+    if (error) std::rethrow_exception(error);
 }
 
 id<MTLCommandBuffer> metal_cmd_buf() {
