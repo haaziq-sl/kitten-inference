@@ -25,19 +25,33 @@ Open **Windows PowerShell as administrator** (Start menu: right-click Windows Po
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-New-Item -ItemType Directory -Force C:\kt2-downloads | Out-Null
-Set-Location C:\kt2-downloads
-curl.exe -fsSL -o vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
-(Start-Process -Wait -PassThru -FilePath .\vs_buildtools.exe -ArgumentList '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended').ExitCode
-curl.exe -fsSL -o cuda_12.8.1_windows.exe https://developer.download.nvidia.com/compute/cuda/12.8.1/local_installers/cuda_12.8.1_572.61_windows.exe
-(Start-Process -Wait -PassThru -FilePath .\cuda_12.8.1_windows.exe -ArgumentList '-s cudart_12.8 nvcc_12.8 nvfatbin_12.8 nvjitlink_12.8 cuobjdump_12.8 nvdisasm_12.8 cuxxfilt_12.8 nvprune_12.8 nvrtc_12.8 nvrtc_dev_12.8 nvtx_12.8 nvml_dev_12.8 cupti_12.8 sanitizer_12.8 curand_12.8 curand_dev_12.8 cublas_12.8 cublas_dev_12.8 thrust_12.8 cuda_profiler_api_12.8 visual_studio_integration_12.8 opencl_12.8 -n').ExitCode
-curl.exe -fsSL -o python-3.12.10-amd64.exe https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
-(Start-Process -Wait -PassThru -FilePath .\python-3.12.10-amd64.exe -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1').ExitCode
-curl.exe -fsSL -o Git-2.47.1-64-bit.exe https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe
-(Start-Process -Wait -PassThru -FilePath .\Git-2.47.1-64-bit.exe -ArgumentList '/VERYSILENT /NORESTART').ExitCode
+$ErrorActionPreference = 'Stop'
+# A private folder for this run, under your own profile. Do NOT use a fixed name under C:\ (for example
+# C:\kt2-downloads): a folder made directly under C:\ can be read and changed by every signed-in user, so on a
+# shared machine someone could swap an installer for their own before it runs with your administrator rights.
+$d = (New-Item -ItemType Directory (Join-Path $env:TEMP ([guid]::NewGuid()))).FullName
+
+function Get-Installer($url, $name) {
+  $f = Join-Path $d $name
+  curl.exe -fsSL -o $f $url
+  if ($LASTEXITCODE -ne 0) { throw "download failed: $url" }
+  $sig = Get-AuthenticodeSignature $f
+  if ($sig.Status -ne 'Valid') { throw "$name is not validly signed ($($sig.Status)); do not run it" }
+  Write-Host "$name signed by: $($sig.SignerCertificate.Subject)"
+  return $f
+}
+
+$vs = Get-Installer https://aka.ms/vs/17/release/vs_buildtools.exe vs_buildtools.exe
+(Start-Process -Wait -PassThru -FilePath $vs -ArgumentList '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended').ExitCode
+$cuda = Get-Installer https://developer.download.nvidia.com/compute/cuda/12.8.1/local_installers/cuda_12.8.1_572.61_windows.exe cuda_12.8.1_windows.exe
+(Start-Process -Wait -PassThru -FilePath $cuda -ArgumentList '-s cudart_12.8 nvcc_12.8 nvfatbin_12.8 nvjitlink_12.8 cuobjdump_12.8 nvdisasm_12.8 cuxxfilt_12.8 nvprune_12.8 nvrtc_12.8 nvrtc_dev_12.8 nvtx_12.8 nvml_dev_12.8 cupti_12.8 sanitizer_12.8 curand_12.8 curand_dev_12.8 cublas_12.8 cublas_dev_12.8 thrust_12.8 cuda_profiler_api_12.8 visual_studio_integration_12.8 opencl_12.8 -n').ExitCode
+$py = Get-Installer https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe python-3.12.10-amd64.exe
+(Start-Process -Wait -PassThru -FilePath $py -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1').ExitCode
+$git = Get-Installer https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe Git-2.47.1-64-bit.exe
+(Start-Process -Wait -PassThru -FilePath $git -ArgumentList '/VERYSILENT /NORESTART').ExitCode
 ```
 
-This downloads about 7 GB and takes about 10 to 30 minutes, depending on your connection. Each installer runs without windows and returns when it is done, and its line prints the installer's exit code: `0` means it worked (`3010` from Visual Studio also means it worked and asks for a restart later). Any other number means that installer failed; run its line again. The CUDA Toolkit is installed without its display driver, so your driver stays as it is. Visual Studio must be installed before the CUDA Toolkit, as above. If you already have Visual Studio 2022 with "Desktop development with C++", skip its two lines.
+This downloads about 7 GB and takes about 10 to 30 minutes, depending on your connection. Each installer is checked for a valid Authenticode signature before it runs (the line prints who signed it); a download that fails or a file that is not validly signed stops the script instead of running. Each installer runs without windows and returns when it is done, and its line prints the installer's exit code: `0` means it worked (`3010` from Visual Studio also means it worked and asks for a restart later). Any other number means that installer failed; run the script again. The CUDA Toolkit is installed without its display driver, so your driver stays as it is. Visual Studio must be installed before the CUDA Toolkit, as above. If you already have Visual Studio 2022 with "Desktop development with C++", skip its two lines.
 
 Close PowerShell when it is done.
 
