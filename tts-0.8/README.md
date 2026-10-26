@@ -78,11 +78,11 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
 - x86_64 needs a CPU with AVX2 (Intel Core since 2013, AMD since 2015), and Linux ARM64 an ARMv8.2
   CPU with dot-product instructions, such as a Raspberry Pi 5 (a Raspberry Pi 4 is not supported).
   On other CPUs, `KittenTTS()` stops with an error that names the missing instructions.
-- Keep the virtual environment's full path short: under about 100 characters on Linux and macOS, under
-  about 180 on Windows, and on Windows without non-ASCII letters (for example not inside a user folder named José).
-  Otherwise the text front end (espeak-ng) cannot find its data and ends the Python process, or on Windows
-  a longer path stops the import with a misleading "native engine ... is missing" error. kittenml 0.9.6
-  has the same limit on Linux and macOS.
+- Deep folders and, on Windows, folder names with non-ASCII letters (for example a user folder named José) work:
+  if the text front end's (espeak-ng) data path is too long or not plain ASCII, TTS 0.8 keeps one copy of that data in
+  a short folder (`~/.cache/kitten-inference/espeak`, on Windows `C:\ProgramData\kitten-inference\espeak-<id>`); you can
+  delete it at any time. On Windows, a virtual environment path longer than about 180 characters still stops the
+  import, with an error that says so: use a shorter folder or enable long paths.
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
@@ -90,6 +90,8 @@ the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
   cores' threads and lets the faster threads take more of its main matrix work, instead of splitting
   it evenly over every core (`OMP_NUM_THREADS` still sets the thread count). A short sentence (nano)
   took 0.12 s instead of 0.30 s on a Core i9-12900, and 0.09 s instead of 2.0 s on a Core i9-14900K.
+  If you set `OMP_NUM_THREADS` to every thread on such a CPU, also set `OMP_WAIT_POLICY=passive`: otherwise
+  calls can stall for seconds.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
   CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
   macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
