@@ -1,0 +1,148 @@
+# Runs the macOS instructions of README.md and tts-0.8/README.md on a fresh macOS runner, line by line, as a new
+# user would. The doc lines are in docs-macos/doc/ (copied byte for byte from the READMEs' code blocks).
+name: docs-macos
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "prep (machine checks only) or test (run the docs)"
+        required: true
+        default: prep
+        type: choice
+        options: [prep, test]
+      dist:
+        description: "distribution name for the pip install lines"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [ws/vb-macos]
+    paths: [".github/workflows/docs-macos.yml"]
+permissions:
+  contents: read
+jobs:
+  prep:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prep'
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      DIST: none
+    steps:
+      - name: Harness files
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/harness/doc"
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
+          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+            curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
+          done
+          shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
+      - name: Machine
+        run: |
+          sw_vers; uname -m; sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
+          echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
+          ls -l /usr/local/bin/python3* 2>&1 | head -5
+          echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"
+          echo "--- /etc/paths and /etc/paths.d"; cat /etc/paths; ls /etc/paths.d; cat /etc/paths.d/* 2>/dev/null | head -20
+          echo "--- env keys (names only)"; env | grep -o -E '^(PIP|PYTHON|HF_|HUGGING|XDG|OMP|VIRTUAL_ENV|CONDA|PIPX)[A-Za-z0-9_]*' | sort || true
+          echo "--- pip config"; python3 -m pip config debug 2>&1 | head -30
+          ls -la /etc/pip.conf "/Library/Application Support/pip" "$HOME/.config/pip" "$HOME/Library/Application Support/pip" "$HOME/.pip" 2>&1 | head
+          echo "--- runner home rc files"; ls -la "$HOME" | grep -E '\.(zsh|bash|profile)' || true
+          echo "--- Metal"; system_profiler SPDisplaysDataType 2>/dev/null | head -20
+      - name: TLS
+        run: |
+          for u in https://huggingface.co/api/models/KittenML/meownn-models https://pypi.org/simple/pip/ https://files.pythonhosted.org/ https://cdn-lfs.huggingface.co/; do
+            curl -sS -o /dev/null -w "$u http=%{http_code} ssl_verify=%{ssl_verify_result} ip=%{remote_ip}\n" "$u" || echo "$u FAILED"
+          done
+          echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+      - name: Shell smoke (zsh, zsh login, bash in a pseudo-terminal)
+        run: |
+          for s in P0-smoke-zsh P0-smoke-zsh-login P0-smoke-bash; do
+            /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" "$s" "$RUNNER_TEMP/out/$s" || echo "harness rc $?"
+          done
+
+  test:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'test'
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [bash, zsh]
+    name: test (${{ matrix.group }})
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      DIST: ${{ inputs.dist }}
+    steps:
+      - name: Harness files
+        run: |
+          set -eu
+          test -n "$DIST"
+          mkdir -p "$RUNNER_TEMP/harness/doc" "$RUNNER_TEMP/out"
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/docs-macos"
+          for f in driver.py post.py claims.py doc/top_tts08_block.sh doc/top_use_from_python_tts08.py doc/pkg_install_block.sh doc/pkg_use.py; do
+            curl -fsSL --retry 3 "$base/$f" -o "$RUNNER_TEMP/harness/$f"
+          done
+          shasum -a 256 "$RUNNER_TEMP"/harness/*.py "$RUNNER_TEMP"/harness/doc/*
+      - name: Machine
+        run: |
+          sw_vers; uname -m; sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          which -a python3; python3 --version; /usr/bin/python3 --version
+          curl -sS -o /dev/null -w "huggingface.co http=%{http_code} ssl_verify=%{ssl_verify_result}\n" https://huggingface.co/api/models/KittenML/meownn-models
+          curl -sS -o /dev/null -w "pypi.org http=%{http_code} ssl_verify=%{ssl_verify_result}\n" https://pypi.org/simple/pip/
+          curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))'
+      - name: S1 bash, README.md TTS 0.8 block and Python example
+        if: matrix.group == 'bash'
+        timeout-minutes: 25
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S1-bash "$RUNNER_TEMP/out/S1-bash" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S1-bash" || echo "post rc $?"
+      - name: S2 bash, tts-0.8/README.md Install and Use, then the README's options
+        if: matrix.group == 'bash'
+        timeout-minutes: 30
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S2-bash-pkg "$RUNNER_TEMP/out/S2-bash-pkg" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S2-bash-pkg" || echo "post rc $?"
+      - name: S3 bash, README.md TTS 0.8 block in a deep folder with a non-ASCII name
+        if: matrix.group == 'bash'
+        timeout-minutes: 20
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S3-bash-deep "$RUNNER_TEMP/out/S3-bash-deep" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S3-bash-deep" || echo "post rc $?"
+      - name: S4 replay of the whole path in one interactive bash (pseudo-terminal)
+        if: matrix.group == 'bash'
+        timeout-minutes: 30
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S4-bash-pty-replay "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S4-bash-pty-replay" || echo "post rc $?"
+      - name: S5 interactive zsh (macOS default shell), lines as pasted
+        if: matrix.group == 'zsh'
+        timeout-minutes: 30
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S5-zsh-pty "$RUNNER_TEMP/out/S5-zsh-pty" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S5-zsh-pty" || echo "post rc $?"
+      - name: S6 zsh login shell with the stock macOS PATH (python3 from Apple), lines as pasted
+        if: matrix.group == 'zsh'
+        timeout-minutes: 30
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S6-zsh-login-system "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S6-zsh-login-system" || echo "post rc $?"
+      - name: S7 bash with the stock macOS PATH, README.md TTS 0.8 block
+        if: matrix.group == 'zsh'
+        timeout-minutes: 20
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S7-bash-system "$RUNNER_TEMP/out/S7-bash-system" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S7-bash-system" || echo "post rc $?"
+      - name: S8 bash with the stock macOS PATH, the "[tts-0-8]" line for a pip you cannot upgrade
+        if: matrix.group == 'zsh'
+        timeout-minutes: 20
+        run: |
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/driver.py" S8-bash-system-oldpip "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "driver rc $?"
+          /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "post rc $?"
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-macos-${{ matrix.group }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
