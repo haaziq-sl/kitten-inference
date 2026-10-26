@@ -33,10 +33,15 @@ try:
 except ImportError:  # Python < 3.11
     tomllib = None
 
-# The platforms each engine ships wheels for (CONTRACT.md); any wheel will do for the others.
+# The platforms each distribution must have a wheel for before it counts as ready, and whose provenance is checked
+# (CONTRACT.md); any wheel will do for distributions not listed. tts-0.8 uploads ~65 wheels in one sorted twine run,
+# so its Windows wheel (win_amd64) is the last uploaded: requiring it catches an upload that stopped partway (for
+# example on a network error after the macOS and Linux files), which would otherwise let the umbrella publish while
+# `pip install "kitten-inference[tts-0.8]"` has no Windows wheel.
 PLATFORMS = {
     "kitten-inference-tts2-cu12": ["manylinux_2_28_x86_64", "win_amd64"],
     "kitten-inference-tts2-rocm": ["manylinux_2_28_x86_64"],
+    "kitten-inference-tts08": ["win_amd64"],
 }
 EARLIER = ("kitten-inference", ["0.1.0", "0.1.1"])
 # The workflow that publishes each distribution (RELEASING.md), as PyPI's provenance names it.

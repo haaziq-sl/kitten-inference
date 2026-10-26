@@ -68,6 +68,20 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
 3. Watch the four runs. The CUDA wheel jobs fail unless their GPU code is the reference's; their logs say
    `SASS check: IDENTICAL`. The Windows CUDA wheel takes 35 to 60 minutes (36, 38, 52 and 57 in four runs; at most
    about 4 hours): its build compiles the CUDA-core decode kernels again until their GPU code is the reference's.
+
+   What the tag run rebuilds and what the gates tested are not the same bytes. Each publish job uploads the wheels
+   its own tag run built, not the gate artifacts, and a rebuild is not reproducible host-side: the Windows CUDA
+   wheel's size moved by 2 bytes between two runs of the same source (its GPU code still passed `SASS check`, which
+   compares only the GPU code). So before you approve the `pypi` environment for each job, confirm the tag run's
+   wheel is the one the gates passed:
+   - the CUDA jobs must print `SASS check: IDENTICAL` (GPU code == the reference);
+   - every wheel passes its wheel-content check and, on a GPU box, the 36/36 PCM and the cloning smoke;
+   - the tts-0.8 build backend is pinned (`scikit-build-core==…`, `pybind11==…` in `tts-0.8/pyproject.toml`) so its
+     metadata cannot drift between the gate build and the tag build.
+
+   For a stronger guarantee, download the gated run's artifacts (`gh run download <run-id>`) and the tag run's and
+   compare their sha256; approve only if they match or the only differences are the known host-code non-determinism
+   above. Do not approve a job whose wheels you have not tied back to a gate.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
    the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. Then remove the lines
    about 0.1.1 from `umbrella/README.md` and `tts-2/python/README.md`.

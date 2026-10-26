@@ -29,7 +29,9 @@ def _pypi(releases):
 
 
 FULL = {
-    "kitten-inference-tts08": {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64")]},
+    "kitten-inference-tts08": {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64"),
+                                         _wheel("kitten-inference-tts08", "0.2.0", "macosx_11_0_arm64"),
+                                         _wheel("kitten-inference-tts08", "0.2.0", "win_amd64")]},
     "kitten-inference-tts2": {"0.2.0": [_wheel("kitten-inference-tts2", "0.2.0")]},
     "kitten-inference-tts2-cu12": {"0.2.0": [_wheel("kitten-inference-tts2-cu12", "0.2.0", "manylinux_2_28_x86_64"),
                                              _wheel("kitten-inference-tts2-cu12", "0.2.0", "win_amd64")]},
@@ -63,6 +65,17 @@ def test_missing_platform_and_wrong_versions(guard):
     problems = guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(releases))
     assert problems == ["kitten-inference-tts2-cu12 0.2.0: no wheel for win_amd64",
                         "kitten-inference-tts2-rocm: no release >=0.2.0,<0.3 with wheels"]
+
+
+def test_tts08_needs_its_windows_wheel(guard):
+    # tts-0.8 uploads its ~65 wheels in one sorted run, Windows last. An upload that stopped before the Windows
+    # wheel (its macOS and Linux files up) must not count as ready, or the umbrella would publish with no tts08
+    # Windows wheel behind the [tts-0.8] extra.
+    releases = dict(FULL)
+    releases["kitten-inference-tts08"] = {"0.2.0": [_wheel("kitten-inference-tts08", "0.2.0", "manylinux_2_17_x86_64"),
+                                                    _wheel("kitten-inference-tts08", "0.2.0", "macosx_11_0_arm64")]}
+    problems = guard.missing("idx", guard.requirements(PYPROJECT), get=_pypi(releases))
+    assert problems == ["kitten-inference-tts08 0.2.0: no wheel for win_amd64"]
 
 
 def test_versions(guard):

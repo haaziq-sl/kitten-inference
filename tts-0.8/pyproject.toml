@@ -1,7 +1,9 @@
 [build-system]
+# Pinned exactly (like hatchling==1.27.0 for the pure-Python distributions), so the wheel a release tag builds is
+# built with the same backend as the one the gates tested; an unpinned range would let these drift between runs.
 requires = [
-    "scikit-build-core>=0.12",
-    "pybind11>=3.0",
+    "scikit-build-core==1.1.1",
+    "pybind11==3.1.0",
 ]
 build-backend = "scikit_build_core.build"
 

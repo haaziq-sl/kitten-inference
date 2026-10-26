@@ -70,13 +70,18 @@ jobs:
         run: |
           $installer = "$env:RUNNER_TEMP\cuda_12.8.1_windows_network.exe"
           Invoke-WebRequest -Uri https://developer.download.nvidia.com/compute/cuda/12.8.1/network_installers/cuda_12.8.1_windows_network.exe -OutFile $installer
+          # Run it only if it carries a valid NVIDIA Authenticode signature (a network installer's bytes change, so a
+          # fixed hash would not do): otherwise a tampered download would run with the job's privileges.
+          $sig = Get-AuthenticodeSignature $installer
+          if ($sig.Status -ne 'Valid') { throw "CUDA installer signature is $($sig.Status)" }
+          if ($sig.SignerCertificate.Subject -notmatch 'NVIDIA') { throw "CUDA installer not signed by NVIDIA: $($sig.SignerCertificate.Subject)" }
           $p = Start-Process -FilePath $installer -ArgumentList '-s nvcc_12.8 cudart_12.8 curand_12.8 curand_dev_12.8 thrust_12.8 cuobjdump_12.8 nvdisasm_12.8 visual_studio_integration_12.8' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "CUDA installer failed with exit code $($p.ExitCode)" }
           $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
           & "$cuda\bin\nvcc.exe" --version
           "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job that builds the published wheel)
         with:
           arch: x64
       - name: Build tools
@@ -122,7 +127,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job)
         if: runner.os == 'Windows'
         with:
           arch: x64

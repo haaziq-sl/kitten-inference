@@ -127,7 +127,7 @@ jobs:
         with:
           name: stubs-old
           path: stubs-old
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job)
         if: runner.os == 'Windows'
       # ffmpeg on every OS: the clone_voice decode tests (stdin pipe and by-name fallback) must run everywhere.
       - name: ffmpeg (Linux)
@@ -202,7 +202,7 @@ jobs:
         run: |
           echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
           echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff  # v6: pinned to a commit (a movable tag could run other code in the job)
         with:
           version: "0.13.5"
       - uses: actions/download-artifact@v4
@@ -367,7 +367,8 @@ jobs:
   # for it (a post release of another distribution).
   publish-tts2:
     if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
-    needs: [test]
+    # lowest-deps as well as test: the declared dependency floors are tested before the upload, as tts-0.8.yml does.
+    needs: [test, lowest-deps]
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     environment: pypi
