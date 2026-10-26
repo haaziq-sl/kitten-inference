@@ -7,8 +7,25 @@ Tested on Windows Server 2022 with an NVIDIA L4 (a 24 GB data-centre GPU run wit
 ## What works, and what does not yet
 
 - Works: streaming and `--stream false`, all built-in voices, the voice cache and memory options, WAV or PCM output to a file or to standard output, Unicode text and non-ASCII file and folder names, UTF-8 text files with or without a byte order mark (UTF-16 files are refused), and the C API (`kt2n_engine.dll`, `include/kt2n/engine.h`).
-- Voice cloning: with the pip package (`pip install "kitten-inference[tts-2]"`), which decodes the recording with the FFmpeg program; built; passes an automated check, not tested by hand. The source build on this page leaves it out; see [Voice cloning](#voice-cloning).
+- Voice cloning: with the pip package (`pip install "kitten-inference[tts-2]"`), which decodes the recording with the FFmpeg program. The source build on this page leaves it out; see [Voice cloning](#voice-cloning).
 - Not yet: the MP3, AAC, Opus and FLAC encoders, and the C examples in `examples/`. `kt2n_event_fd()` returns -1 on Windows: wait in `kt2n_poll()` with a timeout instead.
+
+## Install with pip instead of building
+
+With Python 3.9 or newer from python.org, the NVIDIA driver 570 or newer and no other tools, in a Command Prompt:
+
+```bat
+py -m venv .venv
+.venv\Scripts\activate
+python -m pip install -U pip
+pip install "kitten-inference[tts-2]"
+kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
+```
+
+`python -m pip install -U pip` comes first because pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
+The first run downloads and prepares the model: 160 s on our Windows test machine (31 s download, 129 s preparation);
+later runs reuse it. Seeded complete files are byte for byte the same as on Linux with the same GPU model (36 of 36
+test requests). The Python API is in [python/README.md](../python/README.md).
 
 ## Requirements
 
@@ -133,7 +150,7 @@ Copy `kitten-tts-native.exe`, `kt2n_engine.dll` and the `models\kitten-tts-2` fo
 
 ## Voice cloning
 
-The pip package builds voices on Windows with the FFmpeg program (`winget install --id Gyan.FFmpeg -e`; built; passes an automated check, not tested by hand). The `windows` preset on this page builds without voice cloning. A cloning build compiles with a shared FFmpeg 8.1 build for Windows: add `-DKT2N_BUILD_CLONING=ON -DKT2N_VOICE_AV=ON -DCMAKE_PREFIX_PATH=<FFmpeg folder>` to `cmake --preset windows`, and copy FFmpeg's `bin\*.dll` files next to `kitten-tts-native.exe`. Building a voice that way has not been tested on Windows.
+The pip package builds voices on Windows with the FFmpeg program: `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and run `.venv\Scripts\activate` again. Windows 10 and 11 include winget; on Windows Server 2022, install winget (App Installer) first. Building, saving and loading a voice gave the same voice file and the same audio as on Linux for WAV and MP3 recordings; with an M4A recording, FFmpeg 9 (what winget installs today) gives a slightly different voice file (the speech was the same in our test). The `windows` preset on this page builds without voice cloning. A cloning build compiles with a shared FFmpeg 8.1 build for Windows: add `-DKT2N_BUILD_CLONING=ON -DKT2N_VOICE_AV=ON -DCMAKE_PREFIX_PATH=<FFmpeg folder>` to `cmake --preset windows`, and copy FFmpeg's `bin\*.dll` files next to `kitten-tts-native.exe`. Building a voice that way has not been tested on Windows.
 
 ## Tips
 

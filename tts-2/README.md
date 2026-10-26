@@ -1,6 +1,6 @@
 # Kitten TTS 2 native
 
-A fast C++/CUDA inference engine for [Kitten TTS 2](https://huggingface.co/KittenML/kitten-tts-2) on NVIDIA GPUs, with a ROCm build for AMD Radeon RX 7000 and RX 9000. **First audio in under 10 ms when streaming, and complete files 6 to 10 times faster than Kitten TTS 2 on vLLM or llama.cpp.** It ships as a C library and a command-line tool, and needs no Python, PyTorch or network connection at run time.
+A fast C++/CUDA inference engine for [Kitten TTS 2](https://huggingface.co/KittenML/kitten-tts-2) on NVIDIA GPUs, with a ROCm build for AMD Radeon RX 7000 and RX 9000. **On an RTX PRO 6000 it streams its first audio after about 11 ms and makes complete files 5 to 7 times faster than Kitten TTS 2 on vLLM or llama.cpp. On smaller GPUs the lead is smaller, but it is still 2.4 times or more on a 12 GB RTX 3060.** It ships as a C library and a command-line tool, and needs no Python, PyTorch or network connection at run time. From Python, install it with pip instead: see [python/README.md](python/README.md).
 
 - Built-in voices, expression tags and vocal events
 - Voice cloning from a short recording, with saved, reusable voices
@@ -12,16 +12,18 @@ This page covers Linux with an NVIDIA GPU. For Windows see [docs/windows.md](doc
 
 ## Performance
 
-One request at a time on an NVIDIA RTX PRO 6000 (96 GB), measured with an earlier revision of the model (47 voices). Every engine speaks the same text and returns the complete audio.
+One request at a time on an NVIDIA RTX PRO 6000 (96 GB) with the current model, through the pip package with its default settings (the bundled command-line tool gives the same within 2%). Every engine speaks the same texts with the same voice and seeds and returns the complete audio; medians of 300 short and 12 long texts.
 
 | Engine | Short text (one chunk) | Long text (about three chunks) | GPU memory |
 |---|---:|---:|---:|
-| **Kitten TTS 2 native** | **68 ms** | **0.73 s** | 20.3 GiB (default profile); 7.9-9.4 GiB with `--memory-profile low` |
-| Kitten TTS 2 on vLLM, 4-bit weights | 594 ms | 4.8 s | 8.4-10.0 GiB |
-| Kitten TTS 2 on vLLM, bf16 | 702 ms | 5.9 s | 10.3-11.9 GiB |
-| Kitten TTS 2 on llama.cpp (GPU) | 600 ms | 6.0 s | 2.6-3.5 GiB |
+| **Kitten TTS 2 native** | **82 ms** | **0.95 s** | 12.8 GiB (default profile, one voice) |
+| Kitten TTS 2 on vLLM, 4-bit weights | 453 ms (5.5x) | 4.9 s (5.1x) | 49.5-51.9 GiB (vLLM's default takes half the GPU) |
+| Kitten TTS 2 on vLLM, bf16 (its default) | 584 ms (7.2x) | 6.6 s (6.9x) | 49.5-51.4 GiB |
+| Kitten TTS 2 on llama.cpp (GPU) | 520 ms (6.4x) | 5.4 s (5.6x) | 2.7-4.8 GiB |
 
-When streaming, the native engine sends its first audio after **9.8 ms** (median; 17.6 ms at the 95th percentile). Its default profile reserves GPU memory up front so that it can serve several streams at once; see [Using less GPU memory](#using-less-gpu-memory).
+When streaming, the native engine sends its first audio after **11.4 ms** (median; 11.6 ms at the 95th percentile, 300 requests). vLLM and llama.cpp stream one whole sentence at a time, so on a short text their first audio comes with the complete file (481 to 643 ms). Word error rate is 0.02 to 0.05% for all four on the short texts. vLLM ran through `kittenml[vllm]` 0.9.6. The default profile reserves GPU memory up front so that it can serve several streams at once; see [Using less GPU memory](#using-less-gpu-memory).
+
+On smaller GPUs the same comparison gives a smaller lead, because the native engine's speed follows the GPU's memory speed while vLLM and llama.cpp lose a roughly fixed time per token on the processor: complete files 4.5 to 6.9 times faster and first audio after 22 ms on an RTX 4090, 2.4 to 4.3 times and 58 ms on a 12 GB RTX 3060 (with the low-memory profile, which the tool picks there by itself). Tables: [docs/consumer-gpus.md](docs/consumer-gpus.md#against-vllm-and-llamacpp).
 
 ## Supported GPUs
 
@@ -29,24 +31,24 @@ When streaming, the native engine sends its first audio after **9.8 ms** (median
 |---|---|
 | NVIDIA GeForce RTX 30 series and newer, and other NVIDIA GPUs with compute capability 8.0 or newer | supported |
 | NVIDIA GeForce GTX 10, GTX 16 and RTX 20 series (compute capability 6.1 and 7.5) | supported, not optimal: these GPUs have no bf16 tensor cores, so part of the math runs in software. Real-time factor 0.22 to 0.76 with `--stream false` on the cards we measured, against 0.03 to 0.17 for RTX 30 series and newer. The audio is close to, not bit for bit the same as, a newer GPU's |
-| AMD Radeon RX 7000 and RX 9000 | supported with a separate build (RX 7600 and RX 7600 XT: builds, not tested); the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
+| AMD Radeon RX 7000 and RX 9000 | supported with a separate build, tested inside WSL2 on Windows (RX 7600 and RX 7600 XT: builds, not tested); no voice cloning in the pip package (the source build includes it, not tested on Radeon); the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
 | Other GPUs: NVIDIA compute capability 6.0, 7.0 or older; AMD RX 6000 and older, Instinct | not supported: the engine stops at start and says so |
 
 A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce.
 
 ### GPU memory
 
-`kitten-tts-native` picks its memory settings from the free GPU memory, so it started without options on every supported GPU with 4 GB or more that we tested (20 cards, with the earlier 47-voice revision of the model). Smaller GPUs give up some speed or features:
+`kitten-tts-native` and the pip package pick their memory settings from the free GPU memory, so they start without options on supported GPUs with 4 GB or more (the command-line tool was tested this way from 4 GB up with the earlier 47-voice revision; the pip package on 12 GB and larger cards). Smaller GPUs give up some speed or features:
 
 | GPU memory | What you get |
 |---|---|
 | 24 GB or more | Everything, at full speed. |
-| 10 to 16 GB | When the default profile does not fit (it needs about 11 to 13 GB, depending on the card, measured with the earlier 47-voice revision), the tool uses the low-memory profile: supported, not optimal, because several requests at once share smaller buffers. One request at a time runs as fast (real-time factor 0.050 against 0.051 on a 16 GB card). Building a cloned voice needs about 11.3 GB of free GPU memory with the low-memory profile (15.6 GB with the default one); it was tested end to end on a 16 GB card. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory; on 10 GB cards it does not fit. |
+| 10 to 16 GB | When the default profile does not fit (about 13,500 MiB with one voice), the tool uses the low-memory profile (about 9,100 MiB): supported, not optimal, because several requests at once share smaller buffers. One request at a time runs as fast (real-time factor 0.050 against 0.051 on a 16 GB card). Building a cloned voice needs about 11,300 MiB of free GPU memory with the low-memory profile (15,600 MiB with the default one); it was tested end to end on a 16 GB card. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory; on 10 GB cards it does not fit. |
 | 4 to 8 GB | Supported, not optimal: one request at a time, and the tool fits its buffers to the card, which makes complete files (`--stream false`) about 1.5% slower. On 4 GB cards, long streaming text is cut into shorter pieces, so the audio can differ from a larger GPU's (on long texts, word error rate 1.43% against 0.58% without the cut). No voice cloning: use a voice saved on a larger GPU. |
 | 3 GB | Not tested. |
 | 2 GB | Not supported: the engine needs about 2,583 MiB of free GPU memory and says so at start. |
 
-The model comes from the latest revision on Hugging Face, which has 115 built-in voices. Unless a figure says otherwise, the speed, quality and memory figures in these docs were measured with an earlier revision with 47 voices; the tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
+The model comes from the latest revision on Hugging Face, which has 115 built-in voices. The figures on this page were measured with it, except these, which were measured with an earlier revision with 47 voices: the speed and word error rate figures in [Supported GPUs](#supported-gpus) and [GPU memory](#gpu-memory) (from [docs/consumer-gpus.md](docs/consumer-gpus.md)), the 2,583 MiB minimum, the 1.5% for cards with about 8 GB or less, the start without options on 4 GB cards, and the CUDA 13 comparison in the Quick start. The tool's own choices above use only the voice it speaks with, so the voice count matters mainly when all voices are prepared (`--voice-cache all`).
 
 ## Requirements
 
@@ -187,7 +189,7 @@ Ctrl-C cancels a running request; the tool then exits with status 130. The exit 
 
 ## Voice cloning
 
-Cloning needs the `default` build from the Quick start, extra model files, and about 11.3 GB of free GPU memory while the voice is built. Building, saving and loading a cloned voice was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory (measured with the Python package: building worked with 11,285 MiB free and failed with 11,157 MiB free). On GPUs with 8 GB or less, cloning is off: the engine starts, and building a voice fails with a message that says so. On those cards and on 10 GB cards, build and save the voice on a larger GPU, then load it.
+Cloning needs the `default` build from the Quick start, extra model files, and about 11,300 MiB (11 GB) of free GPU memory while the voice is built. Building, saving and loading a cloned voice was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits when other programs use at most about 500 MiB of GPU memory (measured with the Python package: building worked with 11,285 MiB free and failed with 11,157 MiB free). On GPUs with 8 GB or less, cloning is off: the engine starts, and building a voice fails with a message that says so. On those cards and on 10 GB cards, build and save the voice on a larger GPU, then load it.
 
 In the repository folder after the Quick start, add the cloning files to the prepared model once, in the same environment (no Hugging Face account needed):
 
@@ -208,15 +210,15 @@ build/default/bin/kitten-tts-native --assets models/kitten-tts-2 \
   --text "Using the saved voice." --output saved.wav
 ```
 
-Building a cloned voice needs about 15.6 GB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 11.3 GB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. Speaking with it needs about 13.5 GB of GPU memory with the default profile and 9.2 GB with the low-memory one; on smaller cards the tool fits its buffers to the card, as with built-in voices. Without a `--voice-cache` option the tool keeps only the voice it speaks with on the GPU, for built-in, cloned and loaded voices alike, so loading needs no extra option on small cards.
+Building a cloned voice needs about 15,600 MiB of GPU memory with the default profile; with less, the tool uses the low-memory profile for it, which needs about 11,300 MiB (the audio is the same). A saved voice works only with the same prepared model: the same model revision prepared by this version on any machine, or a copy of the same folder. A voice saved with a model prepared by an earlier version does not load with a model prepared by this version: keep that model folder for it, or build and save the voice again. Loading a saved voice needs neither the cloning files nor Hugging Face access. Speaking with it needs about 13,500 MiB of GPU memory with the default profile and 9,200 MiB with the low-memory one; on smaller cards the tool fits its buffers to the card, as with built-in voices. Without a `--voice-cache` option the tool keeps only the voice it speaks with on the GPU, for built-in, cloned and loaded voices alike, so loading needs no extra option on small cards.
 
 ## Using less GPU memory
 
 `kitten-tts-native` picks working settings by itself (see [GPU memory](#gpu-memory)); the options below are for several streams, the C API, and using less memory. They can be combined and do not change the audio of `--stream false` requests.
 
 - `--memory-profile auto|default|low`: without the option the tool uses `auto`, which takes the default profile when it fits the free GPU memory and `low` otherwise, and prints one line when it picks `low`. `low` sizes the engine's buffers for the requests it actually serves, and fits itself to cards with about 8 GB or less (supported, not optimal: one stream, `--stream false` about 1.5% slower). An explicit `--memory-profile default` on a GPU too small for it stops at start and says how much it needs.
-- `--voice-cache all|lru|none` keeps all built-in voices on the GPU, only the recently used ones, or only the ones in use. Without the option, the tool prepares only the voice it speaks with. `--voice-cache-voices N` and `--voice-cache-mib N` set the cache size and need an explicit `--voice-cache lru` or `none`. Plain `--voice-cache lru` sets aside room for 16 voices (about 3 GB with the earlier 47-voice revision), which does not fit on 4 GB cards.
-- In the C API, set `memory_profile` to `KT2N_MEMORY_PROFILE_AUTO` for the same choice; the C API defaults are the default profile and all voices prepared, which need about 33 GB with the 115 voices of the current revision, more than a 24 GB card has (21 GB with the earlier 47-voice revision).
+- `--voice-cache all|lru|none` keeps all built-in voices on the GPU, only the recently used ones, or only the ones in use. Without the option, the tool prepares only the voice it speaks with. `--voice-cache-voices N` and `--voice-cache-mib N` set the cache size and need an explicit `--voice-cache lru` or `none`. Plain `--voice-cache lru` sets aside room for 16 voices (about 3,000 MiB), which does not fit on 4 GB cards.
+- In the C API, set `memory_profile` to `KT2N_MEMORY_PROFILE_AUTO` for the same choice; the C API defaults are the default profile and all voices prepared, which need about 33,200 MiB with the 115 voices of the current model, more than a 24 GB card has.
 
 [docs/memory.md](docs/memory.md) explains each setting, the small-GPU fit and the C API fields; [docs/consumer-gpus.md](docs/consumer-gpus.md) has the measured numbers.
 

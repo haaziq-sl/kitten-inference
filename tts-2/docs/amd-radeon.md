@@ -4,14 +4,16 @@ Kitten TTS 2 native runs on AMD Radeon RX 7000 (RDNA3) and RX 9000 (RDNA4) GPUs 
 up ROCm inside WSL2 (the Linux subsystem of Windows), then build and run the engine there. Measured numbers are in
 [Consumer GPUs](consumer-gpus.md#amd-radeon).
 
-Tested inside WSL2 on Windows desktops with an RX 7900 XTX, RX 7900 XT, RX 7800 XT, RX 9070 XT and RX 9060 XT. Linux
-without WSL2 (bare metal) was not tested.
+Tested inside WSL2 on Windows desktops with RX 7000 and RX 9000 cards. Linux without WSL2 (bare metal) was not
+tested: there, install ROCm 7 with [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution in
+place of step 1.
 
 ## What works, and what does not yet
 
 - Works: speech with every built-in voice, streaming and `--stream false`, the voice cache and memory options, saved
   voices (`--load-voice`) and the C API.
-- Voice cloning builds, but was not tested on Radeon.
+- No voice cloning: the `hip` build compiles it, but it was not tested on Radeon, and the pip package leaves it out.
+  Build and save a voice on an NVIDIA GPU, then load it here with `--load-voice`.
 - The audio is close to, not bit for bit the same as, an NVIDIA GPU's; see
   [Output differences](consumer-gpus.md#output-differences). These steps install ROCm 7.2; our measured numbers were
   made with ROCm 7.1 builds. A ROCm 7.2 build differs from a ROCm 7.1 build only at the level of rounding (about -60
@@ -19,14 +21,12 @@ without WSL2 (bare metal) was not tested.
   With the ROCm 7.2 runtime, the first request of each process on an RX 7900 XTX often starts its audio about 17 ms
   later than with ROCm 7.1 (66 against 49 ms); later requests in the same process, complete files and the RX 9070 XT
   are not affected.
-- Cards with less memory: on an RX 9060 XT 16 GB with only 12 GB free (simulated), the tool picks the low-memory
-  profile; with 8 GB or 7 GB free (simulated), it fits that profile to the card, as on an 8 GB NVIDIA card. Supported,
-  not optimal: the low profile batches several requests at once less, and when fitted it serves one stream and has no
-  voice cloning. The audio of complete files is the same, at the same speed (real-time factor 0.095 fitted and 0.095
-  with the standard low profile). Real 8 GB Radeons and the RX 7700 XT were not tested.
-- Under WSL2, when the low-memory profile fits itself to the card, it keeps at least 1 GiB of GPU memory free: some
-  RX 7900 XT and RX 7900 XTX PCs hang when free memory gets below about 0.5 GB. On a simulated 8 GB card this cost
-  nothing (the same fitted sizes and the same audio).
+- Cards with less free memory: as on NVIDIA, the tool picks the low-memory profile, and on 8 GB cards it fits that
+  profile to the card. Supported, not optimal: several requests at once are batched less, and when fitted it serves
+  one stream and has no voice cloning. Complete files keep the same audio and speed (real-time factor 0.095 on an
+  RX 9060 XT). 8 GB Radeons and the RX 7700 XT were not tested.
+- Under WSL2 the fitted profile keeps at least 1 GiB of GPU memory free, because some RX 7900 XT and XTX PCs hang
+  below about 0.5 GB free.
 - Supported GPUs: gfx1100 and gfx1101 (RX 7900 and RX 7800 / 7700 series) and gfx1200 and gfx1201 (RX 9000). The
   build also includes gfx1102 (RX 7600 and RX 7600 XT), but AMD's WSL2 support does not include these cards and bare
   metal was not tested, so they are not tested. Other AMD GPUs stop at start with one of these
@@ -43,9 +43,8 @@ without WSL2 (bare metal) was not tested.
 ## Requirements
 
 - An AMD Radeon RX 7000 or RX 9000 GPU (not the RX 7600 or RX 7600 XT under WSL2, see above).
-- Windows 11 with WSL2 and the AMD Adrenalin driver with WSL2 support. AMD's WSL2 guide names Adrenalin 26.2.2 for
-  WSL2 with ROCm 7.2; the PCs we ran on had Adrenalin 26.10.41.01 and 26.20.15.07. We could not run the Windows-side
-  setup ourselves, so the Windows part of step 1 below is not tested.
+- Windows 11 with WSL2 and the AMD Adrenalin driver with WSL2 support (AMD's WSL2 guide names Adrenalin 26.2.2 for
+  WSL2 with ROCm 7.2). The Windows part of step 1 is AMD's procedure and is not tested here.
 - About 45 GB of free disk space (ROCm takes about 22 GB) and at least 8 GB of RAM inside WSL2. WSL2 gets half of the
   PC's memory by default, so that means 16 GB in the PC.
 
@@ -96,6 +95,7 @@ After step 1, pip can install the engine, in place of steps 2 to 4:
 sudo apt-get install -y python3-venv
 python3 -m venv ~/kitten-tts
 . ~/kitten-tts/bin/activate
+python -m pip install -U pip                 # pip older than 23.3 skips the "[tts-0.8]" extra with only a warning
 pip install "kitten-inference[tts-2-rocm]"
 kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
 ```
@@ -105,8 +105,9 @@ gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. Its audio is the same as that of
 builds our numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding
 (about -60 to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7`
 from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first run downloads and
-prepares the model (a 4.4 GB download; 1 to 8 minutes in our tests, most of it the download); later runs start in a few
-seconds. It has no voice cloning.
+prepares the model (about a 4.6 GB download; 55 to 168 s in our tests); later runs start in a few seconds. On an RX
+9070 XT the real-time factor was 0.06 (10 s of speech in about 0.6 s) and the first streamed audio came after 46 to
+50 ms. It has no voice cloning.
 
 ## 2. Get the source and build
 
@@ -141,7 +142,7 @@ python -m pip install -r requirements-prepare.txt
 python tools/prepare_assets.py --out models/kitten-tts-2
 ```
 
-This took 1 to 2 minutes on two home PCs, more than half of it for the download (about 4.6 GB), and at most 4 GB of RAM.
+This takes 1 to 2 minutes, more than half of it for the download (about 4.6 GB), and at most 4 GB of RAM.
 
 ## 4. Generate speech
 

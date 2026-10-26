@@ -83,8 +83,8 @@ No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`
    compare their sha256; approve only if they match or the only differences are the known host-code non-determinism
    above. Do not approve a job whose wheels you have not tied back to a gate.
 4. After the release, yank `kitten-inference` 0.1.0 and 0.1.1 on PyPI (pinned installs of them keep working). Without
-   the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. Then remove the lines
-   about 0.1.1 from `umbrella/README.md` and `tts-2/python/README.md`.
+   the yank, pip installs 0.1.1 with only a warning wherever an extra's engine has no wheel. The package READMEs are
+   worded to stay true after the yank (pip then stops with "No matching distribution"), so they need no change.
 
 ## Post releases
 
