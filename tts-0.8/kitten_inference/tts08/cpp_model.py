@@ -12,7 +12,7 @@ import phonemizer
 import soundfile as sf
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
-from . import _hybrid
+from . import _espeak_path, _hybrid
 from .preprocess import TextPreprocessor, chunk_text, normalize_text
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +51,47 @@ def _load_msvc_runtime(folder=os.path.join(_HERE, "_msvc"), windll=None):
 
 _load_msvc_runtime()
 EspeakWrapper.set_library(espeakng_loader.get_library_path())
-os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
+
+
+def _set_espeak_data_path():
+    """Points espeak-ng at its data folder before it loads. A long path (Linux, macOS) or, on Windows, one with
+    characters outside ASCII would make espeak-ng end the Python process; such a folder is replaced by a short copy
+    (kitten_inference/tts08/_espeak_path.py), or a RuntimeError says what to do."""
+    src = espeakng_loader.get_data_path()
+    version = getattr(espeakng_loader, "__version__", None)
+    if version is None:
+        try:
+            from importlib.metadata import version as _dist_version
+            version = _dist_version("espeakng_loader")  # a third-party distribution: its name never changes
+        except Exception:
+            version = "unknown"
+    os.environ["ESPEAK_DATA_PATH"] = _espeak_path.usable_data_path(src, version)
+
+
+# Windows refuses to load a file whose full path has 260 characters or more unless long paths are enabled.
+WINDOWS_MAX_PATH = 260
+WINDOWS_LONG_PATHS_URL = "https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation"
+
+
+def _longest_engine_path(here=_HERE):
+    """The longest path among the engine and the libraries bundled for it (Windows wheels keep them in a
+    *.libs folder next to kitten_inference), or 0."""
+    longest = 0
+    site = os.path.dirname(os.path.dirname(here))
+    try:
+        for name in os.listdir(here):
+            if name.startswith("_engine") or name == "_msvc":
+                longest = max(longest, len(os.path.join(here, name)))
+        msvc = os.path.join(here, "_msvc")
+        if os.path.isdir(msvc):
+            longest = max([longest] + [len(os.path.join(msvc, n)) for n in os.listdir(msvc)])
+        for libs in os.listdir(site):
+            if libs.endswith(".libs") and "tts08" in libs:
+                folder = os.path.join(site, libs)
+                longest = max([longest] + [len(os.path.join(folder, n)) for n in os.listdir(folder)])
+    except OSError:
+        pass
+    return longest
 
 SAMPLE_RATE = 24000
 STYLE_DIM = 256
@@ -290,6 +330,14 @@ def _import_engine():
     try:
         from . import _engine
     except ImportError as exc:
+        longest = _longest_engine_path() if sys.platform == "win32" else 0
+        if longest >= WINDOWS_MAX_PATH:
+            raise ImportError(
+                f"This folder path is too long for Windows: the native engine's files have paths of up to {longest} "
+                f"characters, and Windows loads only shorter ones ({WINDOWS_MAX_PATH - 1} at most) unless long paths "
+                "are enabled. Use a shorter folder for the virtual environment (for example C:\\venvs\\kitten), or "
+                f"enable long paths: {WINDOWS_LONG_PATHS_URL}"
+            ) from exc
         raise ImportError(
             "The native engine (kitten_inference.tts08._engine) is missing or does not match "
             'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
@@ -430,6 +478,7 @@ class KittenTTS_1_Cpp:
         self.voice_aliases = aliases
         self.speed_priors = speed_priors or {}
         self.preprocessor = TextPreprocessor(remove_punctuation=False)
+        _set_espeak_data_path()  # before espeak-ng loads (EspeakBackend below); RuntimeError when it cannot
         self.phonemizer = phonemizer.backend.EspeakBackend(
             language="en-us", preserve_punctuation=True, with_stress=True
         )

@@ -639,6 +639,126 @@ jobs:
           venv/bin/python -m unittest discover -s tts-0.8/tests -v
           venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
+  espeak-paths:
+    # espeak-ng ends the Python process (exit 1, no exception) when its data folder path is 160 bytes or longer, and on
+    # Windows when that path has characters outside ASCII; the package then gives it a short ASCII copy
+    # (kitten_inference/tts08/_espeak_path.py). This installs the wheel built here in such virtual environments and
+    # generates audio, twice (the second process reuses the copy).
+    name: espeak data paths, ${{ matrix.os }}
+    needs: [linux-wheels, desktop-wheels]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: tts08-wheels-linux-x86_64-manylinux-2-28
+          - os: macos-14
+            artifact: tts08-wheels-macos-arm64
+          - os: windows-2022
+            artifact: tts08-wheels-windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse
+
+      - name: A virtual environment in a deep folder (espeak-ng data path over 160 characters)
+        run: python tts-0.8/tests/espeak_paths.py deep --wheels wheelhouse --expect fixed --out espeak-deep.json
+
+      - name: Virtual environments under folders named José and Łukasz (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: python tts-0.8/tests/espeak_paths.py names --wheels wheelhouse --expect fixed --out espeak-names.json
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: espeak-paths-${{ matrix.os }}
+          path: espeak-*.json
+          if-no-files-found: ignore
+
+  espeak-paths-old-wheel:
+    # Work branch only (it reads another run's artifacts): the same cases with the c158adf wheels, which must fail the
+    # old way, then with this checkout's Python files copied over them (an early check that does not wait for the
+    # builds above).
+    if: github.ref == 'refs/heads/ws/espeak'
+    name: espeak data paths, c158adf wheel, ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: tts08-wheels-linux-x86_64-manylinux-2-28
+          - os: macos-14
+            artifact: tts08-wheels-macos-arm64
+          - os: windows-2022
+            artifact: tts08-wheels-windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: old-wheels
+          run-id: 40281737274
+          github-token: ${{ github.token }}
+
+      - name: Unit tests of this checkout's Python files over the c158adf wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv ut
+          py=$([ -x ut/bin/python ] && echo ut/bin/python || echo ut/Scripts/python.exe)
+          "$py" -m pip install -q --disable-pip-version-check --find-links old-wheels kitten-inference-tts08
+          dest=$("$py" -c "import os, kitten_inference.tts08 as m; print(os.path.dirname(m.__file__).replace(os.sep, '/'))")
+          cp tts-0.8/kitten_inference/tts08/*.py "$dest/"
+          "$py" -m unittest discover -s tts-0.8/tests -p "test_espeak_path.py" -v
+
+      - name: Deep folder, c158adf wheel (must fail the old way)
+        if: ${{ !cancelled() }}
+        run: python tts-0.8/tests/espeak_paths.py deep --wheels old-wheels --expect broken --out espeak-deep-old.json
+
+      - name: José and Łukasz folders, c158adf wheel (must fail the old way, Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: python tts-0.8/tests/espeak_paths.py names --wheels old-wheels --expect broken --out espeak-names-old.json
+
+      - name: Deep folder, c158adf wheel with this checkout's Python files
+        if: ${{ !cancelled() }}
+        run: >-
+          python tts-0.8/tests/espeak_paths.py deep --wheels old-wheels --expect fixed
+          --overlay tts-0.8/kitten_inference/tts08 --out espeak-deep-overlay.json
+
+      - name: José and Łukasz folders, c158adf wheel with this checkout's Python files (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: >-
+          python tts-0.8/tests/espeak_paths.py names --wheels old-wheels --expect fixed
+          --overlay tts-0.8/kitten_inference/tts08 --out espeak-names-overlay.json
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: espeak-paths-old-wheel-${{ matrix.os }}
+          path: espeak-*.json
+          if-no-files-found: ignore
+
   wheel-list:
     name: Wheel list and contents
     needs: [linux-wheels, desktop-wheels, android-wheels]
