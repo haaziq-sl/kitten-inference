@@ -2,6 +2,7 @@
 import importlib
 import importlib.metadata as metadata
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -25,6 +26,21 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(_engine.set_backend("no-such-backend"))
         for name in ("forward", "set_speed", "speed"):
             self.assertTrue(hasattr(_engine.InferenceModel, name), name)
+
+    def test_loading_the_engine_prints_no_metal_lines(self):
+        # The Metal backend's start-up lines (metallib path, device) are opt-in with KITTEN_TTS08_VERBOSE=1.
+        import subprocess
+
+        code = "import kitten_inference.tts08._engine as e; print(e.active_backend())"
+        env = {k: v for k, v in os.environ.items() if k != "KITTEN_TTS08_VERBOSE"}
+        quiet = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(quiet.returncode, 0, quiet.stderr)
+        self.assertNotIn("[metal]", quiet.stderr)
+        if sys.platform == "darwin" and platform.machine() == "arm64":  # every Apple Silicon Mac has a Metal device
+            env["KITTEN_TTS08_VERBOSE"] = "1"
+            loud = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
+            self.assertEqual(loud.returncode, 0, loud.stderr)
+            self.assertIn("[metal] Backend registered", loud.stderr)
 
 
 class ApiTests(unittest.TestCase):

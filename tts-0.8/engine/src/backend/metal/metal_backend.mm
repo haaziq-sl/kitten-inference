@@ -19,6 +19,7 @@
 #include <exception>
 #include <unordered_map>
 #include <mutex>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <dlfcn.h>
@@ -867,6 +868,14 @@ kernel void relu_inplace_k(device float* d [[buffer(0)]], uint id [[thread_posit
 { d[id] = max(d[id], 0.f); }
 )MSL";
 
+// Informational start-up lines (which metallib was loaded, which device) are printed only when
+// KITTEN_TTS08_VERBOSE is set to a value other than "0": every macOS process loads this backend, and a library
+// should not write to stderr on a normal start. Failures and fallbacks are always printed.
+static bool metal_verbose() {
+    const char* v = getenv("KITTEN_TTS08_VERBOSE");
+    return v && *v && strcmp(v, "0") != 0;
+}
+
 static const bool s_registered = []() -> bool {
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
     if (!dev) {
@@ -920,7 +929,8 @@ static const bool s_registered = []() -> bool {
 
         lib = [dev newLibraryWithURL:[NSURL fileURLWithPath:lib_path] error:&err];
         if (lib) {
-            fprintf(stderr, "[metal] Loaded metallib: %s\n", [lib_path UTF8String]);
+            if (metal_verbose())
+                fprintf(stderr, "[metal] Loaded metallib: %s\n", [lib_path UTF8String]);
             break;
         } else {
             fprintf(stderr, "[metal] Failed to load %s: %s\n",
@@ -948,8 +958,9 @@ static const bool s_registered = []() -> bool {
                                                     encoding:NSUTF8StringEncoding
                                                        error:nil];
                 if (src_str) {
-                    fprintf(stderr, "[metal] Compiling shaders from %s\n",
-                            [resolved UTF8String]);
+                    if (metal_verbose())
+                        fprintf(stderr, "[metal] Compiling shaders from %s\n",
+                                [resolved UTF8String]);
                     break;
                 }
             }
@@ -973,7 +984,8 @@ static const bool s_registered = []() -> bool {
     g_pso_cache     = [NSMutableDictionary new];
 
     register_backend(&s_metal_ops);
-    fprintf(stderr, "[metal] Backend registered (device: %s)\n",
-            [[dev name] UTF8String]);
+    if (metal_verbose())
+        fprintf(stderr, "[metal] Backend registered (device: %s)\n",
+                [[dev name] UTF8String]);
     return true;
 }();
