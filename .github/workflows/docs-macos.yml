@@ -117,6 +117,8 @@ jobs:
           echo "--- python3 on PATH"; which -a python3; python3 --version; python3 -m pip --version
           echo "--- system python3"; /usr/bin/python3 --version; /usr/bin/python3 -m pip --version
           ls -l /usr/local/bin/python3* 2>&1 | head -5
+          echo "--- Homebrew python3"; /opt/homebrew/bin/python3 --version; /opt/homebrew/bin/python3 -m pip --version
+          echo "--- python.org python3"; /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 --version; /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m pip --version; /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -c "import platform, sysconfig; print(platform.machine(), sysconfig.get_platform())"
           echo "--- shells"; /bin/zsh --version; /bin/bash --version | head -1; echo "login shell of runner: $SHELL"; ls /usr/share/zsh/*/scripts /usr/share/zsh/*/functions/zsh-newuser-install 2>&1 | head -5; ls -la /etc/zshrc /etc/zprofile /etc/zshenv 2>&1; grep -n -i -E 'setopt|newuser' /etc/zshrc 2>&1 | head
           echo "--- /etc/paths and /etc/paths.d"; cat /etc/paths; ls /etc/paths.d; cat /etc/paths.d/* 2>/dev/null | head -20
           echo "--- env keys (names only)"; env | grep -o -E '^(PIP|PYTHON|HF_|HUGGING|XDG|OMP|VIRTUAL_ENV|CONDA|PIPX)[A-Za-z0-9_]*' | sort || true

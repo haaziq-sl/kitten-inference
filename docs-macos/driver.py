@@ -21,6 +21,9 @@ HERE = Path(__file__).resolve().parent
 DOC = HERE / 'doc'
 DIST = os.environ['DIST']
 SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+# what `brew shellenv` (Homebrew) and the python.org installer's 'Update Shell Profile' put in front of the stock PATH
+BREW_PATH = '/opt/homebrew/bin:/opt/homebrew/sbin:' + SYSTEM_PATH
+PYORG_PATH = '/Library/Frameworks/Python.framework/Versions/3.14/bin:' + SYSTEM_PATH
 STEP_TIMEOUT = 1200
 
 SESSIONS = {
@@ -36,6 +39,18 @@ SESSIONS = {
     # the README.md TTS 0.8 block pasted into Terminal as one paste (bracketed paste), then Enter
     'S9-zsh-paste-system': ('zsh-pty',       'system', ['top-paste'], False),
     'S10-zsh-paste':       ('zsh-pty',       'runner', ['top-paste'], False),
+    # second run, docs without comments in the command blocks: interactive zsh (Terminal's default shell)
+    # (a) the python3 every Mac has (Apple's /usr/bin/python3)
+    'R2-zsh-apple':        ('zsh-pty',       'system', ['top', 'pkg'], False),
+    'R2-zsh-apple-paste':  ('zsh-pty',       'system', ['top-paste', 'pkg-paste'], False),
+    'R2-zsh-apple-oldpip': ('zsh-pty',       'system', ['oldpip'], False),
+    # (b) Python 3.14 from Homebrew and from python.org
+    'R2-zsh-brew':         ('zsh-pty',       'brew',   ['top', 'pkg'], False),
+    'R2-zsh-brew-paste':   ('zsh-pty',       'brew',   ['top-paste', 'pkg-paste'], False),
+    'R2-zsh-pyorg':        ('zsh-pty',       'pyorg',  ['top', 'pkg'], False),
+    'R2-zsh-pyorg-paste':  ('zsh-pty',       'pyorg',  ['top-paste', 'pkg-paste'], False),
+    # the same path in bash (the code fences' shell), one real pseudo-terminal, Apple's python3
+    'R2-bash-pty-apple':   ('bash-pty',      'system', ['top', 'pkg'], True),
     # machine check before the release exists: no doc lines
     'P0-smoke-zsh':        ('zsh-pty',       'runner', ['smoke'], False),
     'P0-smoke-zsh-login':  ('zsh-login-pty', 'system', ['smoke'], False),
@@ -89,8 +104,21 @@ def units_to_steps(units, root):
             steps += [('doc', l, d) for l in top]
         elif u == 'top-paste':
             d.mkdir(parents=True)
+            (d / 'use_from_python.py').write_text((DOC / 'top_use_from_python_tts08.py').read_text(encoding='utf-8'), encoding='utf-8')
+            if active:
+                steps.append(('setup', 'deactivate', d))
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps.append(('paste', '\n'.join(top), d))
+            steps.append(('doc', 'python use_from_python.py', d))
+            active = True
+        elif u == 'pkg-paste':
+            d.mkdir(parents=True)
+            (d / 'use.py').write_text((DOC / 'pkg_use.py').read_text(encoding='utf-8'), encoding='utf-8')
+            if active:
+                steps.append(('setup', 'deactivate', d))
+            steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
+            steps.append(('paste', '\n'.join(doc_lines('pkg_install_block.sh')), d))
+            steps.append(('doc', 'python use.py', d))
             active = True
         elif u == 'smoke':
             for l in ['echo one # two', 'setopt 2>/dev/null | tr "\\n" " "; echo', 'echo "$PATH"', 'tty']:
@@ -118,6 +146,10 @@ def session_env(home, path_kind, shell):
     env['SHELL'] = '/bin/zsh' if shell.startswith('zsh') else '/bin/bash'
     if path_kind == 'system':
         env['PATH'] = SYSTEM_PATH
+    elif path_kind == 'brew':
+        env['PATH'] = BREW_PATH
+    elif path_kind == 'pyorg':
+        env['PATH'] = PYORG_PATH
     if os.environ.get('SESSION_PIP_FIND_LINKS'):
         # Allowed deviation for this test release: the TTS 0.8 test wheels come from a folder, everything else from pypi.org.
         env['PIP_FIND_LINKS'] = os.environ['SESSION_PIP_FIND_LINKS']
