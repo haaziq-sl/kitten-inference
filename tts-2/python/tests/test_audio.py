@@ -83,6 +83,25 @@ def test_reference_limits(tmp_path):
         _audio.decode_reference(big)
 
 
+def test_playlists_and_manifests_are_refused(tmp_path):
+    # A "recording" that is a playlist or manifest would make ffmpeg's by-name run open the local files it names.
+    # Refused before ffmpeg runs (the same check as kitten-tts-native's).
+    for data in (b"#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:/srv/audio/other.wav\n",
+                 b"\xef\xbb\xbf\r\n  #EXTM3U\n#EXTINF:1,\nhttp://example.com/a.ts\n",
+                 b'<?xml version="1.0"?>\n<MPD profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">',
+                 b"x" * 5000 + b'<mPd profiles="urn:mpeg:DASH:Profile:full:2011">',  # anywhere, any case
+                 b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nm=audio 5004 RTP/AVP 0\r\n",
+                 b'<CompositionPlaylist xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">',
+                 b"ffconcat version 1.0\nfile /srv/audio/other.wav\n"):
+        assert _audio.is_playlist(data), data
+        path = tmp_path / "ref.wav"
+        path.write_bytes(data)
+        with pytest.raises(_audio.AudioError, match="playlist or stream manifest"):
+            _audio.decode_reference(path, ffmpeg=str(tmp_path / "no-such-ffmpeg"))  # never started
+    for data in (b"RIFF....WAVEfmt ", b"ID3\x04" + bytes(6) + b" <MPD in a tag", b""):
+        assert not _audio.is_playlist(data), data
+
+
 def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
     a = _audio.ffmpeg_args()
     assert a[a.index("-i") + 1] == "pipe:0" and a[-1] == "pipe:1" and "-nostdin" in a

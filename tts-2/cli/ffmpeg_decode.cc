@@ -1,7 +1,7 @@
 // kitten-tts-native: reference audio decode with the system's ffmpeg program (see ffmpeg_decode.h).
 #include "ffmpeg_decode.h"
 
-#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -297,6 +297,22 @@ std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate, 
           "-vn", "-sn", "-dn", "-ac", "1", "-ar", std::to_string(rate), "-t", seconds, "-f", "f32le", "pipe:1"};
 }
 
+bool is_playlist(const std::vector<char>& data) {
+  // As FFmpeg's probes find them: HLS and ffconcat lists at the start, DASH and IMF anywhere in what it probes (up
+  // to the whole file here), SDP by a "c=IN IP" line. A UTF-8 byte order mark and blank space at the start are
+  // skipped, which refuses a little more than FFmpeg would read as such.
+  const std::string all(data.begin(), data.end());
+  size_t i = all.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
+  while (i < all.size() && i < 4096 && (all[i] == ' ' || all[i] == '\t' || all[i] == '\r' || all[i] == '\n')) ++i;
+  if (all.compare(i, 7, "#EXTM3U") == 0 || all.compare(i, 8, "ffconcat") == 0) return true;
+  std::string low(all);
+  for (char& c : low) c = (char)std::tolower((unsigned char)c);
+  if (low.find("<mpd") != std::string::npos && low.find("dash:profile") != std::string::npos) return true;
+  if (low.find("<compositionplaylist") != std::string::npos) return true;
+  return all.compare(0, 7, "c=IN IP") == 0 || all.find("\nc=IN IP") != std::string::npos ||
+         all.find("\n\rc=IN IP") != std::string::npos;
+}
+
 std::string ffmpeg_missing_message() {
 #if defined(_WIN32)
   return "ffmpeg was not found: voice cloning uses it to read the reference audio. Install it with: "
@@ -316,6 +332,9 @@ std::vector<float> ffmpeg_decode(const std::string& path, const std::vector<char
     ~IgnorePipe() { std::signal(SIGPIPE, old); }
   } ignore_pipe;
 #endif
+  if (is_playlist(data))
+    throw std::runtime_error("the reference audio is a playlist or stream manifest (HLS, DASH or similar), not a "
+                             "recording: " + path);
   // From standard input first, as the reference pipeline and the in-process decode read it (same samples); its
   // messages are not shown, since a file that needs seeking is then read by name.
   // By name with the "file:" protocol prefix: ffmpeg reads "-i 2026-10-25T10:30.m4a" as protocol "2026-10-25T10"

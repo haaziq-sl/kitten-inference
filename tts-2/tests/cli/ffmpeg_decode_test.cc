@@ -229,4 +229,36 @@ TEST(FfmpegDecode, ABadFileIsAnError) {
   fs::remove(path);
 }
 
+// A "recording" that is a playlist or manifest would make ffmpeg's by-name run open the local files it names (HLS and
+// DASH segments); such files are refused before ffmpeg runs. Real audio is not.
+TEST(FfmpegDecode, PlaylistsAndManifestsAreRefused) {
+  using kt2n::cli::is_playlist;
+  auto bytes = [](const std::string& s) { return std::vector<char>(s.begin(), s.end()); };
+  EXPECT_TRUE(is_playlist(bytes("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:/srv/audio/other.wav\n")));
+  EXPECT_TRUE(is_playlist(bytes("\xEF\xBB\xBF\r\n  #EXTM3U\n#EXTINF:1,\nhttp://example.com/a.ts\n")));
+  EXPECT_TRUE(is_playlist(bytes("<?xml version=\"1.0\"?>\n<MPD profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\">")));
+  // FFmpeg finds DASH anywhere in what it probes, in any case; SDP by a c= line.
+  EXPECT_TRUE(is_playlist(bytes(std::string(5000, 'x') + "<mPd profiles=\"urn:mpeg:DASH:Profile:full:2011\">")));
+  EXPECT_TRUE(is_playlist(bytes("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nm=audio 5004 RTP/AVP 0\r\n")));
+  EXPECT_TRUE(is_playlist(bytes("<CompositionPlaylist xmlns=\"http://www.smpte-ra.org/schemas/2067-3/2016\">")));
+  EXPECT_TRUE(is_playlist(bytes("ffconcat version 1.0\nfile /srv/audio/other.wav\n")));
+  EXPECT_FALSE(is_playlist(bytes("RIFF....WAVEfmt ")));
+  EXPECT_FALSE(is_playlist(bytes(std::string("ID3\x04") + std::string(6, '\0') + " <MPD in a tag")));  // binary audio
+  EXPECT_FALSE(is_playlist({}));
+  const fs::path path = temp_name(".wav");
+  {
+    std::ofstream f(path, std::ios::binary);
+    f << "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:" << path.string() << "\n#EXT-X-ENDLIST\n";
+  }
+  try {
+    ffmpeg_decode(path.string(), read_file(path), 24000, 30.1, "kt2n-no-such-ffmpeg-program");
+    FAIL() << "expected an error";
+  } catch (const FfmpegMissing&) {
+    FAIL() << "ffmpeg was to be started for a playlist";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string(e.what()).find("playlist or stream manifest"), std::string::npos) << e.what();
+  }
+  fs::remove(path);
+}
+
 }  // namespace

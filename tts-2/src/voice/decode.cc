@@ -14,6 +14,9 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/avstring.h>
+#include <libavutil/dict.h>
+#include <libavutil/log.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 }
@@ -41,6 +44,32 @@ std::string averr(int e) {
   char b[AV_ERROR_MAX_STRING_SIZE] = {};
   av_strerror(e, b, sizeof b);
   return b;
+}
+
+// Demuxers that open other files or URLs named in their input (playlists, manifests, session descriptions) or run
+// scripts. Some of them do so without the protocol whitelist (the DASH demuxer of FFmpeg 6.1, Ubuntu 24.04's, for
+// one), so they are left out of the formats a recording may have; every other demuxer stays allowed.
+const char* const kOpensOtherInputs[] = {"hls",  "applehttp", "dash",  "imf",      "concat",      "sdp",
+                                         "rtsp", "rtp",       "image2", "avisynth", "vapoursynth", "dvdvideo"};
+
+const std::string& recording_formats() {
+  static const std::string list = [] {
+    std::string out;
+#if LIBAVFORMAT_VERSION_MAJOR >= 58
+    void* it = nullptr;
+    while (const AVInputFormat* f = av_demuxer_iterate(&it)) {
+#else
+    for (AVInputFormat* f = av_iformat_next(nullptr); f; f = av_iformat_next(f)) {
+#endif
+      bool opens_others = false;
+      for (const char* name : kOpensOtherInputs) opens_others = opens_others || av_match_name(name, f->name);
+      if (opens_others) continue;
+      if (!out.empty()) out += ',';
+      out += f->name;
+    }
+    return out;
+  }();
+  return list;
 }
 
 }  // namespace
@@ -87,7 +116,20 @@ bool decode_audio(const uint8_t* data, size_t len, double max_seconds, std::vect
   do {
     fmt->pb = io;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
-    int r = avformat_open_input(&fmt, "pipe:0", nullptr, nullptr);
+    // The recording is read from memory, so no protocol is needed. A playlist or manifest (HLS, DASH, concat, IMF,
+    // SDP) would make FFmpeg open the files or URLs it names: with custom IO nothing restricts that by default (the
+    // ffmpeg program gives each input a whitelist; a context opened like this one has none). FFmpeg checks the format
+    // after probing and before it reads anything else, and checks the opens of the demuxers that use the protocol
+    // whitelist against "none", which names no protocol.
+    AVDictionary* open_opts = nullptr;
+    av_dict_set(&open_opts, "format_whitelist", recording_formats().c_str(), 0);
+    av_dict_set(&open_opts, "protocol_whitelist", "none", 0);
+    // A refused format makes FFmpeg print the whole list (about 3 KB): quiet while opening; the caller gets the error.
+    const int log_level = av_log_get_level();
+    av_log_set_level(AV_LOG_FATAL);
+    int r = avformat_open_input(&fmt, "pipe:0", nullptr, &open_opts);
+    av_log_set_level(log_level);
+    av_dict_free(&open_opts);
     if (r < 0) {
       fail("open: " + averr(r));
       break;

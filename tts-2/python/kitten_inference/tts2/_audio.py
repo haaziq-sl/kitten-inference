@@ -32,6 +32,21 @@ class FFmpegNotFound(AudioError, FileNotFoundError):
     """The ffmpeg executable is not on PATH."""
 
 
+def is_playlist(data: bytes) -> bool:
+    """Whether ``data`` is a playlist, manifest or session description (HLS/M3U, DASH, IMF, ffconcat, SDP) rather than
+    a recording, as kitten-tts-native checks it (cli/ffmpeg_decode.cc). Such a file makes ffmpeg open the files or
+    URLs it names: the DASH demuxer of FFmpeg 6.1 (Ubuntu 24.04's ffmpeg) fetches them even from standard input, and
+    the by-name fallback would allow local files. Found as FFmpeg's probes find them: HLS and ffconcat at the start,
+    DASH and IMF anywhere, SDP by a "c=IN IP" line."""
+    head = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+    if head[:4096].lstrip(b" \t\r\n").startswith((b"#EXTM3U", b"ffconcat")):
+        return True
+    low = data.lower()
+    if (b"<mpd" in low and b"dash:profile" in low) or b"<compositionplaylist" in low:
+        return True
+    return data.startswith(b"c=IN IP") or b"\nc=IN IP" in data or b"\n\rc=IN IP" in data
+
+
 def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:
     """The ffmpeg arguments: from standard input, or with ``path`` from that file (made absolute, so a name that starts
     with '-' is never read as an option)."""
@@ -69,6 +84,9 @@ def decode_reference(path: os.PathLike, ffmpeg: Optional[str] = None) -> np.ndar
         raise AudioError(f"the reference audio must be at most 10 MiB: {path} ({size} bytes)")
     exe = ffmpeg or find_ffmpeg()
     data = path.read_bytes()
+    if is_playlist(data):
+        raise AudioError(f"the reference audio is a playlist or stream manifest (HLS, DASH or similar), not a "
+                         f"recording: {path}")
     run = _ffmpeg(exe, ffmpeg_args(), data)
     if run.returncode != 0 or len(run.stdout) < 4:
         by_name = _ffmpeg(exe, ffmpeg_args(path), None)

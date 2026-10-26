@@ -32,10 +32,16 @@ std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate =
 // The one-line error for a missing ffmpeg.
 std::string ffmpeg_missing_message();
 
+// Whether `data` is a playlist, manifest or session description (HLS/M3U, DASH, IMF, ffconcat, SDP) rather than a
+// recording. Such a file makes FFmpeg open the files or URLs it names: the DASH demuxer of FFmpeg 6.1 (Ubuntu 24.04's
+// ffmpeg) fetches them even from standard input, and the by-name fallback below would allow local files. It is
+// refused before ffmpeg runs.
+bool is_playlist(const std::vector<char>& data);
+
 // Decodes the reference audio file `path`, whose bytes are `data`, with `program` (searched in PATH's absolute folders,
 // unless it names a folder) and returns mono
 // float32 samples at `rate` Hz. Throws FfmpegMissing when it cannot be started, std::runtime_error when it fails or
-// returns no audio (ffmpeg's own message is printed on standard error).
+// returns no audio (ffmpeg's own message is printed on standard error), or when the file is a playlist.
 std::vector<float> ffmpeg_decode(const std::string& path, const std::vector<char>& data, int rate = 24000,
                                  double max_seconds = 30.1, const std::string& program = "ffmpeg");
 
