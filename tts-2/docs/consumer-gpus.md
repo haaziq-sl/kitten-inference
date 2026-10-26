@@ -40,8 +40,8 @@ again, and are marked "47-voice revision" otherwise.
 | AMD Radeon RX 7000 and RX 9000 | supported; audio close to, not bit for bit the same as, NVIDIA; no voice cloning; RX 7600 and RX 7600 XT not tested; see [AMD Radeon](#amd-radeon) | RX 7900 XTX: 0.068, first audio 0.05 s; RX 9060 XT: 0.090 |
 | 64-bit Windows with an NVIDIA GPU | supported; the same audio as Linux on the same GPU model; voice cloning only with the pip package; tested on Windows Server 2022 only; see [Windows](#windows) | NVIDIA L4: 0.074, first audio 46 ms |
 
-Building a cloned voice needs about 11.3 GB of free GPU memory with the low-memory profile, which the tool picks when
-the default profile's 15.6 GB does not fit; it was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits
+Building a cloned voice needs about 11,300 MiB of free GPU memory with the low-memory profile, which the tool picks
+when the default profile's 15,600 MiB does not fit; it was tested end to end on 16 GB and 24 GB cards. On 12 GB cards it fits
 when other programs use at most about 500 MiB of GPU memory. On cards with 8 GB or less it is off; see
 [Small-memory cards](#small-memory-cards).
 
@@ -86,8 +86,8 @@ that fits the free GPU memory and `low` otherwise, and prints one line when it p
 either way: a seeded `--stream false` request gives the same bytes with `low` and `default`.
 
 - With the tool's own voice setting (only the spoken voice prepared), the default profile needs about
-  11 to 13 GB of GPU memory, depending on the card; with `--voice-cache all`, about 21 GB (more with the 115 voices of
-  the latest revision, not measured).
+  13,500 MiB of GPU memory with the current model; with `--voice-cache all`, about 33,200 MiB (see
+  [GPU memory](memory.md)).
 - **Below that, `auto` uses `low`: supported, not optimal.** One request at a time runs as fast (`--stream false`
   real-time factor 0.050 with `low` and 0.051 with the default profile on an RTX 5060 Ti 16 GB, measured on a
   development build of this version). With several streams (C API), requests that arrive together are batched less. On 8 GB cards and
@@ -260,7 +260,7 @@ cloning: build and save a voice on an NVIDIA GPU, then load it on the Radeon.
 software, 3.4 to 4.9 times slower: real-time factor 0.23 (RX 7900 XTX) to 0.44 (RX 9060 XT).
 
 The audio is close to, not bit for bit the same as, an NVIDIA GPU's; see [Output differences](#output-differences).
-With all built-in voices prepared (`--voice-cache all`), the default memory profile needed about 21 GB, so on 16 GB
+With all built-in voices prepared (`--voice-cache all`), the default memory profile needs about 33,200 MiB, so on 16 GB
 cards such as the RX 9070 XT the command-line tool then picks the low profile by itself (supported, not optimal; see
 [Starting without options](#starting-without-options)). With the one voice it normally prepares, the default profile
 fits (see the table).
