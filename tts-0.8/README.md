@@ -7,15 +7,21 @@ Small, fast text-to-speech that runs on a CPU. Three models from 15M to 80M para
 faster than kittenml 0.9.6 (ONNX Runtime) on every machine we compared: macOS, Linux (x86-64 and Arm) and
 Windows.** On Linux x86-64 and Windows it also uses 3 to 42% less memory than kittenml.
 
-Default settings of both packages on the same machine, a 41-word text (about 16 s of speech), median of 10 calls.
-On Apple Silicon this engine runs nano on the GPU (Metal) and ONNX Runtime on the CPU.
+Default settings of both packages on the same machine, a 41-word text (15 to 17 s of speech), median of 10 calls.
+On a Ryzen 9 9900X, nano speaks it in 0.29 s against 0.54 s (real-time factor 0.017). On Apple Silicon this engine
+runs nano on the GPU (Metal) and ONNX Runtime on the CPU: 0.37 s against 0.71 s on an Apple M4.
 
 ## Install
 
 ```bash
-python -m pip install -U pip              # pip older than 23.3 skips "[tts-0.8]" with only a warning
+python3 -m venv .venv && . .venv/bin/activate   # Windows: py -m venv .venv, then .venv\Scripts\activate
+python -m pip install -U pip                    # pip older than 23.3 skips "[tts-0.8]" with only a warning
 pip install "kitten-inference[tts-0.8]"
 ```
+
+- On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get install -y python3-venv` first.
+- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip 22.0.2 to
+  23.2.1 install no engine for `[tts-0.8]` and still report success.
 
 ## Use
 
@@ -38,9 +44,10 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 | `KittenML/kitten-tts-nano-0.8` | 15M | 56 MB |
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
-(116, 71 and 19 MB). On Linux ARM64 and on the CPU of Apple Silicon Macs they are also faster than the
-full-size weights; elsewhere they are slower: 1.3 to 2 times on x86_64 and about 8 times on Windows ARM64.
-Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
+(116, 71 and 19 MB). On the AMD and Linux ARM64 machines we tested they are faster than kittenml. Supported, not
+optimal on Intel CPUs and on the Mac CPU: 1.6 to 2.4 times the kittenml time on the Intel CPUs we tested, because
+the int8 kernels for x86 are not tuned yet, and 1.4 to 1.8 times on an Apple M4, because the macOS build uses one
+CPU core. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -52,8 +59,9 @@ Options:
   models and the CPU for the int8 models. On the CPU, models in different threads generate at the same
   time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
 
-Audio can differ slightly between: Metal and the CPU (clip lengths within about 3.5%), and, for the int8
-models, different CPU types (within about 2%).
+Audio can differ slightly between Metal and the CPU (clip lengths within about 3.5%), between CPU types, and with
+the number of threads (the same clip lengths). On Metal, the same text can also give slightly different audio from
+one run to the next.
 
 ## Platforms
 
@@ -74,6 +82,10 @@ models, different CPU types (within about 2%).
 - Windows ARM64 is supported, not optimal: that build has no ARM vector kernels, so it runs about
   9 times slower than Linux ARM64 on comparable test machines, and the int8 models about 8 times
   slower again. Use the full-size models there.
+- Intel CPUs with performance and efficiency cores are supported, not optimal: the engine spreads its
+  work evenly over all cores, so on a Core i9-12900 it was slower than kittenml for 5 of the 6 models,
+  and some calls took several times the median. Limited to the performance cores, it took 0.64 to 0.75
+  times as long.
 - The CPU engine on macOS is supported, not optimal: the macOS build has no OpenMP, so it uses one
   CPU core. On a 4-core Intel Mac, a build using all 4 cores was about 2 times faster. This affects
   macOS Intel, where the CPU is the only backend, and the CPU on Apple Silicon (int8 models by default).
