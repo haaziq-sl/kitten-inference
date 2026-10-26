@@ -26,16 +26,21 @@ class FfmpegMissing : public std::runtime_error {
 };
 
 // The arguments after the program name, reading `input` ("pipe:0" or a file name) at `rate` Hz, cut at `max_seconds`
-// (30.1 s like the reference).
-std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate = 24000, double max_seconds = 30.1);
+// (30.1 s like the reference). With `by_name` (the read-the-file fallback), ffmpeg is held to the MP4/M4A container
+// family and to local files, the only case that fallback serves, so no reference file can pick a demuxer by its
+// extension that runs code or opens other inputs.
+std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate = 24000, double max_seconds = 30.1,
+                                            bool by_name = false);
 
 // The one-line error for a missing ffmpeg.
 std::string ffmpeg_missing_message();
 
 // Whether `data` is a playlist, manifest or session description (HLS/M3U, DASH, IMF, ffconcat, SDP) rather than a
 // recording. Such a file makes FFmpeg open the files or URLs it names: the DASH demuxer of FFmpeg 6.1 (Ubuntu 24.04's
-// ffmpeg) fetches them even from standard input, and the by-name fallback below would allow local files. It is
-// refused before ffmpeg runs.
+// ffmpeg) fetches them even from standard input, and the by-name fallback below would allow local files. A leading
+// ID3v2 tag is skipped first, as FFmpeg does, so a playlist cannot hide behind one. It is refused before ffmpeg runs.
+// This is the first of two guards against a crafted reference file; the by-name fallback is also held to the MP4/M4A
+// container family (ffmpeg_decode_args with by_name), so neither run opens other files or runs a script.
 bool is_playlist(const std::vector<char>& data);
 
 // Decodes the reference audio file `path`, whose bytes are `data`, with `program` (searched in PATH's absolute folders,

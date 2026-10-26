@@ -32,27 +32,48 @@ class FFmpegNotFound(AudioError, FileNotFoundError):
     """The ffmpeg executable is not on PATH."""
 
 
+def _id3v2_len(data: bytes) -> int:
+    """Bytes of a leading ID3v2 tag, or 0 when there is none. FFmpeg skips such a tag before it probes the format, so
+    a playlist can hide behind one; is_playlist skips it the same way (10-byte header plus a syncsafe size, plus 10
+    for a footer). A size that runs past the data leaves nothing to match, so the whole buffer is reported."""
+    if len(data) < 10 or data[:3] != b"ID3" or data[3] == 0xFF or data[4] == 0xFF or any(b & 0x80 for b in data[6:10]):
+        return 0
+    size = (data[6] << 21) | (data[7] << 14) | (data[8] << 7) | data[9]
+    total = 10 + size + (10 if data[5] & 0x10 else 0)
+    return total if total < len(data) else len(data)
+
+
 def is_playlist(data: bytes) -> bool:
     """Whether ``data`` is a playlist, manifest or session description (HLS/M3U, DASH, IMF, ffconcat, SDP) rather than
     a recording, as kitten-tts-native checks it (cli/ffmpeg_decode.cc). Such a file makes ffmpeg open the files or
     URLs it names: the DASH demuxer of FFmpeg 6.1 (Ubuntu 24.04's ffmpeg) fetches them even from standard input, and
-    the by-name fallback would allow local files. Found as FFmpeg's probes find them: HLS and ffconcat at the start,
-    DASH and IMF anywhere, SDP by a "c=IN IP" line."""
-    head = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+    the by-name fallback would allow local files. Found as FFmpeg's probes find them, after a leading ID3v2 tag (which
+    FFmpeg skips before probing): HLS and ffconcat at the start, DASH and IMF anywhere, SDP by a "c=IN IP" line. DASH
+    is matched on "<mpd" alone: FFmpeg's dash_probe needs only "<MPD" plus any of several profile strings, one of
+    which ("3GPP:PSS:profile:DASH1") does not contain "dash:profile"."""
+    head = data[_id3v2_len(data):]
+    head = head[3:] if head.startswith(b"\xef\xbb\xbf") else head
     if head[:4096].lstrip(b" \t\r\n").startswith((b"#EXTM3U", b"ffconcat")):
         return True
     low = data.lower()
-    if (b"<mpd" in low and b"dash:profile" in low) or b"<compositionplaylist" in low:
+    if b"<mpd" in low or b"<compositionplaylist" in low:
         return True
     return data.startswith(b"c=IN IP") or b"\nc=IN IP" in data or b"\n\rc=IN IP" in data
 
 
 def ffmpeg_args(path: Optional[os.PathLike] = None) -> list:
     """The ffmpeg arguments: from standard input, or with ``path`` from that file (made absolute, so a name that starts
-    with '-' is never read as an option)."""
+    with '-' is never read as an option). The by-name form (``path`` given) is the fallback for MP4/M4A files whose
+    index is at the end; it holds ffmpeg to that container family and to local files, so a reference file with another
+    extension (for example a .avs read as an AviSynth script, which can load and run any DLL) cannot select a demuxer
+    that runs code or opens other inputs."""
     if path is None:
         return list(FFMPEG_ARGS)
-    return [os.path.abspath(path) if a == "pipe:0" else a for a in FFMPEG_ARGS]
+    args = list(FFMPEG_ARGS)
+    i = args.index("-i")
+    args[i + 1] = os.path.abspath(path)
+    args[i:i] = ["-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2", "-protocol_whitelist", "file"]
+    return args
 
 
 def find_ffmpeg() -> str:

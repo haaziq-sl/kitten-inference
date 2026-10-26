@@ -90,15 +90,23 @@ def test_playlists_and_manifests_are_refused(tmp_path):
                  b"\xef\xbb\xbf\r\n  #EXTM3U\n#EXTINF:1,\nhttp://example.com/a.ts\n",
                  b'<?xml version="1.0"?>\n<MPD profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">',
                  b"x" * 5000 + b'<mPd profiles="urn:mpeg:DASH:Profile:full:2011">',  # anywhere, any case
+                 # DASH with only the 3GPP profile and the usual xmlns (no "dash:profile"): ffmpeg still parses it.
+                 b'<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" '
+                 b'profiles="urn:3GPP:PSS:profile:DASH1"><BaseURL>https://x/t</BaseURL></MPD>',
                  b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nm=audio 5004 RTP/AVP 0\r\n",
                  b'<CompositionPlaylist xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">',
-                 b"ffconcat version 1.0\nfile /srv/audio/other.wav\n"):
+                 b"ffconcat version 1.0\nfile /srv/audio/other.wav\n",
+                 # A leading ID3v2 tag (10-byte header, size 0) in front of a playlist: ffmpeg skips the tag first.
+                 b"ID3\x04\x00\x00\x00\x00\x00\x00ffconcat version 1.0\nfile other.wav\n",
+                 b"ID3\x04\x00\x00\x00\x00\x00\x00#EXTM3U\n#EXTINF:1,\nfile:/x/a.wav\n"):
         assert _audio.is_playlist(data), data
         path = tmp_path / "ref.wav"
         path.write_bytes(data)
         with pytest.raises(_audio.AudioError, match="playlist or stream manifest"):
             _audio.decode_reference(path, ffmpeg=str(tmp_path / "no-such-ffmpeg"))  # never started
-    for data in (b"RIFF....WAVEfmt ", b"ID3\x04" + bytes(6) + b" <MPD in a tag", b""):
+    for data in (b"RIFF....WAVEfmt ",
+                 b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x00",  # real audio (MP3 frame sync) behind an ID3 tag
+                 b""):
         assert not _audio.is_playlist(data), data
 
 
@@ -109,6 +117,10 @@ def test_ffmpeg_arguments_match_the_reference_decode(tmp_path):
     assert a[a.index("-t") + 1] == "30.100" and a[a.index("-f") + 1] == "f32le"
     b = _audio.ffmpeg_args(tmp_path / "-ref.m4a")  # the by-name fallback
     assert b[b.index("-i") + 1] == os.path.abspath(tmp_path / "-ref.m4a") and b[:6] == a[:6]
+    # held to the MP4/M4A family and to local files, so a .avs (AviSynth) or another input-opening demuxer is refused
+    assert b[b.index("-format_whitelist") + 1] == "mov,mp4,m4a,3gp,3g2,mj2"
+    assert b[b.index("-protocol_whitelist") + 1] == "file" and b[-1] == "pipe:1"
+    assert "-format_whitelist" not in a  # the stdin run reads any recording format (guarded by is_playlist)
 
 
 @needs_ffmpeg

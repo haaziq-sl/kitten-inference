@@ -290,24 +290,52 @@ Result run(const std::string& program, const std::vector<std::string>& args, con
 
 }  // namespace
 
-std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate, double max_seconds) {
+std::vector<std::string> ffmpeg_decode_args(const std::string& input, int rate, double max_seconds, bool by_name) {
   char seconds[32];
   std::snprintf(seconds, sizeof(seconds), "%.3f", max_seconds);
-  return {"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-i", input, "-map_metadata", "-1",
-          "-vn", "-sn", "-dn", "-ac", "1", "-ar", std::to_string(rate), "-t", seconds, "-f", "f32le", "pipe:1"};
+  std::vector<std::string> args = {"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"};
+  if (by_name) {
+    // The by-name fallback exists only for MP4/M4A files whose index is at the end (see ffmpeg_decode). Restrict
+    // ffmpeg to that container family and to local files, so a reference file with another extension (for example a
+    // .avs read as an AviSynth script, which can load and run any DLL) cannot select a demuxer that runs code or
+    // opens other inputs. The read-from-pipe run above has no file name, so it never selects a demuxer by extension.
+    args.insert(args.end(), {"-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2", "-protocol_whitelist", "file"});
+  }
+  args.insert(args.end(), {"-i", input, "-map_metadata", "-1", "-vn", "-sn", "-dn", "-ac", "1", "-ar",
+                           std::to_string(rate), "-t", seconds, "-f", "f32le", "pipe:1"});
+  return args;
+}
+
+// Bytes of a leading ID3v2 tag, or 0 when there is none. FFmpeg skips such a tag before it probes the format (and
+// again before it reads the header), so a playlist or manifest can hide behind one; is_playlist skips it the same
+// way FFmpeg does: a 10-byte header plus a syncsafe size (seven bits per byte), plus 10 more when the footer flag
+// is set. A size that runs past the data leaves nothing to match, so it reports the whole buffer.
+size_t id3v2_len(const std::vector<char>& data) {
+  if (data.size() < 10 || data[0] != 'I' || data[1] != 'D' || data[2] != '3') return 0;
+  const unsigned char* b = reinterpret_cast<const unsigned char*>(data.data());
+  if (b[3] == 0xFF || b[4] == 0xFF) return 0;                     // not a valid version
+  for (int i = 6; i < 10; ++i)
+    if (b[i] & 0x80) return 0;                                    // the size is not syncsafe: not an ID3v2 tag
+  const size_t size = (size_t(b[6]) << 21) | (size_t(b[7]) << 14) | (size_t(b[8]) << 7) | size_t(b[9]);
+  const size_t total = 10 + size + ((b[5] & 0x10) ? 10 : 0);     // footer present flag
+  return total < data.size() ? total : data.size();
 }
 
 bool is_playlist(const std::vector<char>& data) {
   // As FFmpeg's probes find them: HLS and ffconcat lists at the start, DASH and IMF anywhere in what it probes (up
-  // to the whole file here), SDP by a "c=IN IP" line. A UTF-8 byte order mark and blank space at the start are
-  // skipped, which refuses a little more than FFmpeg would read as such.
+  // to the whole file here), SDP by a "c=IN IP" line. A leading ID3v2 tag (which FFmpeg skips before probing), a
+  // UTF-8 byte order mark and blank space at the start are skipped, which refuses a little more than FFmpeg would
+  // read as such. DASH is matched on "<mpd" alone: FFmpeg's dash_probe needs only "<MPD" plus any of several
+  // profile strings, one of which ("3GPP:PSS:profile:DASH1") does not contain "dash:profile".
   const std::string all(data.begin(), data.end());
-  size_t i = all.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
-  while (i < all.size() && i < 4096 && (all[i] == ' ' || all[i] == '\t' || all[i] == '\r' || all[i] == '\n')) ++i;
+  size_t i = id3v2_len(data);
+  if (all.compare(i, 3, "\xEF\xBB\xBF") == 0) i += 3;
+  const size_t guard = i + 4096;
+  while (i < all.size() && i < guard && (all[i] == ' ' || all[i] == '\t' || all[i] == '\r' || all[i] == '\n')) ++i;
   if (all.compare(i, 7, "#EXTM3U") == 0 || all.compare(i, 8, "ffconcat") == 0) return true;
   std::string low(all);
   for (char& c : low) c = (char)std::tolower((unsigned char)c);
-  if (low.find("<mpd") != std::string::npos && low.find("dash:profile") != std::string::npos) return true;
+  if (low.find("<mpd") != std::string::npos) return true;
   if (low.find("<compositionplaylist") != std::string::npos) return true;
   return all.compare(0, 7, "c=IN IP") == 0 || all.find("\nc=IN IP") != std::string::npos ||
          all.find("\n\rc=IN IP") != std::string::npos;
@@ -341,7 +369,7 @@ std::vector<float> ffmpeg_decode(const std::string& path, const std::vector<char
   // (everything before a ':' that has only URL scheme characters), as its documentation says for names with a ':'.
   Result r = run(program, ffmpeg_decode_args("pipe:0", rate, max_seconds), &data, true);
   if (!r.exited_ok || r.out.size() < sizeof(float))
-    r = run(program, ffmpeg_decode_args("file:" + path, rate, max_seconds), nullptr, false);
+    r = run(program, ffmpeg_decode_args("file:" + path, rate, max_seconds, /*by_name=*/true), nullptr, false);
   if (!r.exited_ok) throw std::runtime_error("ffmpeg could not decode the reference audio (" + r.status + "): " + path);
   const size_t n = r.out.size() / sizeof(float);
   if (n == 0) throw std::runtime_error("ffmpeg found no audio in the reference audio file: " + path);

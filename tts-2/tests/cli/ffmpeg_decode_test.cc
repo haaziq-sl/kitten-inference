@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -25,6 +26,13 @@ TEST(FfmpegDecode, ArgumentsMirrorTheReferenceDecode) {
                                          "-ar", "24000", "-t", "30.100", "-f", "f32le", "pipe:1"};
   EXPECT_EQ(ffmpeg_decode_args("pipe:0"), want);
   EXPECT_EQ(ffmpeg_decode_args("my file.wav")[7], "my file.wav");
+  // The by-name fallback holds ffmpeg to the MP4/M4A family and to local files.
+  const std::vector<std::string> by_name = ffmpeg_decode_args("file:/dir/ref.m4a", 24000, 30.1, true);
+  ASSERT_NE(std::find(by_name.begin(), by_name.end(), "-format_whitelist"), by_name.end());
+  EXPECT_NE(std::find(by_name.begin(), by_name.end(), "mov,mp4,m4a,3gp,3g2,mj2"), by_name.end());
+  ASSERT_NE(std::find(by_name.begin(), by_name.end(), "-protocol_whitelist"), by_name.end());
+  EXPECT_NE(std::find(by_name.begin(), by_name.end(), "file"), by_name.end());
+  EXPECT_EQ(by_name[by_name.size() - 1], "pipe:1");
 }
 
 TEST(FfmpegDecode, MissingProgramNamesTheInstallCommand) {
@@ -239,11 +247,20 @@ TEST(FfmpegDecode, PlaylistsAndManifestsAreRefused) {
   EXPECT_TRUE(is_playlist(bytes("<?xml version=\"1.0\"?>\n<MPD profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\">")));
   // FFmpeg finds DASH anywhere in what it probes, in any case; SDP by a c= line.
   EXPECT_TRUE(is_playlist(bytes(std::string(5000, 'x') + "<mPd profiles=\"urn:mpeg:DASH:Profile:full:2011\">")));
+  // A DASH manifest with only the 3GPP profile and the usual xmlns (no "dash:profile" substring): FFmpeg still
+  // parses it as DASH, so "<mpd" alone is enough.
+  EXPECT_TRUE(is_playlist(bytes("<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" "
+                                "profiles=\"urn:3GPP:PSS:profile:DASH1\"><BaseURL>https://x/t</BaseURL></MPD>")));
   EXPECT_TRUE(is_playlist(bytes("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nm=audio 5004 RTP/AVP 0\r\n")));
   EXPECT_TRUE(is_playlist(bytes("<CompositionPlaylist xmlns=\"http://www.smpte-ra.org/schemas/2067-3/2016\">")));
   EXPECT_TRUE(is_playlist(bytes("ffconcat version 1.0\nfile /srv/audio/other.wav\n")));
+  // A leading ID3v2 tag (10-byte header, size 0) followed by a playlist: FFmpeg skips the tag and then parses the
+  // list, so it must be refused too.
+  EXPECT_TRUE(is_playlist(bytes(std::string("ID3\x04\x00\x00\x00\x00\x00\x00", 10) + "ffconcat version 1.0\nfile other.wav\n")));
+  EXPECT_TRUE(is_playlist(bytes(std::string("ID3\x04\x00\x00\x00\x00\x00\x00", 10) + "#EXTM3U\n#EXTINF:1,\nfile:/x/a.wav\n")));
   EXPECT_FALSE(is_playlist(bytes("RIFF....WAVEfmt ")));
-  EXPECT_FALSE(is_playlist(bytes(std::string("ID3\x04") + std::string(6, '\0') + " <MPD in a tag")));  // binary audio
+  // Real audio behind an ID3v2 tag (an MP3 frame sync, no playlist markers): not a playlist.
+  EXPECT_FALSE(is_playlist(bytes(std::string("ID3\x04\x00\x00\x00\x00\x00\x00", 10) + std::string("\xFF\xFB\x90\x00", 4))));
   EXPECT_FALSE(is_playlist({}));
   const fs::path path = temp_name(".wav");
   {
