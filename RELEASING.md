@@ -43,6 +43,10 @@ gets upload rights for all five projects:
 - A tag ruleset (Settings, Rules, Rulesets; target: tags matching `v*`) that lets only those maintainers create,
   update or delete such tags.
 
+The publish jobs pin `pypa/gh-action-pypi-publish` to a commit. That action still runs its upload code from the
+container image `ghcr.io/pypa/gh-action-pypi-publish:<that commit>`, a registry tag and not a content hash, so the pin
+narrows what can change under a release but does not fix the upload code itself.
+
 No file-size request is needed: the largest wheels (`kitten-inference-tts2-cu12`) are about 31 MB, under PyPI's
 100 MB limit.
 
