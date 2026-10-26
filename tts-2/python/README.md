@@ -46,7 +46,9 @@ non-ASCII characters can move the model to a folder of yours in `C:\ProgramData\
 optimal (with the usual Windows code page the engine opens only ASCII paths; the command says where the model went).
 
 Voice cloning (NVIDIA only) needs about 11,300 MiB (11 GB) of free GPU memory while the voice is built, and the
-system `ffmpeg`. On a 12 GB card other programs may then use at most about 500 MiB of it: cloning worked with
+system `ffmpeg`: `sudo apt-get install -y ffmpeg` on Ubuntu, `winget install --id Gyan.FFmpeg -e` on Windows (then open
+a new terminal and activate the venv again; Windows 10 and 11 include winget, Windows Server 2022 needs it installed
+first). On a 12 GB card other programs may then use at most about 500 MiB of it: cloning worked with
 11,285 MiB free and failed with 11,157 MiB free. The first clone adds 1.1 GB to the prepared model.
 
 ```python
