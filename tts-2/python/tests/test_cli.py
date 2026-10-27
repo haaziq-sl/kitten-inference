@@ -1,9 +1,16 @@
-"""kitten-tts2: wrapper options, --assets injection, --prepare-only, and pass-through to kitten-tts-native."""
+"""kitten-tts2: wrapper options, --assets injection, --prepare-only, pass-through to kitten-tts-native, and what it
+says when this Python, install or machine cannot run Kitten TTS 2."""
+import os
+import platform
+import re
+import sys
 import types
 
 import pytest
 
-from kitten_inference.tts2 import _cli, _prepare
+import kitten_inference
+import kitten_inference.tts2 as tts2
+from kitten_inference.tts2 import _backend, _cli, _gpu, _prepare
 
 
 def test_split_args_keeps_native_values():
@@ -90,7 +97,10 @@ def test_prepare_only_prints_the_directory(harness, capsys):
 def test_version_needs_no_model(harness, capsys):
     assert _cli.main(["--version"]) == 0
     assert harness["prepare"] == [] and harness["run"][0][1] == ["--version"]
-    assert "kitten-inference-tts2-cu12 0.2.0" in capsys.readouterr().out
+    # The installed kitten-inference's version (a post release changes only that one) and the engine's.
+    version = getattr(kitten_inference, "__version__", tts2.__version__)
+    assert re.sub(r"\.post\d+$", "", version) == tts2.__version__
+    assert capsys.readouterr().out.strip() == f"kitten-tts2 {version} (NVIDIA (CUDA) engine 0.2.0)"
 
 
 def test_help(harness, capsys):
@@ -101,7 +111,47 @@ def test_help(harness, capsys):
 
 def test_missing_backend(no_backends, capsys):
     assert _cli.main(["--text", "x"]) == 1
-    assert 'pip install "kitten-inference[tts-2]" (NVIDIA)' in capsys.readouterr().err
+    assert capsys.readouterr().err == f"kitten-tts2: {_backend.no_engine_message()}\n"
+
+
+def test_version_on_a_platform_without_an_engine(no_backends, monkeypatch, capsys):
+    # macOS, Linux aarch64, Windows ARM64, Android: Kitten TTS 0.8 runs there, and --version still answers.
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    version = getattr(kitten_inference, "__version__", tts2.__version__)
+    assert _cli.main(["--version"]) == 0
+    out, err = capsys.readouterr()
+    assert out == f"kitten-tts2 {version} (no Kitten TTS 2 engine on this platform)\n"
+    assert err == ("kitten-tts2: Kitten TTS 2 runs on Linux x86-64 (NVIDIA or AMD Radeon GPU) and Windows x64 "
+                   "(NVIDIA GPU); this is macOS arm64. Kitten TTS 0.8 (kitten_inference.tts08) runs here.\n")
+    assert _cli.main(["--text", "x"]) == 1 and capsys.readouterr().out == ""
+    # Linux x86-64 and Windows x64 have an engine: an install without its files is an error, --version included.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    assert _cli.main(["--version"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and err == f"kitten-tts2: {_backend.no_engine_message()}\n" and "engine files" in err
+
+
+def test_missing_libraries_are_one_line_before_preparing(harness, hide_modules, capsys):
+    hide_modules("numpy", "tokenizers")
+    for argv in (["--text", "x"], ["--prepare-only"]):
+        assert _cli.main(argv) == 1, argv
+        err = capsys.readouterr().err
+        assert err == ('kitten-tts2: Kitten TTS 2 needs more Python packages (not installed: numpy, tokenizers). '
+                       'Install them: pip install "kitten-inference[tts-2]"\n'), err
+    assert harness["prepare"] == [] and harness["run"] == []
+    # --help, --version and a model given with --assets need none of them
+    assert _cli.main(["--help"]) == 0 and _cli.main(["--version"]) == 0
+    assert _cli.main(["--assets", "m", "--text", "x"]) == 0 and len(harness["run"]) == 3
+
+
+def test_python_38_is_one_line(harness, python38, capsys):
+    for argv in (["--help"], ["--version"], ["--text", "x"]):
+        assert _cli.main(argv) == 1, argv
+        assert capsys.readouterr().err == ("kitten-tts2: Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). "
+                                           "Kitten TTS 0.8 (kitten_inference.tts08) works on Python 3.8.\n")
+    assert harness["run"] == [] and harness["prepare"] == []
 
 
 def test_prepare_failure_exit_status(harness, monkeypatch, capsys):
@@ -206,12 +256,12 @@ def test_save_voice_names_the_revision(voices, monkeypatch, capsys):
     assert f"model revision {OLD}; a voice saved now loads only with this revision" in capsys.readouterr().err
 
 
-def _no_runtime(monkeypatch, missing):
+def _no_runtime(monkeypatch, *missing):
     def load(name):
-        if name == missing:
+        if name in missing or os.path.basename(name) in missing:
             raise OSError(f"{name}: cannot open shared object file: No such file or directory")
         return object()
-    monkeypatch.setattr(_cli, "_load", load)
+    monkeypatch.setattr(_gpu, "_cdll", load)
 
 
 def test_missing_rocm_runtime_is_one_line_before_any_download(no_backends, fake_backend, monkeypatch, capsys):
@@ -245,3 +295,61 @@ def test_missing_nvidia_driver_is_one_line_before_any_download(no_backends, fake
     assert "no NVIDIA driver found" in capsys.readouterr().err
     # --help and --version run the tool without the driver
     assert _cli.main(["--version"]) == 0 and _cli.main(["--help"]) == 0 and _cli.main([]) == 0 and len(ran) == 3
+
+
+def test_no_gpu_runtime_names_both_vendors(no_backends, fake_backend, monkeypatch, capsys):
+    # Linux x86-64 has both engines; with neither runtime the NVIDIA engine is picked and the message names both.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_gpu, "CUDA_DRIVER", "libcuda.so.1")
+    fake_backend("cuda")
+    fake_backend("rocm", caps=())
+    monkeypatch.setattr(_prepare, "ensure", lambda **kw: pytest.fail("prepared"))
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: pytest.fail("ran"))
+    _no_runtime(monkeypatch, "libcuda.so.1", "libamdhip64.so.7")
+    assert _cli.main(["--text", "x"]) == 1
+    assert capsys.readouterr().err == (
+        "kitten-tts2: no NVIDIA driver found on this machine (libcuda.so.1 is missing). Kitten TTS 2 needs an NVIDIA "
+        "GPU with the NVIDIA driver R570 or newer, or an AMD Radeon RX 7000 or RX 9000 with ROCm 7 (libamdhip64.so.7 "
+        "is missing too; setup: https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md). In "
+        "a container, attach the GPU (docker run --gpus all, or --device /dev/kfd --device /dev/dri for AMD). With "
+        "both GPUs, --backend rocm or KITTEN_TTS2_BACKEND=rocm picks the AMD one.\n")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="platform: the AMD engine is Linux only")
+def test_nvidia_that_cannot_start_hands_over_to_amd(no_backends, fake_backend, monkeypatch, capsys):
+    fake_backend("cuda")
+    fake_backend("rocm", caps=())
+    ran = []
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(cli) or 0)
+
+    def no_gpu(device, log=None):
+        raise _gpu.DriverStartError("the NVIDIA driver could not start (cuInit error 999)")
+    monkeypatch.setattr(_gpu, "check_cuda", no_gpu)
+    monkeypatch.setattr(_gpu, "check_rocm", lambda device: 1)
+    assert _cli.main(["--assets", "m", "--text", "x"]) == 0
+    assert os.path.join("rocm", "bin", "kitten-tts-native") in ran[0]
+    assert capsys.readouterr().err == ("kitten-tts2: the NVIDIA driver could not start (cuInit error 999); using the "
+                                       "AMD (ROCm) engine instead\n")
+    # Asked for: no check and no hand-over (the tool reports for itself).
+    assert _cli.main(["--backend", "cuda", "--assets", "m", "--text", "x"]) == 0
+    assert os.path.join("cuda", "bin", "kitten-tts-native") in ran[1]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="platform: the AMD engine is Linux only")
+def test_rocm_found_in_its_own_folder_reaches_the_tool(no_backends, fake_backend, monkeypatch, tmp_path):
+    # ROCm without AMD's ld.so.conf step: the tool's loader looks in that folder only through LD_LIBRARY_PATH.
+    fake_backend("rocm", caps=())
+    ran = []
+    monkeypatch.setattr(_cli, "_run", lambda cli, args: ran.append(dict(os.environ)) or 0)
+    root = tmp_path / "rocm-7.2.0"
+    monkeypatch.setenv("ROCM_PATH", str(root))
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/x")
+    wanted = os.path.join(str(root), "lib", "libamdhip64.so.7")
+
+    def load(name):
+        if name != wanted:
+            raise OSError(f"{name}: cannot open shared object file: No such file or directory")
+        return object()
+    monkeypatch.setattr(_gpu, "_cdll", load)
+    assert _cli.main(["--assets", "m", "--text", "x"]) == 0
+    assert ran[0]["LD_LIBRARY_PATH"] == os.pathsep.join([os.path.dirname(wanted), "/x"])

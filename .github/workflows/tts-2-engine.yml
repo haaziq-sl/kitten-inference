@@ -1,34 +1,25 @@
-# Kitten TTS 2 engine for NVIDIA GPUs: the kitten-inference-tts2-cu12 wheels (Linux manylinux_2_28 and Windows),
-# built with the scripts in tts-2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
+# Kitten TTS 2 engine for NVIDIA GPUs: the CUDA payload wheels (Linux manylinux_2_28 and Windows) that the
+# kitten-inference wheels for Linux x86-64 and Windows x64 are assembled from (packages.yml), built with the scripts in
+# tts-2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
 # The build scripts compare the GPU code with the default build's (tts-2/packaging/sass_manifest.py against
 # tts-2/packaging/sass-reference.txt) and compile again the files whose code came out differently, so every wheel this
 # workflow uploads has the reference GPU code; a job that cannot get there fails. The runners have no GPU: speech
 # generation is tested on GPU machines (tts-2/packaging/smoke_wheel.py --assets). The CLI's reference-audio decode
 # with the system ffmpeg (voice cloning) is tested on both systems without a GPU (job cli-ffmpeg).
-# A v* tag in KittenML/kitten-inference also uploads the two wheels to PyPI (job publish, RELEASING.md).
+# Nothing here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json,
+# from its artifacts (kept 90 days; RELEASING.md).
 name: tts-2 engine wheels
 
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
     paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
   pull_request:
     paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Wheel version, e.g. 0.2.0.post1 for a packaging fix (empty: the engine version)"
-        default: ""
-        required: false
 
 permissions:
   contents: read
-
-env:
-  # The version of pushed builds and releases; empty: the engine's version (tts-2/CMakeLists.txt). A post release of
-  # these wheels sets it here, e.g. 0.2.0.post1 (RELEASING.md); make_wheel.py refuses any other version.
-  CU12_VERSION: ""
 
 jobs:
   linux:
@@ -40,8 +31,6 @@ jobs:
       - name: Free disk space
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Build (CUDA 12.8 in the manylinux_2_28 container), with the GPU code check
-        env:
-          WHEEL_VERSION: ${{ inputs.version || env.CU12_VERSION }}
         run: JOBS=4 tts-2/packaging/build_linux_docker.sh "$PWD/dist"
       - name: Size check
         run: python3 tts-2/packaging/size_check.py dist/*.whl
@@ -50,11 +39,13 @@ jobs:
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install dist/*.whl
           cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
+      # Release input: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: tts2-cu12-linux
           path: dist/
           if-no-files-found: error
+          retention-days: 90
 
   windows:
     name: Windows wheel (win_amd64)
@@ -88,9 +79,7 @@ jobs:
         run: python -m pip install ninja==1.13.0
       - name: Build, with the GPU code check
         shell: pwsh
-        env:
-          WHEEL_VERSION: ${{ inputs.version || env.CU12_VERSION }}
-        run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4 -Version $env:WHEEL_VERSION
+        run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
       - name: GPU code check self-test (the rebuild step can read the CUDA object files)
         run: python tts-2/packaging/sass_manifest.py objects tts-2/build/wheel-windows --arch sm_75
       - name: Size check
@@ -105,11 +94,13 @@ jobs:
           Set-Location $env:RUNNER_TEMP
           & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\tts-2\packaging\smoke_wheel.py"
           if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
+      # Release input: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: tts2-cu12-windows
           path: dist/
           if-no-files-found: error
+          retention-days: 90
 
   cli-ffmpeg:
     # kitten-tts-native decodes the reference audio for voice cloning with the system's ffmpeg program
@@ -169,35 +160,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
           & "build-cli/bin/test_cli_core$x" --gtest_filter='CliArgs.*'
           if ($LASTEXITCODE -ne 0) { throw "test_cli_core failed" }
-
-  publish:
-    # Releases only: a v* tag pushed to KittenML/kitten-inference (never a fork), with PyPI trusted publishing. The
-    # wheel jobs above fail unless their GPU code is the reference's ("SASS check: IDENTICAL"), so only checked wheels
-    # get here. These engine wheels go first: kitten-inference-tts2 and kitten-inference-tts08 wait for them, and the
-    # umbrella for everything. A tag whose version is not these wheels' version uploads nothing here.
-    name: Publish to PyPI
-    needs: [linux, windows, cli-ffmpeg]
-    if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: tts2-cu12-*
-          path: artifacts
-      - name: The wheels this tag releases
-        id: files
-        run: |
-          python3 .github/scripts/release_files.py artifacts upload --dist kitten-inference-tts2-cu12 \
-            --platform manylinux_2_28_x86_64 --platform win_amd64
-      - name: Publish to PyPI (trusted publishing)
-        if: steps.files.outputs.upload == 'true'
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3: pinned to a commit (this job can upload to PyPI)
-        with:
-          packages-dir: upload/
-          skip-existing: true

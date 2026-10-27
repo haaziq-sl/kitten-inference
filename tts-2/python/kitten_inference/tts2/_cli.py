@@ -35,7 +35,7 @@ model revision, and --assets is added for you. Options of this command, besides 
   --revision R          model revision on Hugging Face (default: the latest)
   --cache-dir DIR       where prepared models (and then also the downloads) are kept
                         (default: ~/.cache/kitten-inference/tts2)
-  --backend cuda|rocm   which installed engine to use (default: the installed one)
+  --backend cuda|rocm   NVIDIA or AMD engine (default: the one whose GPU driver is found; NVIDIA first)
   --prepare-only        prepare the model, print its directory and exit
   --with-cloning        with --prepare-only: also prepare the voice cloning files
 
@@ -168,33 +168,39 @@ def _voice_message(path: str, revision: str, other: Optional[str], root: Path) -
             "--revision (kitten-tts2 --save-voice prints it), or clone the voice again with this model")
 
 
-ROCM_DOCS = "https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md"
-
-
-def _load(name: str):
-    import ctypes
-    return ctypes.CDLL(name)
-
-
 def _runtime_missing(backend, names: set) -> Optional[str]:
     """One line when the GPU runtime the native tool needs is not on this machine, instead of its raw error. The ROCm
     tool is linked against libamdhip64.so.7, so without ROCm it cannot start at all (the loader's error, exit 127);
     the CUDA tool loads the NVIDIA driver at run time, which --help and --version do not need."""
     from . import _gpu
     if backend.name == "rocm":
-        try:
-            _load(_gpu.HIP_RUNTIME)
-        except OSError:
+        found = _gpu.runtime("rocm")
+        if found is None:
             return (f"the AMD ROCm 7.x runtime ({_gpu.HIP_RUNTIME}) was not found, and the AMD engine needs it: "
-                    f"install ROCm 7.x as in step 1 of {ROCM_DOCS}")
+                    f"install ROCm 7.x as in step 1 of {_gpu.ROCM_DOCS}")
+        if os.path.isabs(found):
+            _library_folder(os.path.dirname(found))
         return None
     if names & {"--help", "--version"}:
         return None
-    try:
-        _load(_gpu.CUDA_DRIVER)
-    except OSError:
-        return f"no NVIDIA driver found on this machine ({_gpu.CUDA_DRIVER} is missing). {_gpu.NEED_DRIVER}."
+    if _gpu.runtime("cuda") is None:
+        return _gpu.no_driver_message()
     return None
+
+
+def _library_folder(folder: str) -> None:
+    """Puts a ROCm folder first in LD_LIBRARY_PATH: the ROCm runtime was found only there (no ld.so.conf entry), and
+    the native tool looks there only that way (besides /opt/rocm-7.1.0/lib, its library's RUNPATH)."""
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    if folder not in current.split(os.pathsep):
+        os.environ["LD_LIBRARY_PATH"] = folder + (os.pathsep + current if current else "")
+
+
+def _package_version() -> str:
+    """The installed kitten-inference's version (a post release changes only that one)."""
+    import kitten_inference
+    from . import __version__
+    return str(getattr(kitten_inference, "__version__", __version__))
 
 
 def _run(cli: str, args: List[str]) -> int:
@@ -211,6 +217,11 @@ def _run(cli: str, args: List[str]) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    from . import _backend
+    too_old = _backend.python_message()  # before anything else: the other modules need Python 3.9
+    if too_old is not None:
+        print(f"kitten-tts2: {too_old}", file=sys.stderr)
+        return 1
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         own, native = split_args(args)
@@ -218,7 +229,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"kitten-tts2: {exc}\nRun 'kitten-tts2 --help' for usage.", file=sys.stderr)
         return 2
     names = native_options(native)
-    from . import __version__, _backend, _prepare
+    from . import _gpu, _prepare
     if not args or "--help" in names:
         print(USAGE, end="")
         try:
@@ -241,29 +252,52 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     try:
         backend = _backend.find(own.get("--backend"))
+    except _backend.EngineNotInstalled as exc:
+        if "--version" in names and not _backend._engine_platform():
+            # A platform without a Kitten TTS 2 engine (Kitten TTS 0.8 runs there): the version is still the answer.
+            print(f"kitten-tts2 {_package_version()} (no Kitten TTS 2 engine on this platform)")
+            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            return 0
+        print(f"kitten-tts2: {exc}", file=sys.stderr)
+        return 1
     except (ImportError, ValueError) as exc:
         print(f"kitten-tts2: {exc}", file=sys.stderr)
         return 1
+    preparing = bool(own.get("--prepare-only")) or "--assets" not in names
+    if preparing and "--version" not in names:
+        libraries = _backend.modules_message()  # preparing a model needs them; --assets runs only the native tool
+        if libraries is not None:
+            print(f"kitten-tts2: {libraries}", file=sys.stderr)
+            return 1
+    gpu_checked = False
+    if not own.get("--prepare-only") and _backend.fallback(backend) is not None:
+        # Both GPU runtimes are here and the NVIDIA engine was picked by itself: see now whether its driver starts,
+        # since the native tool cannot switch engines (the AMD engine is used when it does not).
+        try:
+            backend = _backend.check_gpu(backend, _device(native), log=_prepare._log)
+        except _gpu.GPUError as exc:
+            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            return 1
+        gpu_checked = True
     # Said before anything is downloaded: the native tool could not start without its GPU runtime. Preparing alone
     # needs none (the text-data helper runs without it).
     missing = None if own.get("--prepare-only") else _runtime_missing(backend, names)
     if "--version" in names:
-        print(f"kitten-tts2 {__version__} ({backend.distribution} {backend.version})")
+        print(f"kitten-tts2 {_package_version()} ({backend.label} {backend.version})")
         if missing is not None:
             print(f"kitten-tts2: {missing}", file=sys.stderr)
             return 1
         return _run(str(backend.cli), native)
     if (own.get("--with-cloning") or "--reference-audio" in names) and not backend.can_clone:
         # Before the cloning files are downloaded and prepared (1.1 GB): this engine could not use them.
-        print(f"kitten-tts2: voice cloning needs the NVIDIA (CUDA) engine; the installed {backend.distribution} has no "
-              "voice cloning. Clone and save the voice on an NVIDIA GPU (kitten-tts2 --reference-audio ... "
-              "--save-voice FILE), then use it here with --load-voice FILE", file=sys.stderr)
+        print(f"kitten-tts2: voice cloning needs the NVIDIA (CUDA) engine; the {backend.label} has no voice cloning. "
+              "Clone and save the voice on an NVIDIA GPU (kitten-tts2 --reference-audio ... --save-voice FILE), then "
+              "use it here with --load-voice FILE", file=sys.stderr)
         return 2
     if missing is not None:
         print(f"kitten-tts2: {missing}", file=sys.stderr)
         return 1
-    if own.get("--prepare-only") or "--assets" not in names:
-        from . import _gpu
+    if preparing:
         # A saved voice works only with the model it was made with (the native tool would only print its status code).
         voice_path = _value(native, "--load-voice")
         voice = _voice_identity(voice_path)
@@ -278,7 +312,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     raise _VoiceNeedsRevision(other[0])
             # A missing driver or GPU is reported now, not after minutes of work. The native tool checks again when
             # it starts.
-            _gpu.check(backend.name, _device(native), log=_prepare._log)
+            if not gpu_checked:
+                _gpu.check(backend.name, _device(native), log=_prepare._log)
 
         try:
             directory = _prepare.ensure(text_data_tool=backend.text_data_tool, revision=own.get("--revision"),

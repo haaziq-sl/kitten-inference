@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Size check of built kitten-inference-tts2-cu12 wheels (a CI step).
+"""Size check of built wheels (a CI step): the engine payload wheels, and the kitten-inference wheels made from them.
 
   size_check.py WHEEL... [--max-mb 100]
 
 Prints each wheel's size and its largest members (uncompressed and compressed), and fails when a wheel is larger than
---max-mb: by default PyPI's file limit of 100 MB, above which the upload needs a larger limit from PyPI. The wheels
-were about 79 MB on 25 Oct 2026 (Linux 78.9 MB, Windows 78.7 MB).
+--max-mb: by default PyPI's file limit of 100 MB, above which the upload needs a larger limit from PyPI. The limit
+matters for the kitten-inference wheels, the only ones uploaded. The payloads of 0.2.0 are 31.3 MB (CUDA, Linux),
+31.1 MB (CUDA, Windows) and 20.7 MB (ROCm); the kitten-inference wheels with engines are about 52.9 MB (Linux x86-64,
+both engines) and 32.4 MB (Windows x64), estimated on 27 Oct 2026 from those payloads and the TTS 0.8 wheels.
 """
 import argparse
 import os

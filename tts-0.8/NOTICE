@@ -1,11 +1,11 @@
-Kitten TTS 0.8 inference engine (kitten-inference-tts08)
+Kitten TTS 0.8 inference engine (in the kitten-inference package)
 Copyright 2026 KittenML
 
 Original KittenML material is licensed under the Apache License, Version 2.0
 (LICENSE).
 
-Third-party code included in this package
------------------------------------------
+Third-party code in Kitten TTS 0.8
+----------------------------------
 Every wheel:
 
 - stb: engine/src/utils/stb_image.h and engine/src/utils/stb_image_resize2.h
@@ -43,8 +43,7 @@ Linux wheels (in kitten_inference_tts08.libs/):
   unchanged (apart from its file name and dynamic-section entries set by
   auditwheel) from the build image: AlmaLinux 8 libgomp 8.5.0 (8.5.0-28 or
   -29.el8_10.alma.1) in the manylinux_2_28 wheels, CentOS 7 libgomp 4.8.5
-  (4.8.5-44.el7) in the manylinux2014 wheels; the software bill of materials
-  in each wheel's .dist-info names the exact package.
+  (4.8.5-44.el7) in the manylinux2014 wheels.
   Copyright (C) Free Software Foundation, Inc. Licensed under the GNU General
   Public License, version 3 or later, with the GCC Runtime Library Exception,
   version 3.1: licenses/GPL-3.0.txt and licenses/GCC-exception-3.1.txt.

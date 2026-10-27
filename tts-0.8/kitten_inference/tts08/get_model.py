@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+from ._deps import require as _require
+_require()  # before the imports below, so one message names every missing package
 from huggingface_hub import hf_hub_download
 from .cpp_model import KittenTTS_1_Cpp
 from .preprocess import normalize_text

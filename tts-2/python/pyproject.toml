@@ -3,6 +3,8 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
+# An internal build name: this wheel is a build input of the kitten-inference wheels (which also hold the CUDA and ROCm
+# engines) and is never uploaded. kitten-inference's metadata comes from umbrella/pyproject.toml.
 name = "kitten-inference-tts2"
 version = "0.2.0"
 description = "Kitten TTS 2 text-to-speech on NVIDIA and AMD GPUs: Python API and kitten-tts2 command"
@@ -20,8 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
-# Runtime and first-use model preparation (no torch). The engine itself comes from kitten-inference-tts2-cu12 or
-# kitten-inference-tts2-rocm, installed with the umbrella's extras: pip install "kitten-inference[tts-2]".
+# Runtime and first-use model preparation (no torch). The [tts-2] extra in umbrella/pyproject.toml must name the same
+# (the assembler refuses drift), limited there to Python 3.9+ on Linux x86-64 and Windows x64.
 dependencies = [
     "numpy>=1.24",
     "huggingface-hub>=0.25,<2",
@@ -40,7 +42,8 @@ Issues = "https://github.com/KittenML/kitten-inference/issues"
 [tool.hatch.build.targets.wheel]
 # Core metadata 2.4 (with the PEP 639 licence fields), which PyPI and twine 6.x accept; newer hatchling writes 2.5.
 core-metadata-version = "2.4"
-# kitten_inference/__init__.py belongs to the umbrella distribution (kitten-inference): only tts2/ ships here.
+# kitten_inference/__init__.py comes from umbrella/ when the kitten-inference wheels are assembled: only tts2/ ships
+# here.
 only-include = ["kitten_inference/tts2"]
 # _assets, NOTICE and licenses are added by hatch_build.py (copied from tts-2/ at build time).
 exclude = ["__pycache__", "*.pyc", "/kitten_inference/tts2/_assets", "/kitten_inference/tts2/NOTICE",

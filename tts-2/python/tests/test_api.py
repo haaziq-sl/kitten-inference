@@ -2,13 +2,17 @@
 saved voice of another prepared model is refused before the engine is touched, naming the revision it needs."""
 import hashlib
 import json
+import platform
 import struct
+import subprocess
+import sys
 import types
 from pathlib import Path
 
 import pytest
 
-from kitten_inference.tts2 import _abi, _api, _bundle, _prepare
+import kitten_inference.tts2 as tts2
+from kitten_inference.tts2 import _abi, _api, _backend, _bundle, _prepare
 from kitten_inference.tts2._engine import EngineError
 
 A = "a" * 40
@@ -132,3 +136,62 @@ def test_cloning_off_names_the_python_call(engine_message):
     assert isinstance(err, RuntimeError) and "about 4.4 GB more" in text, text
     assert "kt2n_voice_load" not in text and "--load-voice" not in text, text
     assert text.endswith("then load it here with load_voice()"), text
+
+
+# Importing kitten_inference.tts2 needs no third-party module; KittenTTS2 and the other lazy names say what is missing.
+HIDDEN = ("numpy", "huggingface_hub", "tokenizers", "filelock")
+WITHOUT_LIBRARIES = f"""
+import importlib.abc, sys
+HIDDEN = {HIDDEN!r}
+class Hide(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name.partition(".")[0] in HIDDEN:
+            raise ModuleNotFoundError(f"No module named {{name!r}}", name=name)
+sys.meta_path.insert(0, Hide())
+import kitten_inference.tts2 as t
+assert not [m for m in sys.modules if m.partition(".")[0] in HIDDEN], "a library was imported"
+for name in ("EngineError", "EngineNotInstalled", "EngineMismatch", "PrepareError", "BundleError", "__version__"):
+    getattr(t, name)
+try:
+    from kitten_inference.tts2 import KittenTTS2
+except ImportError as e:
+    print(e)
+"""
+
+
+def test_import_needs_no_library():
+    out = subprocess.run([sys.executable, "-c", WITHOUT_LIBRARIES], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    expected = _backend.no_engine_message() or ("Kitten TTS 2 needs more Python packages (not installed: numpy, "
+                                                "huggingface_hub, tokenizers, filelock). Install them: pip install "
+                                                '"kitten-inference[tts-2]"')
+    assert out.stdout.strip() == expected
+
+
+def test_lazy_names_say_what_is_missing(no_backends, fake_backend, hide_modules):
+    fake_backend("cuda")
+    hide_modules("numpy", "filelock")
+    with pytest.raises(ImportError) as e:
+        from kitten_inference.tts2 import KittenTTS2  # noqa: F401
+    assert str(e.value) == ('Kitten TTS 2 needs more Python packages (not installed: numpy, filelock). Install them: '
+                            'pip install "kitten-inference[tts-2]"')
+    with pytest.raises(ImportError):
+        tts2.FFmpegNotFound
+    assert "KittenTTS2" not in vars(tts2)  # nothing kept: it works once the libraries are installed
+
+
+def test_lazy_names_on_a_platform_without_an_engine(no_backends, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    with pytest.raises(_backend.EngineNotInstalled, match="this is macOS arm64. Kitten TTS 0.8"):
+        from kitten_inference.tts2 import KittenTTS2  # noqa: F401
+    with pytest.raises(AttributeError):
+        tts2.not_a_name
+
+
+def test_every_public_name_resolves(no_backends, fake_backend):
+    fake_backend("cuda")
+    for name in tts2.__all__:
+        assert getattr(tts2, name) is not None, name
+    assert tts2.KittenTTS2 is _api.KittenTTS2 and tts2.SAMPLE_RATE == _api.SAMPLE_RATE == 24000
+    assert issubclass(tts2.EngineNotInstalled, ImportError) and issubclass(tts2.FFmpegNotFound, Exception)

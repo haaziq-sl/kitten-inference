@@ -430,7 +430,7 @@ def _choose_and_digest(src, version, roots, windows=WINDOWS):
         how.update(how="as-is-no-copy", path=src, tried=tried)
         return src, None
     raise EspeakPathError(
-        f"espeak-ng (the text-to-phoneme library of kitten-inference-tts08) cannot use its data folder {src}: "
+        f"espeak-ng (the text-to-phoneme library of Kitten TTS 0.8) cannot use its data folder {src}: "
         f"{why_not(src, windows)}, and it would end the Python process. No short copy could be made either ("
         + "; ".join(tried) + "). Fix: create the virtual environment in a shorter folder"
         + (" whose path has only ASCII characters (for example C:\\venvs\\kitten)" if windows else

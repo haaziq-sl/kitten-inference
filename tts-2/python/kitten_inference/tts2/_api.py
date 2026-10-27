@@ -128,7 +128,8 @@ class KittenTTS2:
 
     ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts2: the voice in
     use stays ready; after clone_voice() no voice is kept, which costs each request about 14 ms), "all", "lru" or
-    "none". ``backend``: "cuda" or "rocm" (default: the installed engine, or $KITTEN_TTS2_BACKEND).
+    "none". ``backend``: "cuda" or "rocm" (default: $KITTEN_TTS2_BACKEND, else the engine whose GPU driver this
+    machine has, NVIDIA first).
     """
 
     sample_rate = SAMPLE_RATE
@@ -154,20 +155,29 @@ class KittenTTS2:
         self._max_prefix_ids = 0
         self._verified = set()  # model files whose SHA-256 matched in this process
         self.backend = _backend.find(backend)
-        try:
-            self._lib = _abi.load(self.backend.lib)
-        except _abi.LibraryError as exc:
-            if self.backend.name == "rocm" and "libamdhip64" in str(exc):
-                raise _abi.LibraryError(f"{exc}. The AMD engine needs the ROCm 7 runtime (libamdhip64.so.7) "
-                                        "installed on the system") from None
-            raise
-        # A missing driver or GPU is reported now, not after minutes of downloading and preparing the model.
-        _gpu.check(self.backend.name, device, log=_prepare._log)
+        self._lib = self._load_library()
+        # A missing driver or GPU is reported now, not after minutes of downloading and preparing the model. When the
+        # NVIDIA engine was picked by itself and its driver cannot start, the AMD engine is used if this machine has it.
+        checked = _backend.check_gpu(self.backend, device, log=_prepare._log)
+        if checked is not self.backend:
+            self.backend = checked
+            self._lib = self._load_library()
         self.model_dir = _prepare.ensure(text_data_tool=self.backend.text_data_tool, revision=revision,
                                          cache_dir=self._cache_dir)
         self._bundle = _bundle.load(self.model_dir)
         self._identity: Optional[tuple] = None  # (checkpoint, s3gen sha) of the prepared model, read on demand
         self._start(BUILTIN)
+
+    def _load_library(self) -> ctypes.CDLL:
+        if self.backend.name == "rocm":
+            _gpu.runtime("rocm")  # a ROCm found only in its own folder stays loaded: the engine library then finds it
+        try:
+            return _abi.load(self.backend.lib)
+        except _abi.LibraryError as exc:
+            if self.backend.name == "rocm" and "libamdhip64" in str(exc):
+                raise _abi.LibraryError(f"{exc}. The AMD engine needs the ROCm 7 runtime (libamdhip64.so.7) "
+                                        f"installed on the system: {_gpu.ROCM_DOCS}") from None
+            raise
 
     @property
     def revision(self) -> str:
@@ -478,8 +488,8 @@ class KittenTTS2:
         if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("transcript must be the words spoken in the recording")
         if not self.can_clone:
-            raise RuntimeError(f"voice cloning needs the NVIDIA (CUDA) engine; the installed {self.backend.distribution} "
-                               f"has no voice cloning. Clone and save the voice on an NVIDIA GPU with {CLONE_MEMORY}, "
+            raise RuntimeError(f"voice cloning needs the NVIDIA (CUDA) engine; the {self.backend.label} has no voice "
+                               f"cloning. Clone and save the voice on an NVIDIA GPU with {CLONE_MEMORY}, "
                                "then load it here with load_voice()")
         pcm = np.ascontiguousarray(_audio.decode_reference(reference_audio_path), dtype=np.float32)
         with self._lock:

@@ -92,22 +92,22 @@ Do not install AMD's kernel driver package (`amdgpu-dkms`) in WSL2: WSL2 uses th
 After step 1, pip can install the engine, in place of steps 2 to 4:
 
 ```sh
-sudo apt-get install -y python3-venv
+sudo apt-get update && sudo apt-get install -y python3-venv
 python3 -m venv ~/kitten-tts
 . ~/kitten-tts/bin/activate
 python -m pip install -U pip
-pip install "kitten-inference[tts-2-rocm]"
+pip install "kitten-inference[tts-2]"
 kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
 ```
 
-The engine package (`kitten-inference-tts2-rocm`, Linux x86_64 with glibc 2.28 or newer) is built with ROCm 7.1 for
-gfx1100, gfx1101, gfx1102, gfx1200 and gfx1201. Its audio is the same as that of a `hip` build made with ROCm 7.1 (the
-builds our numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding
-(about -60 to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7`
-from the ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. The first run downloads and
-prepares the model (about a 4.6 GB download; 55 to 168 s in our tests); later runs start in a few seconds. On an RX
-9070 XT the real-time factor was 0.06 (10 s of speech in about 0.6 s) and the first streamed audio came after 46 to
-50 ms. It has no voice cloning.
+The package's AMD engine (Linux x86_64 with glibc 2.28 or newer) is built with ROCm 7.1 for gfx1100, gfx1101,
+gfx1102, gfx1200 and gfx1201. Its audio is the same as that of a `hip` build made with ROCm 7.1 (the builds our
+numbers come from); a build made with the ROCm 7.2 of step 1 differs from it only at the level of rounding (about -60
+to -64 dB in our tests), as described above. The package does not include ROCm: it uses `libamdhip64.so.7` from the
+ROCm 7.x of step 1 and stops with an error naming that file when ROCm is missing. On a PC that also has an NVIDIA
+GPU, add `--backend rocm`. The first run downloads and prepares the model (about a 4.6 GB download; 55 to 168 s in
+our tests); later runs start in a few seconds. On an RX 9070 XT the real-time factor was 0.06 (10 s of speech in about
+0.6 s) and the first streamed audio came after 46 to 50 ms. It has no voice cloning.
 
 ## 2. Get the source and build
 

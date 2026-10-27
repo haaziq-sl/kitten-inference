@@ -35,7 +35,7 @@ On smaller GPUs the same comparison gives a smaller lead, because the native eng
 |---|---|
 | NVIDIA GeForce RTX 30 series and newer, and other NVIDIA GPUs with compute capability 8.0 or newer | supported |
 | NVIDIA GeForce GTX 10, GTX 16 and RTX 20 series (compute capability 6.1 and 7.5) | supported, not optimal: these GPUs have no bf16 tensor cores, so part of the math runs in software. Real-time factor 0.22 to 0.76 with `--stream false` on the cards we measured, against 0.03 to 0.17 for RTX 30 series and newer. The audio is close to, not bit for bit the same as, a newer GPU's |
-| AMD Radeon RX 7000 and RX 9000 | supported with a separate build, tested inside WSL2 on Windows (RX 7600 and RX 7600 XT: builds, not tested); no voice cloning in the pip package (the source build includes it, not tested on Radeon); the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
+| AMD Radeon RX 7000 and RX 9000 | supported with a ROCm build (the Linux pip package includes it), tested inside WSL2 on Windows (RX 7600 and RX 7600 XT: builds, not tested); no voice cloning in the pip package (the source build includes it, not tested on Radeon); the audio is close to, not bit for bit the same as, an NVIDIA GPU's. See [docs/amd-radeon.md](docs/amd-radeon.md) |
 | Other GPUs: NVIDIA compute capability 6.0, 7.0 or older; AMD RX 6000 and older, Instinct | not supported: the engine stops at start and says so |
 
 A real-time factor of 0.25 means 10 seconds of audio take 2.5 seconds to produce.

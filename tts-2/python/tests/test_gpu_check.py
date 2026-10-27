@@ -1,7 +1,9 @@
 """The GPU check that runs before the first download: no driver, no visible GPU, a CUDA 11 driver, a bad device
-number (fake driver libraries), and the real answer on a machine without an NVIDIA driver (CI runners)."""
+number (fake driver libraries), the AMD route the messages name, and the real answer on a machine without an NVIDIA
+driver (CI runners)."""
 import ctypes
 import os
+import sys
 import types
 
 import pytest
@@ -43,12 +45,82 @@ def test_no_driver():
 
 
 def test_no_visible_gpu():
-    with pytest.raises(_gpu.GPUError, match="sees no GPU"):
+    with pytest.raises(_gpu.DriverStartError, match="sees no GPU"):
         _gpu.check_cuda(0, load=_loader(FakeCuda(init=_gpu.CUDA_ERROR_NO_DEVICE)))
 
 
+def _linux(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_gpu, "CUDA_DRIVER", "libcuda.so.1")
+
+
+def _only_cuda(lib):
+    """The NVIDIA driver library loads (as ``lib``, or not at all for None); the HIP runtime does not."""
+    def load(name):
+        if lib is None or os.path.basename(name) == _gpu.HIP_RUNTIME:
+            raise OSError(f"{name}: cannot open shared object file")
+        return lib
+    return load
+
+
+def test_no_driver_names_the_amd_route_on_linux(no_backends, fake_backend, monkeypatch):
+    # The Linux x86-64 install has the AMD engine too: the message says what each vendor needs.
+    _linux(monkeypatch)
+    fake_backend("cuda")
+    fake_backend("rocm", caps=())
+    with pytest.raises(_gpu.DriverStartError) as e:
+        _gpu.check_cuda(0, load=_only_cuda(None))
+    text = str(e.value)
+    assert text.startswith("no NVIDIA driver found on this machine (libcuda.so.1 is missing). Kitten TTS 2 needs an "
+                           "NVIDIA GPU with the NVIDIA driver R570 or newer, or an AMD Radeon RX 7000 or RX 9000 with "
+                           "ROCm 7 (libamdhip64.so.7 is missing too; setup: "), text
+    for part in ("amd-radeon.md", "--gpus all", "--device /dev/kfd --device /dev/dri", "--backend rocm",
+                 "KITTEN_TTS2_BACKEND=rocm"):
+        assert part in text, part
+    # The ROCm runtime is here (the NVIDIA engine was asked for): say how to use it.
+    def only_hip(name):
+        if os.path.basename(name) != _gpu.HIP_RUNTIME:
+            raise OSError(f"{name}: cannot open shared object file")
+        return FakeHip()
+    with pytest.raises(_gpu.DriverStartError) as e:
+        _gpu.check_cuda(0, load=only_hip)
+    assert ("This machine has the AMD ROCm 7 runtime: --backend rocm or KITTEN_TTS2_BACKEND=rocm uses its AMD GPU"
+            in str(e.value)), str(e.value)
+
+
+def test_nvidia_driver_that_cannot_start_names_the_amd_route(no_backends, fake_backend, monkeypatch):
+    _linux(monkeypatch)
+    fake_backend("cuda")
+    fake_backend("rocm", caps=())
+    for init, said in ((_gpu.CUDA_ERROR_NO_DEVICE, "sees no GPU"), (999, "cuInit error 999")):
+        with pytest.raises(_gpu.DriverStartError) as e:
+            _gpu.check_cuda(0, load=_only_cuda(FakeCuda(init=init)))
+        text = str(e.value)
+        assert said in text and "install ROCm 7" in text and "--backend rocm" in text, text
+
+
+def test_no_driver_without_the_amd_engine(no_backends, fake_backend, monkeypatch):
+    _linux(monkeypatch)
+    fake_backend("cuda")
+    with pytest.raises(_gpu.DriverStartError) as e:
+        _gpu.check_cuda(0, load=_only_cuda(None))
+    assert "R570" in str(e.value) and "docker run --gpus all" in str(e.value) and "ROCm" not in str(e.value)
+
+
+def test_no_driver_on_windows_points_amd_users_to_wsl2(no_backends, fake_backend, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(_gpu, "CUDA_DRIVER", "nvcuda.dll")
+    fake_backend("cuda")
+    with pytest.raises(_gpu.DriverStartError) as e:
+        _gpu.check_cuda(0, load=_loader(None))
+    assert str(e.value) == ("no NVIDIA driver found on this machine (nvcuda.dll is missing). Kitten TTS 2 needs an "
+                            "NVIDIA GPU with the NVIDIA driver R570 or newer. With an AMD Radeon GPU, run Kitten TTS 2 "
+                            "inside WSL2: https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/"
+                            "amd-radeon.md")
+
+
 def test_driver_fails_to_start():
-    with pytest.raises(_gpu.GPUError, match="cuInit error 999, CUDA_ERROR_UNKNOWN"):
+    with pytest.raises(_gpu.DriverStartError, match="cuInit error 999, CUDA_ERROR_UNKNOWN"):
         _gpu.check_cuda(0, load=_loader(FakeCuda(init=999)))
 
 

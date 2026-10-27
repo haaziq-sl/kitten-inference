@@ -151,7 +151,7 @@ The audio is close to, not bit for bit the same as, an NVIDIA GPU's; see [Output
 ## Windows
 
 The steps are in [windows.md](windows.md). Tested on Windows Server 2022 with an NVIDIA L4; Windows 10 and 11 on
-GeForce cards are expected to work the same way but were not tested. With the pip packages, Windows and Linux give
+GeForce cards are expected to work the same way but were not tested. With the pip package, Windows and Linux give
 byte for byte the same audio on the same GPU model (36 of 36 seeded `--stream false` requests), and voices cloned on
 Windows match Linux (WAV and MP3 recordings; M4A recordings can differ slightly with FFmpeg 9). First use of the pip
 package (download and preparation) took 160 s; real-time factor 0.074 with `--stream false` on the L4.

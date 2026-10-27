@@ -48,13 +48,13 @@ These parts re-implement published code. [NOTICE](NOTICE) gives each license.
 
 ## Added in kitten-inference
 
-- `python/`: the Python package `kitten_inference.tts2` (distribution `kitten-inference-tts2`). Its API calls the
+- `python/`: the Python package `kitten_inference.tts2` (in `kitten-inference`). Its API calls the
   engine's C API with `ctypes`, its `kitten-tts2` command runs `kitten-tts-native`, and it prepares the model on first
   use with a copy of `tools/kt2n_assets`.
 - The torch-free weight-norm fold (`tools/kt2n_assets/weight_norm.py`, NumPy), so preparation needs no PyTorch.
-- `packaging/`: the build scripts of the engine wheels `kitten-inference-tts2-cu12` (CUDA, Linux and Windows) and
-  `kitten-inference-tts2-rocm` (HIP), with the check that their GPU code is the default build's.
-- The GitHub Actions workflows that build, test and release these packages (`.github/workflows/` at the repository
+- `packaging/`: the build scripts of the CUDA (Linux and Windows) and ROCm (HIP) engines that go into the
+  `kitten-inference` wheels, with the check that their GPU code is the default build's.
+- The GitHub Actions workflows that build, test and release `kitten-inference` (`.github/workflows/` at the repository
   root).
 
 ## What did not change

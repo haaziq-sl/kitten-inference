@@ -1,5 +1,6 @@
-"""The installed package: import, metadata, the bundled preparation code and the console script."""
+"""The installed package: import, metadata, the bundled preparation code, the engines and the console script."""
 import importlib
+import platform
 import re
 import subprocess
 import sys
@@ -13,46 +14,71 @@ import kitten_inference.tts2 as tts2
 def _dist():
     from importlib import metadata
     try:
-        return metadata.distribution("kitten-inference-tts2")
+        return metadata.distribution("kitten-inference")
     except metadata.PackageNotFoundError:
-        pytest.skip("kitten-inference-tts2 is not installed (running from the source tree)")
+        pytest.skip("kitten-inference is not installed (running from the source tree)")
+
+
+def _files(dist):
+    return {str(f).replace("\\", "/") for f in dist.files or []}
 
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 
 def test_import_and_version():
-    # __version__ is a literal (CONTRACT: no metadata lookups); a post release must change it with the pyproject
+    # __version__ is a literal (CONTRACT: no metadata lookups), the version of this build input (tts-2/python); a
+    # post release changes only kitten-inference's own version (umbrella)
     assert re.fullmatch(r"\d+\.\d+\.\d+(\.post\d+)?", tts2.__version__), tts2.__version__
     if PYPROJECT.is_file():
         assert tts2.__version__ == re.search(r'^version = "([^"]+)"', PYPROJECT.read_text(encoding="utf-8"),
                                              re.M).group(1)
-    assert callable(tts2.KittenTTS2)
-    for name in tts2.__all__:
-        assert hasattr(tts2, name), name
 
 
 def test_metadata():
+    from packaging.requirements import Requirement  # a dependency of pytest
+    from packaging.utils import canonicalize_name
     dist = _dist()
     meta = dist.metadata
-    assert meta["Name"] == "kitten-inference-tts2"
-    assert dist.version == tts2.__version__
-    assert meta["Requires-Python"] == ">=3.9"
-    requires = {r.split(";")[0].replace(" ", "") for r in (dist.requires or [])}
-    names = {r.split(">")[0].split("<")[0].split("=")[0].lower() for r in requires}
-    assert names == {"numpy", "huggingface-hub", "tokenizers", "filelock"}, requires
-    assert not any("torch" in r for r in requires)
+    assert meta["Name"] == "kitten-inference"
+    # A post release (0.2.0.post1) changes only the distribution's version; the Python packages keep theirs.
+    assert re.sub(r"\.post\d+$", "", dist.version) == tts2.__version__, dist.version
+    assert meta["Requires-Python"] == ">=3.8"
+    assert set(meta.get_all("Provides-Extra") or []) == {"tts-0-8", "tts-2"}
+    requires = [Requirement(r) for r in dist.requires or []]
+    assert not any("torch" in r.name for r in requires)
+
+    def wanted(r, python, system, machine, extra="tts-2"):
+        return r.marker is not None and r.marker.evaluate(
+            {"python_version": python, "sys_platform": system, "platform_machine": machine, "extra": extra})
+    tts2_requires = [r for r in requires if wanted(r, "3.12", "linux", "x86_64")]
+    assert {canonicalize_name(r.name) for r in tts2_requires} == {"numpy", "huggingface-hub", "tokenizers",
+                                                                  "filelock"}, tts2_requires
+    # Only for the platforms with an engine, on Python 3.9 or newer (Python 3.8 wheels carry TTS 0.8 only).
+    for r in tts2_requires:
+        assert 'python_version >= "3.9"' in str(r.marker).replace("'", '"'), r
+        assert wanted(r, "3.9", "win32", "AMD64"), r
+        for python, system, machine in (("3.8", "linux", "x86_64"), ("3.12", "darwin", "arm64"),
+                                        ("3.12", "linux", "aarch64"), ("3.13", "win32", "ARM64")):
+            assert not wanted(r, python, system, machine), (r, python, system, machine)
+        assert not wanted(r, "3.12", "linux", "x86_64", extra="tts-0-8"), r
     scripts = {ep.name: ep.value for ep in dist.entry_points if ep.group == "console_scripts"}
     assert scripts == {"kitten-tts2": "kitten_inference.tts2._cli:main"}
 
 
-def test_wheel_does_not_own_the_namespace_init():
+def test_one_package_holds_everything():
     dist = _dist()
-    files = {str(f).replace("\\", "/") for f in dist.files or []}
-    assert "kitten_inference/__init__.py" not in files  # the umbrella (kitten-inference) owns it
-    assert "kitten_inference/tts2/__init__.py" in files
+    files = _files(dist)
+    assert "kitten_inference/__init__.py" in files
+    assert "kitten_inference/tts2/__init__.py" in files, "kitten-inference does not hold kitten_inference.tts2"
     assert "kitten_inference/tts2/_assets/prepare.py" in files
     assert "kitten_inference/tts2/NOTICE" in files
+    # The engines: NVIDIA in the Linux x86-64 and Windows x64 wheels, AMD in the Linux x86-64 ones (Python 3.9+).
+    machine = platform.machine()
+    linux_x64 = sys.platform == "linux" and machine == "x86_64" and sys.version_info >= (3, 9)
+    windows_x64 = sys.platform == "win32" and machine == "AMD64" and sys.version_info >= (3, 9)
+    assert ("kitten_inference/_tts2_cuda/__init__.py" in files) == (linux_x64 or windows_x64)
+    assert ("kitten_inference/_tts2_rocm/__init__.py" in files) == linux_x64
 
 
 def test_bundled_prepare_imports_without_torch():

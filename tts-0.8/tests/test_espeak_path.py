@@ -229,6 +229,27 @@ class WindowsLongPathTest(unittest.TestCase):
         self.assertEqual(cpp_model._longest_engine_path(here),
                          len(os.path.join(libs, "msvcp140-0123456789abcdef0123456789abcdef.dll")))
 
+    def test_tts2_files_are_not_measured(self):
+        # The kitten-inference wheel also installs TTS 2 (kitten_inference/tts2, the CUDA engine in
+        # kitten_inference/_tts2_cuda) and a dist-info folder with long licence paths. The TTS 0.8 engine loads none of
+        # them, so only its own files count, even when the others' paths are longer.
+        from kitten_inference.tts08 import cpp_model
+        tmp = tempfile.mkdtemp(prefix="kelp-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        site = os.path.join(tmp, "site")
+        here = os.path.join(site, "kitten_inference", "tts08")
+        dll = os.path.join(site, "kitten_inference_tts08.libs", "msvcp140-0123456789abcdef0123456789abcdef.dll")
+        tts2 = [os.path.join(site, "kitten_inference", "tts2", "_engine.py"),
+                os.path.join(site, "kitten_inference", "_tts2_cuda", "bin", "kt2n_prepare_text_data.exe"),
+                os.path.join(site, "kitten_inference", "_tts2_cuda", "lib", "kt2n_engine" + "-x" * 30 + ".dll"),
+                os.path.join(site, "kitten_inference-0.2.0.dist-info", "licenses", "tts-2", "licenses",
+                             "pyannote-embedding" + "-x" * 30 + ".txt")]
+        for path in [os.path.join(here, "_engine.cp312-win_amd64.pyd"), dll] + tts2:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+        self.assertGreater(max(len(p) for p in tts2), len(dll))
+        self.assertEqual(cpp_model._longest_engine_path(here), len(dll))
+
 
 if __name__ == "__main__":
     unittest.main()

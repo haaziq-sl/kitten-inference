@@ -1,14 +1,14 @@
 name: tts-0.8
 
-# Builds and tests the kitten-inference-tts08 wheels. Every wheel is installed with its
-# dependencies and runs the unit tests and the audio smoke test (tts-0.8/tests).
-# Publishing runs only for v* tags in KittenML/kitten-inference.
+# Builds and tests the TTS 0.8 engine wheels that the kitten-inference wheels are assembled from (packages.yml). Every
+# wheel is installed with its dependencies and runs the unit tests and the audio smoke test (tts-0.8/tests). Nothing
+# here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json, from
+# its artifacts (kept 90 days; RELEASING.md).
 
 on:
   workflow_dispatch:
   push:
     branches: ["**"]
-    tags: ["v*"]
     paths:
       - "tts-0.8/**"
       - ".github/workflows/tts-0.8.yml"
@@ -230,11 +230,13 @@ jobs:
 
       - run: ls -l wheelhouse
 
+      # Release inputs: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-${{ matrix.artifact }}
           path: wheelhouse/*.whl
           if-no-files-found: error
+          retention-days: 90
 
   desktop-wheels:
     name: ${{ matrix.name }}
@@ -500,11 +502,13 @@ jobs:
       - run: ls -l wheelhouse
         shell: bash
 
+      # Release inputs: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-${{ matrix.artifact }}
           path: wheelhouse/*.whl
           if-no-files-found: error
+          retention-days: 90
 
   android-wheels:
     # Experimental and non-blocking. Built, not tested: cibuildwheel runs Android tests only in an
@@ -552,11 +556,13 @@ jobs:
 
       - run: ls -l wheelhouse
 
+      # Release inputs: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-android-arm64
           path: wheelhouse/*.whl
           if-no-files-found: error
+          retention-days: 90
 
   oldest-linux:
     # The oldest Linux the README promises: Ubuntu 20.04 (glibc 2.31) with its own Python 3.8.
@@ -688,81 +694,6 @@ jobs:
           path: espeak-*.json
           if-no-files-found: ignore
 
-  espeak-paths-old-wheel:
-    # Work branch only (it reads another run's artifacts): the same cases with the c158adf wheels, which must fail the
-    # old way, then with this checkout's Python files copied over them (an early check that does not wait for the
-    # builds above).
-    if: github.ref == 'refs/heads/ws/espeak'
-    name: espeak data paths, c158adf wheel, ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 50
-    permissions:
-      contents: read
-      actions: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            artifact: tts08-wheels-linux-x86_64-manylinux-2-28
-          - os: macos-14
-            artifact: tts08-wheels-macos-arm64
-          - os: windows-2022
-            artifact: tts08-wheels-windows-x86_64
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: old-wheels
-          run-id: 40281737274
-          github-token: ${{ github.token }}
-
-      - name: Unit tests of this checkout's Python files over the c158adf wheel
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m venv ut
-          py=$([ -x ut/bin/python ] && echo ut/bin/python || echo ut/Scripts/python.exe)
-          "$py" -m pip install -q --disable-pip-version-check --find-links old-wheels kitten-inference-tts08
-          dest=$("$py" -c "import os, kitten_inference.tts08 as m; print(os.path.dirname(m.__file__).replace(os.sep, '/'))")
-          # the wheel's own __init__.py stays: delvewheel adds the DLL folder there on Windows
-          find tts-0.8/kitten_inference/tts08 -maxdepth 1 -name "*.py" ! -name "__init__.py" -exec cp {} "$dest/" \;
-          "$py" -m unittest discover -s tts-0.8/tests -p "test_espeak_path.py" -v
-
-      - name: Deep folder, c158adf wheel (must fail the old way)
-        if: ${{ !cancelled() }}
-        run: python tts-0.8/tests/espeak_paths.py deep --wheels old-wheels --expect broken --out espeak-deep-old.json
-
-      - name: José and Łukasz folders, c158adf wheel (must fail the old way, Windows)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
-        run: python tts-0.8/tests/espeak_paths.py names --wheels old-wheels --expect broken --out espeak-names-old.json
-
-      - name: Deep folder, c158adf wheel with this checkout's Python files
-        if: ${{ !cancelled() }}
-        run: >-
-          python tts-0.8/tests/espeak_paths.py deep --wheels old-wheels --expect fixed
-          --overlay tts-0.8/kitten_inference/tts08 --out espeak-deep-overlay.json
-
-      - name: José and Łukasz folders, c158adf wheel with this checkout's Python files (Windows)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
-        run: >-
-          python tts-0.8/tests/espeak_paths.py names --wheels old-wheels --expect fixed
-          --overlay tts-0.8/kitten_inference/tts08 --out espeak-names-overlay.json
-
-      - uses: actions/upload-artifact@v6
-        if: ${{ !cancelled() }}
-        with:
-          name: espeak-paths-old-wheel-${{ matrix.os }}
-          path: espeak-*.json
-          if-no-files-found: ignore
-
   wheel-list:
     name: Wheel list and contents
     needs: [linux-wheels, desktop-wheels, android-wheels]
@@ -779,9 +710,9 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # The umbrella publishes only once every one of these wheels is on PyPI (pypi_ready.py COMPLETE), so an upload
-      # that stopped partway cannot let it out: this keeps that list and the build matrix in step.
-      - name: The wheels are the set the umbrella's release check waits for
+      # The kitten-inference wheels are assembled from these (all but the manylinux2014 x86-64 ones), one per Python
+      # and platform in pypi_ready.py COMPLETE: this keeps that list and the build matrix in step.
+      - name: The wheels are the set the kitten-inference wheels are assembled from
         run: python3 .github/scripts/pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
 
       # Besides the package files, this checks two things per wheel: every bundled library is named in the
@@ -889,51 +820,3 @@ jobs:
           print("\n" + ("\n".join(bad) if bad else "contents ok"))
           sys.exit(1 if bad else 0)
           PY
-
-  publish:
-    name: Publish to PyPI
-    needs: [linux-wheels, desktop-wheels, android-wheels, oldest-linux, lowest-deps, wheel-list]
-    if: >-
-      always() &&
-      github.repository == 'KittenML/kitten-inference' &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      needs.linux-wheels.result == 'success' &&
-      needs.desktop-wheels.result == 'success' &&
-      needs.oldest-linux.result == 'success' &&
-      needs.lowest-deps.result == 'success' &&
-      needs.wheel-list.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 330
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write
-
-    # The release order on PyPI: the engine wheels of TTS 2 first (their own workflows), then this one and
-    # kitten-inference-tts2, then the umbrella (packages.yml), which waits for all of them. A tag whose version is not
-    # this distribution's version uploads nothing here (a post release of another distribution).
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: tts08-wheels-*
-          path: dist
-          merge-multiple: true
-
-      - name: The wheels this tag releases
-        id: files
-        run: python3 .github/scripts/release_files.py dist upload --dist kitten-inference-tts08
-
-      - name: Wait until the TTS 2 engine wheels are on PyPI
-        if: steps.files.outputs.upload == 'true'
-        run: |
-          python3 .github/scripts/pypi_ready.py wait --pyproject umbrella/pyproject.toml --timeout-minutes 300 \
-            --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
-
-      - name: Publish to PyPI (trusted publishing)
-        if: steps.files.outputs.upload == 'true'
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3: pinned to a commit (this job can upload to PyPI)
-        with:
-          packages-dir: upload
-          skip-existing: true

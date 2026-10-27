@@ -30,9 +30,10 @@ pip install "kitten-inference[tts-0.8]"
 - On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
 - Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
-- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip older than 23.3 (for example
-  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) installs no engine for `[tts-0.8]`
-  and still reports success.
+- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"` (this needs pip 20.3 or newer on Linux x86-64;
+  older pip finds no wheel of this version there): supported, not optimal, because pip older than 23.3 (for example
+  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) skips `[tts-0.8]` with only a
+  warning: Kitten TTS 0.8 is then installed without the Python packages it needs, and says so when you import it.
 
 ## Use
 
@@ -99,11 +100,12 @@ Version 0.2 replaces the `model_inference` module with `kitten_inference.tts08`.
 
 ## License
 
-The code is licensed under Apache-2.0. The wheels also contain third-party code under its own licences
-(MIT, BSD-3-Clause, GPL-3.0-or-later with the GCC Runtime Library Exception, Apache-2.0 with LLVM
+The code is licensed under Apache-2.0. The Kitten TTS 0.8 engine also contains third-party code under its own
+licences (MIT, BSD-3-Clause, GPL-3.0-or-later with the GCC Runtime Library Exception, Apache-2.0 with LLVM
 exceptions, and the Microsoft Visual C++ runtime terms): see
 [NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-0.8/NOTICE), which each wheel also
-carries in its `.dist-info/licenses/` folder.
+carries in its `.dist-info/licenses/tts-0.8/` folder. The same wheels also hold Kitten TTS 2, whose third-party
+code is listed in [tts-2/NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-2/NOTICE).
 
 The models are downloaded on first use. They are the Kitten TTS 0.8 models, which KittenML publishes under
 Apache-2.0 ([nano](https://huggingface.co/KittenML/kitten-tts-nano-0.8),

@@ -96,6 +96,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(tts08.__version__, match.group(1))
 
 
+class MissingPackagesTests(unittest.TestCase):
+    """kitten-inference without its [tts-0.8] extra: KittenTTS names the missing packages and the install command,
+    and text normalisation still works (it needs none of them)."""
+
+    def test_the_message_names_the_missing_packages(self):
+        import subprocess
+
+        # None in sys.modules hides a module from both import and importlib.util.find_spec.
+        code = ("import sys\n"
+                "sys.modules.update(phonemizer=None, soundfile=None)\n"
+                "from kitten_inference.tts08 import normalize_text\n"
+                "print(normalize_text('Fig. 2'))\n"
+                "try:\n"
+                "    from kitten_inference.tts08 import KittenTTS\n"
+                "except ImportError as exc:\n"
+                "    print(exc)\n")
+        done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines(), [
+            "Figure two",
+            'Kitten TTS 0.8 needs more Python packages (not installed: phonemizer, soundfile). Install them: pip '
+            'install "kitten-inference[tts-0.8]". pip older than 23.3 skips that extra: run python -m pip install -U '
+            "pip first.",
+        ])
+
+    def test_the_list_matches_the_dependencies(self):
+        deps = importlib.import_module("kitten_inference.tts08._deps")
+        self.assertEqual(deps.missing(), [])  # these tests run with the extra installed
+        if not PYPROJECT.is_file():
+            self.skipTest("pyproject.toml not available")
+        block = re.search(r"^dependencies = \[(.*?)^\]", PYPROJECT.read_text(encoding="utf-8"), re.M | re.S).group(1)
+        names = [re.match(r"[A-Za-z0-9_.-]+", req).group(0) for req in re.findall(r'"([^"]+)"', block)]
+        self.assertEqual(sorted(n.lower().replace("-", "_") for n in names), sorted(deps.REQUIRED))
+
+
 class FakeEngine:
     def __init__(self):
         self.calls = []
@@ -483,18 +518,57 @@ class WindowsRuntimeTests(unittest.TestCase):
         self.assertNotEqual(Path(buf.value).parent.resolve(), folder.resolve())
 
 
+def _engine_folders(wheel):
+    """The TTS 2 engine folders a kitten-inference wheel with this WHEEL file holds: CUDA and ROCm for Linux x86-64
+    (manylinux_2_28), CUDA for Windows x64, none elsewhere, and none for Python 3.8 (TTS 2 needs 3.9)."""
+    tags = [line.split(":", 1)[1].strip() for line in wheel.splitlines() if line.startswith("Tag:")]
+    if not tags or any(tag.startswith("cp38-") for tag in tags):
+        return set()
+    platforms = {tag.rsplit("-", 1)[-1] for tag in tags}
+    if "manylinux_2_28_x86_64" in platforms:
+        return {"_tts2_cuda", "_tts2_rocm"}
+    return {"_tts2_cuda"} if "win_amd64" in platforms else set()
+
+
 class PackagingTests(unittest.TestCase):
-    def test_wheel_does_not_ship_the_umbrella_init(self):
+    def test_one_distribution_holds_tts08(self):
+        # kitten-inference (the released wheel) holds the whole package: kitten_inference/__init__.py, TTS 0.8, TTS 2
+        # and the GPU engines its tags allow. kitten-inference-tts08 (the TTS 0.8 build that tts-0.8.yml tests, from
+        # which the released wheels are made) holds tts08 only.
         owners = []
         for dist in metadata.distributions():
             names = {str(f).replace("\\", "/") for f in (dist.files or [])}
-            if any(n.startswith("kitten_inference/tts08/_engine") for n in names):
-                owners.append(dist.metadata["Name"])
+            if not any(n.startswith("kitten_inference/tts08/_engine") for n in names):
+                continue
+            name = re.sub(r"[-_.]+", "-", dist.metadata["Name"]).lower()
+            owners.append(name)
+            self.assertIn(name, ("kitten-inference", "kitten-inference-tts08"))
+            self.assertIn("kitten_inference/tts08/model_defs/kitten_fp32_80m_arch.json", names)
+            if name == "kitten-inference-tts08":
                 self.assertNotIn("kitten_inference/__init__.py", names)
-                self.assertIn("kitten_inference/tts08/model_defs/kitten_fp32_80m_arch.json", names)
+                continue
+            self.assertIn("kitten_inference/__init__.py", names)
+            self.assertIn("kitten_inference/tts2/__init__.py", names)
+            wheel = dist.read_text("WHEEL") or ""
+            have = {e for e in ("_tts2_cuda", "_tts2_rocm") if f"kitten_inference/{e}/__init__.py" in names}
+            self.assertEqual(have, _engine_folders(wheel), wheel)
         if not owners:
             self.skipTest("not running from an installed wheel")
         self.assertEqual(len(owners), 1, owners)
+
+    def test_engine_folders_by_tag(self):
+        cases = {
+            "cp312-cp312-manylinux_2_28_x86_64": {"_tts2_cuda", "_tts2_rocm"},
+            "cp38-cp38-manylinux_2_27_x86_64\nTag: cp38-cp38-manylinux_2_28_x86_64": set(),
+            "cp39-cp39-win_amd64": {"_tts2_cuda"},
+            "cp38-cp38-win_amd64": set(),
+            "cp312-cp312-manylinux_2_27_aarch64\nTag: cp312-cp312-manylinux_2_28_aarch64": set(),
+            "cp312-cp312-macosx_11_0_arm64": set(),
+            "cp313-cp313-win_arm64": set(),
+        }
+        for tags, want in cases.items():
+            wheel = f"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: false\nTag: {tags}\n"
+            self.assertEqual(_engine_folders(wheel), want, tags)
 
 
 if __name__ == "__main__":

@@ -52,8 +52,8 @@ kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 - **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
   ROCm 7 first (WSL2: step 1 of [AMD Radeon](tts-2/docs/amd-radeon.md); Linux without WSL2:
   [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution), then
-  `pip install "kitten-inference[tts-2-rocm]"` in place of `[tts-2]`. Real-time factor about 0.06 on an RX 9070 XT
-  (10 s of speech in about 0.6 s). That package has no voice cloning.
+  run the same commands: the package finds the Radeon (on a PC that also has an NVIDIA GPU, add `--backend rocm`).
+  Real-time factor about 0.06 on an RX 9070 XT (10 s of speech in about 0.6 s). No voice cloning on Radeon.
 - **Voice cloning** (NVIDIA only) needs FFmpeg (`sudo apt-get update && sudo apt-get install -y ffmpeg`; on Windows
   `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and activate the venv again; Windows 10 and 11
   include winget, Windows Server 2022 needs it installed first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a 12 GB card, other programs may
@@ -87,9 +87,10 @@ python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kit
   built; passes an automated audio check, not tested by hand. Android ARM64: built, not tested.
 - On Windows, if `KittenTTS()` reports "espeak not installed", install the Microsoft Visual C++ Redistributable:
   `winget install Microsoft.VCRedist.2015+.x64`.
-- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because pip older than 23.3 (for example
-  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) installs no engine for `[tts-0.8]`
-  and still reports success.
+- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"` (this needs pip 20.3 or newer on Linux x86-64;
+  older pip finds no wheel of this version there): supported, not optimal, because pip older than 23.3 (for example
+  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) skips `[tts-0.8]` with only a
+  warning: Kitten TTS 0.8 is then installed without the Python packages it needs, and says so when you import it.
 - On Windows, keep the virtual environment's path under about 150 characters; longer paths stop TTS 0.8 with an error
   that says so ([details](tts-0.8/README.md#platforms)).
 - **Supported, not optimal:**
@@ -146,7 +147,7 @@ KittenTTS("KittenML/kitten-tts-nano-0.8").generate_to_file("Hello from Kitten TT
 
 ## License
 
-KittenML's code is Apache-2.0 ([LICENSE](LICENSE)); the packages also contain third-party code under other licences
+KittenML's code is Apache-2.0 ([LICENSE](LICENSE)); the package also contains third-party code under other licences
 ([NOTICE](NOTICE), [tts-2/NOTICE](tts-2/NOTICE), [tts-0.8/NOTICE](tts-0.8/NOTICE)). The models download on first use and keep their publishers' licences. The Kitten TTS 2 model is
 under the [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md), not
 Apache or MIT: it limits commercial use, training on the outputs and redistribution, so read it before you build on

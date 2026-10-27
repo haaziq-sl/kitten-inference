@@ -201,7 +201,7 @@ def _check_glibc(version=None):
     if v is not None and v < GLIBC_FLOOR:
         raise RuntimeError(
             f"This system's glibc is {v[0]}.{v[1]}, older than the {GLIBC_FLOOR[0]}.{GLIBC_FLOOR[1]} that "
-            "kitten-inference-tts08 needs (the espeak-ng library it uses for text). On glibc older than 2.29 "
+            "Kitten TTS 0.8 needs (the espeak-ng library it uses for text). On glibc older than 2.29 "
             "(for example RHEL/Rocky 8, Debian 10, Ubuntu 18.04 or Amazon Linux 2) it would otherwise fail with "
             "\"espeak not installed on your system\". Use a Linux with glibc 2.29 or newer."
         )
@@ -317,7 +317,7 @@ def _check_cpu(requirements=None, features=None):
         hint = next((_CPU_HINT[f] for f in lacking if f in _CPU_HINT), "")
         raise RuntimeError(
             f"This CPU does not have {' and '.join(_CPU_FEATURES.get(f, f) for f in lacking)}, which the native "
-            f"engine of kitten-inference-tts08 is built for{f' ({hint})' if hint else ''}. Loading it would stop "
+            f"engine of Kitten TTS 0.8 is built for{f' ({hint})' if hint else ''}. Loading it would stop "
             f"Python with \"Illegal instruction\". If this check is wrong, set {SKIP_CPU_CHECK}=1."
         )
 
@@ -359,7 +359,7 @@ def _import_engine():
             ) from exc
         raise ImportError(
             "The native engine (kitten_inference.tts08._engine) is missing or does not match "
-            'this Python and platform. Reinstall it with: pip install "kitten-inference[tts-0.8]"'
+            'this Python and platform. Reinstall it with: pip install --force-reinstall "kitten-inference[tts-0.8]"'
         ) from exc
     _set_up_cpu(_engine)
     return _engine
@@ -419,7 +419,7 @@ class _EngineGate:
                 if not self._running:
                     if not engine.set_backend(backend):
                         raise ValueError(
-                            f"Backend {backend!r} is not available in this build of kitten-inference-tts08."
+                            f"Backend {backend!r} is not available in this build of Kitten TTS 0.8."
                         )
                     self._backend = backend
                     self._exclusive = exclusive

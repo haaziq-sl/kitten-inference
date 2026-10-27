@@ -276,8 +276,8 @@ def load(path: os.PathLike | str) -> ctypes.CDLL:
         fn.argtypes = argtypes
     found = int(lib.kt2n_abi_version())
     if found != ABI_VERSION:
-        raise LibraryError(f"{path} implements engine ABI {found}, but this kitten-inference-tts2 needs ABI "
-                           f"{ABI_VERSION}; install matching versions of the two packages")
+        raise LibraryError(f"{path} implements engine ABI {found}, but this kitten-inference needs ABI "
+                           f"{ABI_VERSION}: reinstall it (pip install --force-reinstall \"kitten-inference[tts-2]\")")
     return lib
 
 

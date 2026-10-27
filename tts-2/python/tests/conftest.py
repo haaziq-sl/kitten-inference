@@ -1,3 +1,5 @@
+import collections
+import importlib.util
 import os
 import sys
 import types
@@ -38,9 +40,17 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+def _forget_lazy_names(monkeypatch):
+    """KittenTTS2 and the other lazy names of kitten_inference.tts2 are looked up (and checked) again."""
+    import kitten_inference.tts2 as tts2
+    for name in tts2._LAZY:
+        monkeypatch.delitem(vars(tts2), name, raising=False)
+
+
 @pytest.fixture
 def fake_backend(tmp_path, monkeypatch):
-    """Installs a fake kitten_inference._tts2_cuda module (no engine library) and returns it."""
+    """Installs a fake kitten_inference._tts2_cuda module (no engine library) and returns it. The GPU runtimes of
+    both engines look present (patch _gpu._cdll to change that)."""
     def install(name="cuda", abi=2, caps=("voice_cloning",)):
         module = types.ModuleType(f"kitten_inference._tts2_{name}")
         bin_dir = tmp_path / name / "bin"
@@ -56,8 +66,11 @@ def fake_backend(tmp_path, monkeypatch):
         monkeypatch.setitem(sys.modules, module.__name__, module)
         return module
     monkeypatch.delenv("KITTEN_TTS2_BACKEND", raising=False)
-    from kitten_inference.tts2 import _cli
-    monkeypatch.setattr(_cli, "_load", lambda name: object())  # the fake engine's GPU runtime is there
+    for name in ("CUDA_MODULE_LOADING", "HIP_ENABLE_DEFERRED_LOADING"):  # find() sets them; back as they were after
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    from kitten_inference.tts2 import _gpu
+    monkeypatch.setattr(_gpu, "_cdll", lambda name: object())  # the fake engine's GPU runtime is there
     return install
 
 
@@ -69,3 +82,27 @@ def no_backends(monkeypatch):
     for module in _backend.MODULES.values():
         monkeypatch.delitem(sys.modules, module, raising=False)
     monkeypatch.delenv("KITTEN_TTS2_BACKEND", raising=False)
+    _forget_lazy_names(monkeypatch)
+
+
+@pytest.fixture
+def hide_modules(monkeypatch):
+    """hide("numpy", ...): importlib.util.find_spec reports those top-level modules as not installed, as without the
+    [tts-2] extra (kitten_inference.tts2 checks with find_spec, which imports nothing)."""
+    def hide(*names):
+        real = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name.partition(".")[0] in names:
+                return None
+            return real(name, package)
+        monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+        _forget_lazy_names(monkeypatch)
+    return hide
+
+
+@pytest.fixture
+def python38(monkeypatch):
+    """sys.version_info says 3.8.20 (Kitten TTS 2 needs 3.9)."""
+    version = collections.namedtuple("version_info", "major minor micro releaselevel serial")
+    monkeypatch.setattr(sys, "version_info", version(3, 8, 20, "final", 0))

@@ -1,7 +1,7 @@
 """GPU integration tests of kitten_inference.tts2 (run: python -m pytest tests/gpu).
 
-They need an installed engine package (kitten-inference-tts2-cu12 / -rocm, or a development wheel from
-make_dev_backend.py) and a GPU; otherwise they are skipped. Environment:
+They need an installed engine (kitten-inference on Linux x86-64 or Windows x64, or, in an environment without it, a
+development wheel from make_dev_backend.py) and a GPU; otherwise they are skipped. Environment:
   KT2N_TEST_REVISION   model revision to prepare (default: the program's pinned revision below)
   KT2N_TEST_CACHE      cache directory for prepared models (default: the package default)
   KT2N_TEST_CLONING=1  also run voice cloning (CUDA engine and about 11 GB of free GPU memory)
@@ -181,8 +181,13 @@ def test_chunks_reach_a_stream_while_another_thread_waits(tts, monkeypatch):
     assert mine[-1] < 25, mine  # 0.1 ms in practice; the earlier pump held chunks for 160 ms (median)
 
 
-def test_gpu_check_sees_this_gpu():
+def test_gpu_check_sees_this_gpu(backend):
     from kitten_inference.tts2 import _gpu
+    if backend.name == "rocm":  # the check of the engine in use (an AMD machine has no NVIDIA driver)
+        assert _gpu.check("rocm", 0) >= 1
+        with pytest.raises(_gpu.GPUError, match="no AMD GPU 7"):
+            _gpu.check("rocm", 7)
+        return
     assert _gpu.check("cuda", 0) >= 1
     with pytest.raises(_gpu.GPUError, match="no NVIDIA GPU 7"):
         _gpu.check("cuda", 7)
@@ -207,9 +212,11 @@ def test_engine_modules_load_eagerly(tts, backend):
         assert run.returncode == 0 and run.stdout.split()[-2:] == want.split(), (extra, run.stdout, run.stderr[-800:])
 
 
-def test_ctrl_c_during_start_frees_the_engine(tmp_path):
+def test_ctrl_c_during_start_frees_the_engine(backend, tmp_path):
     """A real interrupt (as Ctrl-C) while kt2n_engine_create runs: no engine may stay behind, and the next
     KittenTTS2() in the same process starts normally."""
+    if backend.name != "cuda":
+        pytest.skip("CUDA only (the helper reads the GPU memory with nvidia-smi)")
     script = Path(__file__).with_name("ctrl_c_start.py")
     out = tmp_path / "r.json"
     run = subprocess.run([sys.executable, str(script), REVISION, str(CACHE or ""), str(out)], capture_output=True,

@@ -96,8 +96,9 @@ its GPU code is written after PyTorch 2.7.1's CUDA kernels (BSD-3-Clause):
   softmax block (src/cuda/kernels/samp_sampler.cu) and a scan in the vocoder
   (src/render/hift/hift.cu) follow the launch geometry and arithmetic of
   PyTorch's exponential_, softmax and scan kernels.
-This code is compiled into the CUDA and HIP engine libraries (both Python
-engine wheels). PyTorch's copyright notice and license: licenses/PyTorch.txt.
+This code is compiled into the CUDA and HIP engine libraries (the CUDA and
+ROCm engines in the kitten-inference wheels). PyTorch's copyright notice and
+license: licenses/PyTorch.txt.
 
 
 Text normalization
@@ -115,8 +116,8 @@ in src/text/unicode_tables.inc (perluniprops) are exported from sacremoses
 0.2.0 (MIT License; see licenses/Sacremoses.txt):
 Copyright (c) 2020 alvations
 https://github.com/alvations/sacremoses
-This code is compiled into the engine library (both Python engine wheels and
-every source build with text normalization).
+This code is compiled into the engine library (the CUDA and ROCm engines in the
+kitten-inference wheels, and every source build with text normalization).
 Preparation reads English word lists from the nemo_text_processing 1.2.0 wheel
 on PyPI (Apache-2.0; read as data, never installed) and English grammar data
 from KittenML/kitten-text-processing at commit 1988d61 (Apache-2.0):
@@ -165,8 +166,8 @@ Source of the adapted files, which are compiled into every engine library:
 src/post/atempo.cc and include/kt2n/post/atempo.h in
 https://github.com/KittenML/kitten-inference/tree/v<version>/tts-2, where
 <version> is the version of the package (for example v0.2.0). The
-kitten-inference-tts2-cu12 and kitten-inference-tts2-rocm wheels also carry
-both files, in a folder lgpl-source/ beside the license texts.
+kitten-inference wheels also carry both files, in a folder lgpl-source/ beside
+the license texts.
 
 The Windows build's log1pf (src/render/log1pf_fdlibm.h, used by
 src/render/rng.cc) is fdlibm's s_log1pf.c as in glibc:
@@ -192,10 +193,10 @@ Kevin Sheppard; that notice is retained in licenses/NumPy-random.txt.
 
 Microsoft Visual C++ runtime
 ----------------------------
-The Windows build of kitten-inference-tts2-cu12 links the static Microsoft
-Visual C++ runtime (CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, /MT) into
-kt2n_engine.dll, kitten-tts-native.exe and kt2n_prepare_text_data.exe, so
-they need no Visual C++ redistributable. That code is distributed under
+The CUDA engine in the Windows kitten-inference wheels links the static
+Microsoft Visual C++ runtime (CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, /MT)
+into kt2n_engine.dll, kitten-tts-native.exe and kt2n_prepare_text_data.exe,
+so they need no Visual C++ redistributable. That code is distributed under
 Microsoft's licence terms for distributable code
 (https://learn.microsoft.com/visualstudio/releases/2026/redistribution).
 Copyright (c) Microsoft Corporation.
@@ -203,7 +204,7 @@ Copyright (c) Microsoft Corporation.
 NVIDIA CUDA runtime
 -------------------
 The NVIDIA CUDA Toolkit is installed separately for builds. The CUDA build
-(the default build and the kitten-inference-tts2-cu12 package) links
+(the default build and the CUDA engine in the kitten-inference wheels) links
 CUDA::cudart_static and uses CMAKE_CUDA_RUNTIME_LIBRARY=Static, so its
 shared library contains NVIDIA CUDA runtime code. That code retains
 NVIDIA's terms; it is not Apache-2.0 material. CUDA 12.8's EULA lists
@@ -234,8 +235,8 @@ next section.
 AMD ROCm (HIP build)
 --------------------
 ROCm is installed separately for builds. The HIP build (cmake --preset hip,
-and the kitten-inference-tts2-rocm package) compiles code from these ROCm
-components into its shared library:
+and the ROCm engine in the Linux x86-64 kitten-inference wheels) compiles code
+from these ROCm components into its shared library:
 - rocRAND, https://github.com/ROCm/rocRAND: the Philox4x32-10 generator
   (rocrand_init, rocrand4), used through include/kt2n/gpu_rand.h in GPU code.
   MIT, Copyright (C) Advanced Micro Devices, Inc.; see
@@ -248,8 +249,8 @@ components into its shared library:
   that the HIP compiler links into every GPU code object. University of
   Illinois/NCSA Open Source License, Copyright (c) 2014-2016, Advanced Micro
   Devices, Inc.; see licenses/rocm/ROCm-Device-Libs.txt.
-These texts are the ones the ROCm 7.1 packages ship (the version the
-kitten-inference-tts2-rocm package is built with). The ROCm runtime itself
+These texts are the ones the ROCm 7.1 packages ship (the version the ROCm
+engine in the kitten-inference wheels is built with). The ROCm runtime itself
 (libamdhip64.so.7 and the libraries it loads) is not included: the HIP build
 uses the ROCm 7.x installed on the system.
 

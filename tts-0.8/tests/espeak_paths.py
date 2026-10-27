@@ -2,8 +2,11 @@
 not ASCII (folders named "Jos\u00e9" and "\u0141ukasz"). Each case makes a fresh venv, installs the wheel from --wheels
 with pip, and runs KittenTTS().generate() in a new Python process.
 
-    espeak_paths.py deep|names --wheels DIR --expect fixed|broken [--overlay PKG_DIR] [--out FILE.json]
+    espeak_paths.py deep|names --wheels DIR --expect fixed|broken [--spec REQ] [--overlay PKG_DIR] [--out FILE.json]
 
+--spec is what pip installs, from --wheels plus the index for its dependencies: kitten-inference-tts08 (the default,
+the TTS 0.8 build in tts-0.8.yml) or "kitten-inference[tts-0.8]" (the released wheels, packages.yml). The installed
+version must be one of the wheels in --wheels.
 --expect fixed: every case must speak (where Windows can load the engine at all; past that, the error must say the
 path is too long). --expect broken: the cases must fail the way the old wheels do (espeak-ng ends the process after
 "Error processing file ...phontab"; on Windows a 260+ character engine path gives "native engine ... is missing").
@@ -12,6 +15,7 @@ path is too long). --expect broken: the cases must fail the way the old wheels d
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -71,7 +75,7 @@ def venv_python(venv):
     return str(venv / ("Scripts" if WIN else "bin") / ("python.exe" if WIN else "python"))
 
 
-def make_venv(venv, wheels, overlay, env):
+def make_venv(venv, wheels, overlay, env, spec):
     if venv.exists():
         shutil.rmtree(venv)
     venv.parent.mkdir(parents=True, exist_ok=True)
@@ -80,9 +84,18 @@ def make_venv(venv, wheels, overlay, env):
         raise RuntimeError("venv: " + "\n".join(out[-5:]))
     py = venv_python(venv)
     rc, out = run([py, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--find-links", str(wheels),
-                   "kitten-inference-tts08"], env=env)
+                   spec], env=env)
     if rc:
         raise RuntimeError("pip: " + "\n".join(out[-8:]))
+    # The index may have other versions of the same name (kitten-inference 0.1.x): the test is about these wheels.
+    name = re.match(r"[A-Za-z0-9._-]+", spec).group(0)
+    rc, out = run([py, "-c", "import sys, importlib.metadata as m; print(m.version(sys.argv[1]))", name], env=env)
+    wanted = {f.name.split("-")[1] for f in Path(wheels).glob("*.whl")
+              if re.sub(r"[-_.]+", "_", f.name.split("-")[0]).lower() == re.sub(r"[-_.]+", "_", name).lower()}
+    got = out[-1] if out and not rc else "?"
+    if got not in wanted:
+        raise RuntimeError(f"pip installed {name} {got}, not one of the wheels in {wheels} "
+                           f"(versions there: {sorted(wanted) or 'none'})")
     if overlay:
         rc, out = run([py, "-c", "import os, kitten_inference.tts08 as m; print(os.path.dirname(m.__file__))"],
                       env=env)
@@ -159,6 +172,7 @@ def main():
     ap.add_argument("case", choices=["deep", "names"])
     ap.add_argument("--wheels", required=True)
     ap.add_argument("--expect", choices=["fixed", "broken"], required=True)
+    ap.add_argument("--spec", default="kitten-inference-tts08")
     ap.add_argument("--overlay")
     ap.add_argument("--out")
     args = ap.parse_args()
@@ -209,7 +223,7 @@ def main():
             for key in ("TEMP", "LOCALAPPDATA"):
                 if key in extra:
                     Path(extra[key]).mkdir(parents=True, exist_ok=True)
-            py, data_path = make_venv(venv, wheels, args.overlay, env)
+            py, data_path = make_venv(venv, wheels, args.overlay, env, args.spec)
             row["data_path"], row["data_path_len"] = data_path, len(data_path)
             if WIN and args.case == "names":
                 rc, lines = run([py, "-c", PROBE], env=env)

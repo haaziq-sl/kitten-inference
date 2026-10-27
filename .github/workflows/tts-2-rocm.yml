@@ -1,31 +1,22 @@
 name: tts-2 ROCm wheel
 
-# kitten-inference-tts2-rocm: the HIP engine library, the native CLI and the text-data helper, built in the
+# Kitten TTS 2 engine for AMD GPUs: the ROCm payload wheel (the HIP engine library, the native CLI and the text-data
+# helper) that the kitten-inference wheels for Linux x86-64 are assembled from (packages.yml), built in the
 # manylinux_2_28 container with ROCm 7.1 from AMD's RHEL 8 repository (tts-2/packaging/build_wheel_rocm.sh).
 # The runners have no AMD GPU: the install job checks the package and the documented missing-ROCm failure only.
-# A v* tag in KittenML/kitten-inference also uploads the wheel to PyPI (job publish, RELEASING.md).
+# Nothing here is uploaded to PyPI: a release takes the wheel of a tested run, pinned in .github/release-inputs.json,
+# from its artifact (kept 90 days; RELEASING.md).
 
 on:
   push:
     branches: ['**']
-    tags: ['v*']
     paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
   pull_request:
     paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Distribution version, e.g. 0.2.0.post1 for a packaging fix (empty: the engine version)'
-        required: false
-        default: ''
 
 permissions:
   contents: read
-
-env:
-  # The version of pushed builds and releases; empty: the engine's version (tts-2/CMakeLists.txt). A post release of
-  # this wheel sets it here, e.g. 0.2.0.post1 (RELEASING.md).
-  ROCM_VERSION: ''
 
 concurrency:
   group: tts-2-rocm-${{ github.ref }}
@@ -46,7 +37,6 @@ jobs:
       - name: Build the wheel
         env:
           JOBS: '4'
-          WHEEL_VERSION: ${{ github.event.inputs.version || env.ROCM_VERSION }}
         run: tts-2/packaging/build_wheel_rocm.sh wheelhouse
       - name: Size and contents
         run: |
@@ -61,11 +51,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$size" -ge 100000000 ]; then echo "::warning::the wheel is over PyPI's default 100 MB file limit"; fi
+      # Release input: kept 90 days (RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: kitten-inference-tts2-rocm-manylinux_2_28_x86_64
           path: wheelhouse/
           if-no-files-found: error
+          retention-days: 90
 
   install:
     name: install (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -83,6 +75,7 @@ jobs:
           - os: ubuntu-24.04
             python: '3.14'
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: kitten-inference-tts2-rocm-manylinux_2_28_x86_64
@@ -96,59 +89,9 @@ jobs:
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install --no-index --no-deps wheelhouse/*.whl
           venv/bin/python -m pip show -f kitten-inference-tts2-rocm | head -n 20
+      # BACKEND, ABI, CAPS, VERSION == the engine version in tts-2/CMakeLists.txt, the files are there and executable,
+      # the text-data helper runs, and without ROCm the library and the CLI fail naming libamdhip64.so.7.
       - name: Check the package
         run: |
-          venv/bin/python - wheelhouse/*.whl << 'PY'
-          import os, sys, kitten_inference._tts2_rocm as m
-          assert m.BACKEND == "rocm" and m.ABI == 2 and m.CAPS == (), (m.BACKEND, m.ABI, m.CAPS)
-          wheel_version = os.path.basename(sys.argv[1]).split("-")[1]
-          assert m.VERSION == wheel_version, (m.VERSION, wheel_version)
-          for p in (m.LIB, m.CLI, m.TEXT_DATA_TOOL):
-              assert p.is_file(), p
-          for p in (m.CLI, m.TEXT_DATA_TOOL):
-              assert os.access(p, os.X_OK), p
-          print(m.VERSION, m.BUILD_INFO, m.HIP_ARCHS)
-          PY
-      - name: Text-data helper runs without ROCm
-        run: |
-          tool=$(venv/bin/python -c 'import kitten_inference._tts2_rocm as m; print(m.TEXT_DATA_TOOL)')
-          "$tool" --help > help.txt 2>&1 || true
-          head -n 5 help.txt
-          ldd "$tool"
-      - name: Without ROCm the engine reports the missing runtime
-        run: |
-          cli=$(venv/bin/python -c 'import kitten_inference._tts2_rocm as m; print(m.CLI)')
-          if "$cli" --help > out.txt 2>&1; then echo "expected a loader error without ROCm"; cat out.txt; exit 1; fi
-          cat out.txt
-          grep -q 'libamdhip64.so.7' out.txt
-
-  publish:
-    # Releases only: a v* tag pushed to KittenML/kitten-inference (never a fork), with PyPI trusted publishing. This
-    # engine wheel goes first: kitten-inference-tts2 and kitten-inference-tts08 wait for it, and the umbrella for
-    # everything. A tag whose version is not this wheel's version uploads nothing here.
-    name: Publish to PyPI
-    needs: [wheel, install]
-    if: github.repository == 'KittenML/kitten-inference' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: kitten-inference-tts2-rocm-manylinux_2_28_x86_64
-          path: artifacts
-      - name: The wheel this tag releases
-        id: files
-        run: |
-          python3 .github/scripts/release_files.py artifacts upload --dist kitten-inference-tts2-rocm \
-            --platform manylinux_2_28_x86_64
-      - name: Publish to PyPI (trusted publishing)
-        if: steps.files.outputs.upload == 'true'
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3: pinned to a commit (this job can upload to PyPI)
-        with:
-          packages-dir: upload/
-          skip-existing: true
+          ldd "$(venv/bin/python -c 'import kitten_inference._tts2_rocm as m; print(m.TEXT_DATA_TOOL)')"
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/venv/bin/python" "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py" --backend rocm

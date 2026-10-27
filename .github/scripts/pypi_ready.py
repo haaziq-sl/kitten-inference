@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""Before the umbrella goes to PyPI: is every distribution its extras name already there, with a release in the
-required range and wheels for the platforms it ships? An umbrella published first would point its extras at
-nothing (pip then fails, or falls back to the earlier kitten-inference 0.1.1).
+"""The wheel sets of a kitten-inference release, and whether PyPI has all of them after the upload.
 
-    python .github/scripts/pypi_ready.py check  [--pyproject umbrella/pyproject.toml] [--index https://pypi.org]
-    python .github/scripts/pypi_ready.py wait   [--timeout-minutes 120] [--every-seconds 60]
-    python .github/scripts/pypi_ready.py wait   --only kitten-inference-tts2-cu12 --only kitten-inference-tts2-rocm
+    python .github/scripts/pypi_ready.py complete --dist kitten-inference assembled/*.whl
     python .github/scripts/pypi_ready.py complete --dist kitten-inference-tts08 dist/*.whl
+    python .github/scripts/pypi_ready.py verify --version 0.2.0 [--timeout-minutes 30] upload/*.whl
 
-complete: whether built wheels are exactly the set the check waits for (COMPLETE), so the two stay in step.
-check: exit status 0 when ready, 1 when not (the missing items are printed). wait: check until ready or the timeout;
-a failed request (an error answer from PyPI, a timeout, a dropped connection) counts as "not ready yet" and is tried
-again at the next check.
-A file counts only when PyPI's provenance for it (PEP 740, the attestation trusted publishing uploads with it) names
-this repository and the distribution's own workflow as its publisher. So a release someone else uploaded under one of
-the names (a squatted project name) never makes the umbrella publish; --publisher sets the repository.
---only: just these distributions of the extras (the release order: the engine wheels before kitten-inference-tts2
-and kitten-inference-tts08, those before the umbrella). Without --only it also warns (GitHub annotation) while the
-earlier kitten-inference 0.1.0 / 0.1.1 are not yanked.
-Read-only: it only reads PyPI's JSON and integrity APIs.
+complete: whether the wheels are exactly the set COMPLETE lists for that name, one wheel per (Python, platform): the
+54 kitten-inference wheels a release uploads (packages.yml), or the 62 TTS 0.8 wheels tts-0.8.yml builds, which the
+kitten-inference wheels are assembled from (all but the 8 manylinux2014 x86-64 ones). It keeps the build matrices,
+the assembler and this list in step.
+
+verify (the publish job, after the upload): every file is on PyPI under that version, not yanked, with PyPI's sha256
+equal to the local file's, and PyPI's provenance for it (PEP 740, the attestation trusted publishing uploads with it)
+names this repository and packages.yml as its publisher; PyPI has no other file for that version. PyPI has no upload
+of several files at once, so a stop partway leaves part of the set there: verify reports how many are missing and
+which, and tries again until --timeout-minutes have passed. A failed request (an error answer from PyPI, a timeout, a
+dropped connection) counts as "not there yet". It also warns (GitHub annotation) while the earlier kitten-inference
+0.1.0 / 0.1.1 are not yanked. Read-only: it only reads PyPI's JSON and integrity APIs.
 """
 import argparse
+import hashlib
 import http.client
 import json
 import re
@@ -30,102 +29,105 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-try:
-    import tomllib
-except ImportError:  # Python < 3.11
-    tomllib = None
-
-# The platforms each distribution must have a wheel for before it counts as ready, and whose provenance is checked
-# (CONTRACT.md); any wheel will do for distributions not listed.
-PLATFORMS = {
-    "kitten-inference-tts2-cu12": ["manylinux_2_28_x86_64", "win_amd64"],
-    "kitten-inference-tts2-rocm": ["manylinux_2_28_x86_64"],
-}
-# Distributions with one wheel per CPython and platform: every one of them must be there. tts-0.8 uploads its 62
-# wheels in one twine run sorted by file name, so grouped by Python version (cp310 ... cp315, cp38, cp39), and every
-# platform has a wheel within the first few files: only the whole set shows that an upload which stopped partway
-# (a PyPI error or a dropped connection after file 20) is incomplete. Without it the umbrella would publish while
-# `pip install "kitten-inference[tts-0.8]"` finds no wheel for most Python versions. This is tts-0.8.yml's build
-# matrix: keep the two in step. A wheel listed here that the workflow does not build keeps the umbrella waiting (and
-# failing at the timeout), never publishing early.
-_TTS08_PYTHONS = ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313", "cp314", "cp315"]
-_TTS08_PLATFORMS = ["manylinux_2_17_x86_64", "manylinux_2_17_aarch64", "manylinux_2_28_x86_64",
-                    "manylinux_2_28_aarch64", "macosx_11_0_x86_64", "macosx_11_0_arm64", "win_amd64"]
-COMPLETE = {
-    "kitten-inference-tts08": ([(py, plat) for py in _TTS08_PYTHONS for plat in _TTS08_PLATFORMS]
-                               + [(py, "win_arm64") for py in _TTS08_PYTHONS if py not in ("cp38", "cp39", "cp310")]
-                               + [("cp313", "android_24_arm64_v8a")]),
-}
-EARLIER = ("kitten-inference", ["0.1.0", "0.1.1"])
-# The workflow that publishes each distribution (RELEASING.md), as PyPI's provenance names it.
-WORKFLOWS = {
-    "kitten-inference": "packages.yml",
-    "kitten-inference-tts2": "packages.yml",
-    "kitten-inference-tts08": "tts-0.8.yml",
-    "kitten-inference-tts2-cu12": "tts-2-engine.yml",
-    "kitten-inference-tts2-rocm": "tts-2-rocm.yml",
-}
+NAME = "kitten-inference"
+# The workflow that publishes kitten-inference (RELEASING.md), as PyPI's provenance names it.
+WORKFLOW = "packages.yml"
 PUBLISHER = "KittenML/kitten-inference"
 
-
-def requirements(pyproject: Path) -> dict:
-    """distribution -> specifier, from the umbrella's optional-dependencies."""
-    text = pyproject.read_text(encoding="utf-8")
-    if tomllib is not None:
-        extras = tomllib.loads(text)["project"]["optional-dependencies"]
-        specs = [s for reqs in extras.values() for s in reqs]
-    else:
-        block = text.split("[project.optional-dependencies]", 1)[1].split("\n[", 1)[0]
-        specs = re.findall(r'"([A-Za-z0-9_.\-]+[<>=!~][^"]*)"', block)
-    out = {}
-    for spec in specs:
-        name = re.match(r"[A-Za-z0-9_.\-]+", spec).group(0)
-        out[re.sub(r"[-_.]+", "-", name).lower()] = spec[len(name):].strip()
-    return out
-
-
-def _version(v: str) -> tuple:
-    """A sortable key for the plain versions used here (0.2.0, 0.2.0.post1); pre-releases sort before."""
-    m = re.match(r"(\d+(?:\.\d+)*)(?:\.post(\d+))?(.*)$", v)
-    if not m:
-        return (-1,)
-    nums = tuple(int(x) for x in m.group(1).split("."))
-    nums += (0,) * (4 - len(nums))
-    return nums + (int(m.group(2) or 0), 0 if m.group(3) else 1)
+# One wheel per CPython and platform. tts-0.8.yml builds 62 TTS 0.8 wheels; each kitten-inference wheel is one of them
+# plus the TTS 2 Python API (and on Linux x86-64 and Windows x64 the TTS 2 engines), with the same Python and platform
+# tags, except the manylinux2014 x86-64 ones (manylinux_2_17_x86_64), which a release leaves out: every Linux x86-64
+# wheel is the manylinux_2_28 build. A wheel listed here that is not built fails `complete`, and a release whose files
+# are not all on PyPI fails `verify`.
+_PYTHONS = ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313", "cp314", "cp315"]
+_TTS08_PLATFORMS = ["manylinux_2_17_x86_64", "manylinux_2_17_aarch64", "manylinux_2_28_x86_64",
+                    "manylinux_2_28_aarch64", "macosx_11_0_x86_64", "macosx_11_0_arm64", "win_amd64"]
+_OTHERS = ([(py, "win_arm64") for py in _PYTHONS if py not in ("cp38", "cp39", "cp310")]
+           + [("cp313", "android_24_arm64_v8a")])
+COMPLETE = {
+    "kitten-inference-tts08": [(py, plat) for py in _PYTHONS for plat in _TTS08_PLATFORMS] + _OTHERS,
+    "kitten-inference": [(py, plat) for py in _PYTHONS for plat in _TTS08_PLATFORMS
+                         if plat != "manylinux_2_17_x86_64"] + _OTHERS,
+}
+EARLIER = (NAME, ["0.1.0", "0.1.1"])
 
 
-def satisfies(version: str, spec: str) -> bool:
-    """version against a specifier such as ">=0.2.0,<0.3" (only the operators the extras use)."""
-    v = _version(version)
-    if v == (-1,) or v[-1] == 0:  # unknown form or a pre-release: never
-        return False
-    for clause in filter(None, (c.strip() for c in spec.split(","))):
-        op, ref = re.match(r"(>=|<=|==|<|>|!=)\s*(.+)", clause).groups()
-        r = _version(ref)[:-1] + (1,)
-        if not {">=": v >= r, "<=": v <= r, "==": v == r, "<": v < r, ">": v > r, "!=": v != r}[op]:
-            return False
-    return True
+def wheel_tags(filename: str) -> set:
+    """The (python tag, platform tag) pairs a wheel file name covers (compressed tag sets such as
+    manylinux2014_x86_64.manylinux_2_17_x86_64 give one pair per tag)."""
+    parts = filename[:-len(".whl")].split("-") if filename.endswith(".whl") else []
+    if len(parts) < 5:
+        return set()
+    return {(py, plat) for py in parts[-3].split(".") for plat in parts[-1].split(".")}
 
 
-def fetch(index: str, name: str):
+def file_version(filename: str) -> str:
+    """The version in a wheel file name."""
+    parts = filename.split("-")
+    return parts[1] if len(parts) >= 5 else ""
+
+
+def short(filename: str) -> str:
+    """cp312-manylinux_2_28_x86_64 for kitten_inference-0.2.0-cp312-cp312-manylinux_2_28_x86_64.whl."""
+    parts = filename[:-len(".whl")].split("-")
+    return f"{parts[-3]}-{parts[-1]}" if len(parts) >= 5 else filename
+
+
+def incomplete(name: str, wheels: list) -> list:
+    """The expected (python, platform) wheels of ``name`` (COMPLETE) that ``wheels`` lacks, as "cp39-win_amd64"."""
+    have = set().union(*(wheel_tags(w) for w in wheels)) if wheels else set()
+    return [f"{py}-{plat}" for py, plat in COMPLETE.get(name, []) if (py, plat) not in have]
+
+
+def check_built(name: str, files: list) -> list:
+    """Problems with the wheels ``files`` of ``name`` against COMPLETE: expected wheels that are not there, wheels
+    COMPLETE does not list, and two wheels for one (python, platform)."""
+    wheels = [Path(f).name for f in files]
+    expected = set(COMPLETE.get(name, []))
+    problems = [f"not built: {w}" for w in incomplete(name, wheels)]
+    problems += [f"built but not in pypi_ready.COMPLETE: {w}" for w in sorted(wheels)
+                 if not wheel_tags(w) & expected]
+    seen = {}
+    for w in sorted(wheels):
+        for pair in sorted(wheel_tags(w) & expected):
+            if pair in seen:
+                problems.append(f"two wheels for {pair[0]}-{pair[1]}: {seen[pair]} and {w}")
+            seen[pair] = w
+    return problems
+
+
+def sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _json(url: str):
+    """The JSON at ``url``; None for a 404."""
     try:
-        with urllib.request.urlopen(f"{index}/pypi/{name}/json", timeout=60) as r:
+        with urllib.request.urlopen(url, timeout=60) as r:
             return json.load(r)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
         raise
+
+
+def fetch(index: str, name: str):
+    """PyPI's JSON of a project (every release); None when the project does not exist."""
+    return _json(f"{index}/pypi/{name}/json")
+
+
+def fetch_release(index: str, name: str, version: str):
+    """PyPI's JSON of one release (its files under "urls"); None when that version is not there."""
+    return _json(f"{index}/pypi/{name}/{version}/json")
 
 
 def fetch_provenance(index: str, name: str, version: str, filename: str):
     """PyPI's provenance of one uploaded file (None when the file has none)."""
-    try:
-        with urllib.request.urlopen(f"{index}/integrity/{name}/{version}/{filename}/provenance", timeout=60) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
+    return _json(f"{index}/integrity/{name}/{version}/{filename}/provenance")
 
 
 def published_by(provenance, repository: str, workflow: str) -> bool:
@@ -138,67 +140,37 @@ def published_by(provenance, repository: str, workflow: str) -> bool:
     return False
 
 
-def only(reqs: dict, names: list) -> dict:
-    """The requirements of just `names` (normalised); a name the extras do not list is an error."""
-    if not names:
-        return reqs
-    wanted = [re.sub(r"[-_.]+", "-", n).lower() for n in names]
-    unknown = [n for n in wanted if n not in reqs]
-    if unknown:
-        raise SystemExit(f"error: the extras do not name {', '.join(unknown)}")
-    return {n: reqs[n] for n in wanted}
-
-
-def wheel_tags(filename: str) -> set:
-    """The (python tag, platform tag) pairs a wheel file name covers (compressed tag sets such as
-    manylinux2014_x86_64.manylinux_2_17_x86_64 give one pair per tag)."""
-    parts = filename[:-len(".whl")].split("-") if filename.endswith(".whl") else []
-    if len(parts) < 5:
-        return set()
-    return {(py, plat) for py in parts[-3].split(".") for plat in parts[-1].split(".")}
-
-
-def incomplete(name: str, wheels: list) -> list:
-    """The expected (python, platform) wheels of ``name`` (COMPLETE) that ``wheels`` lacks, as "cp39-win_amd64"."""
-    have = set().union(*(wheel_tags(w) for w in wheels)) if wheels else set()
-    return [f"{py}-{plat}" for py, plat in COMPLETE.get(name, []) if (py, plat) not in have]
-
-
-def missing(index: str, reqs: dict, get=fetch, provenance=None, publisher: str = PUBLISHER) -> list:
-    """What is not on the index yet: one line per distribution. With ``provenance`` (a fetch_provenance-like
-    function), only files that this repository's own workflow published count."""
+def on_pypi(index: str, version: str, local: dict, get=fetch_release, provenance=fetch_provenance,
+            publisher: str = PUBLISHER, checked=None) -> list:
+    """What PyPI does not have yet, or has wrong, of the release ``local`` ({file name: sha256}): [] when every file is
+    there, unyanked, byte for byte, published by this repository's packages.yml, and nothing else is.
+    ``checked`` (a set) keeps the files already found good, so a retry does not ask for their provenance again."""
+    checked = set() if checked is None else checked
+    info = get(index, NAME, version)
+    if info is None:
+        return [f"{NAME} {version}: not on {index} yet (0 of {len(local)} wheels)"]
+    files = {f.get("filename"): f for f in info.get("urls") or []}
     problems = []
-    for name, spec in sorted(reqs.items()):
-        info = get(index, name)
-        if info is None:
-            problems.append(f"{name}: not on {index}")
+    absent = [n for n in sorted(local) if n not in files]
+    if absent:
+        shown = ", ".join(short(n) for n in absent[:6]) + (f" and {len(absent) - 6} more" if len(absent) > 6 else "")
+        problems.append(f"{NAME} {version}: {len(absent)} of {len(local)} wheels not on {index} yet ({shown})")
+    for n in sorted(local):
+        f = files.get(n)
+        if f is None or n in checked:
             continue
-        good = {}
-        for version, files in (info.get("releases") or {}).items():
-            wheels = [f["filename"] for f in files if f.get("packagetype") == "bdist_wheel" and not f.get("yanked")]
-            if wheels and satisfies(version, spec):
-                good[version] = wheels
-        if not good:
-            problems.append(f"{name}: no release {spec} with wheels")
-            continue
-        best = max(good, key=_version)
-        absent = [p for p in PLATFORMS.get(name, []) if not any(w.endswith(f"-{p}.whl") for w in good[best])]
-        if absent:
-            problems.append(f"{name} {best}: no wheel for {', '.join(absent)}")
-            continue
-        lacking = incomplete(name, good[best])
-        if lacking:
-            shown = ", ".join(lacking[:6]) + (f" and {len(lacking) - 6} more" if len(lacking) > 6 else "")
-            problems.append(f"{name} {best}: {len(lacking)} of {len(COMPLETE[name])} wheels not there yet ({shown})")
-            continue
-        if provenance is not None:
-            # One wheel per required platform (or the first one): a squatted project has none from this repository.
-            checks = [next(w for w in good[best] if w.endswith(f"-{p}.whl")) for p in PLATFORMS.get(name, [])]
-            for wheel in checks or sorted(good[best])[:1]:
-                if not published_by(provenance(index, name, best, wheel), publisher, WORKFLOWS.get(name, "")):
-                    problems.append(f"{name} {best}: {wheel} was not published by {publisher} "
-                                    f"({WORKFLOWS.get(name, '?')}); is the project name someone else's?")
-                    break
+        theirs = (f.get("digests") or {}).get("sha256")
+        if f.get("yanked"):
+            problems.append(f"{n}: yanked on {index}")
+        elif theirs != local[n]:
+            problems.append(f"{n}: sha256 on {index} is {theirs}, this file's is {local[n]}")
+        elif provenance is not None and not published_by(provenance(index, NAME, version, n), publisher, WORKFLOW):
+            problems.append(f"{n}: not published by {publisher} ({WORKFLOW}); is the upload someone else's?")
+        else:
+            checked.add(n)
+    other = sorted(n for n in files if n not in local)
+    if other:
+        problems.append(f"{NAME} {version} on {index} has files this release does not: {', '.join(other)}")
     return problems
 
 
@@ -214,37 +186,29 @@ def earlier_not_yanked(index: str, get=fetch) -> list:
 TRANSIENT = (urllib.error.URLError, OSError, http.client.HTTPException, ValueError)
 
 
-def wait(index: str, reqs: dict, mode: str, timeout_s: float, every_s: float, get=fetch, sleep=time.sleep,
-         clock=time.monotonic, provenance=None, publisher: str = PUBLISHER) -> list:
-    """[] once every distribution is there; else the problems of the last check (mode check: after one check;
-    mode wait: when the timeout has passed)."""
+def verify(index: str, version: str, local: dict, timeout_s: float, every_s: float, get=fetch_release,
+           provenance=fetch_provenance, sleep=time.sleep, clock=time.monotonic, publisher: str = PUBLISHER) -> list:
+    """[] once PyPI has the whole release (on_pypi); else the problems of the last check, when the timeout has
+    passed."""
     deadline = clock() + timeout_s
+    checked = set()
     while True:
         try:
-            problems = missing(index, reqs, get=get, provenance=provenance, publisher=publisher)
+            problems = on_pypi(index, version, local, get=get, provenance=provenance, publisher=publisher,
+                               checked=checked)
         except TRANSIENT as exc:
             problems = [f"PyPI request failed ({type(exc).__name__}: {exc}); trying again"]
         if not problems:
             return []
-        print("not ready:", "; ".join(problems), flush=True)
-        if mode == "check" or clock() > deadline:
+        print("not there yet:", "; ".join(problems), flush=True)
+        if clock() > deadline:
             return problems
         sleep(every_s)
 
 
-def check_built(name: str, files: list) -> list:
-    """Problems with the built wheels ``files`` of ``name`` against COMPLETE: expected wheels that were not built, and
-    built ones the check would not wait for."""
-    wheels = [Path(f).name for f in files]
-    expected = set(COMPLETE.get(name, []))
-    problems = [f"not built: {w}" for w in incomplete(name, wheels)]
-    problems += [f"built but not in pypi_ready.COMPLETE: {w}" for w in sorted(wheels)
-                 if not wheel_tags(w) & expected]
-    return problems
-
-
 def main() -> int:
-    if sys.argv[1:2] == ["complete"]:
+    mode = sys.argv[1:2]
+    if mode == ["complete"]:
         c = argparse.ArgumentParser(prog="pypi_ready.py complete")
         c.add_argument("--dist", required=True)
         c.add_argument("wheels", nargs="*")
@@ -254,35 +218,42 @@ def main() -> int:
         for problem in problems:
             print(f"::error::{name}: {problem}")
         if not problems:
-            print(f"{name}: the {len(a.wheels)} built wheels are the set the umbrella's release check waits for")
+            print(f"{name}: the {len(a.wheels)} built wheels are the complete set (pypi_ready.COMPLETE)")
         return 1 if problems else 0
-    p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["check", "wait"])
-    p.add_argument("--pyproject", type=Path, default=Path("umbrella/pyproject.toml"))
-    p.add_argument("--index", default="https://pypi.org")
-    p.add_argument("--timeout-minutes", type=float, default=120)
-    p.add_argument("--every-seconds", type=float, default=60)
-    p.add_argument("--only", action="append", default=[], help="just this distribution (repeatable)")
-    p.add_argument("--publisher", default=PUBLISHER, help="the repository whose workflows must have published the files")
-    a = p.parse_args()
-    reqs = only(requirements(a.pyproject), a.only)
-    print("waiting for" if a.only else "the umbrella's extras need:",
-          ", ".join(f"{n}{s}" for n, s in sorted(reqs.items())))
-    problems = wait(a.index, reqs, a.mode, a.timeout_minutes * 60, a.every_seconds, provenance=fetch_provenance,
-                    publisher=a.publisher)
+    if mode != ["verify"]:
+        sys.exit("usage: pypi_ready.py complete --dist NAME WHEEL... | verify --version V WHEEL...")
+    v = argparse.ArgumentParser(prog="pypi_ready.py verify")
+    v.add_argument("--version", required=True)
+    v.add_argument("wheels", nargs="+")
+    v.add_argument("--index", default="https://pypi.org")
+    v.add_argument("--timeout-minutes", type=float, default=30)
+    v.add_argument("--every-seconds", type=float, default=60)
+    v.add_argument("--publisher", default=PUBLISHER, help="the repository whose packages.yml must have published them")
+    a = v.parse_args(sys.argv[2:])
+    names = [Path(w).name for w in a.wheels]
+    other = sorted(n for n in names if file_version(n) != a.version)
+    problems = [f"{n} is not version {a.version}" for n in other] + check_built(NAME, a.wheels)
     if problems:
-        what = "this distribution" if a.only else "the umbrella"
-        print(f"::error::{what} must not be published before these are on PyPI: " + "; ".join(problems))
+        for problem in problems:
+            print(f"::error::{problem}")
+        return 1
+    local = {Path(w).name: sha256(w) for w in a.wheels}
+    print(f"checking {NAME} {a.version} on {a.index}: {len(local)} wheels")
+    problems = verify(a.index, a.version, local, a.timeout_minutes * 60, a.every_seconds, publisher=a.publisher)
+    if problems:
+        print(f"::error::{NAME} {a.version} is not complete on {a.index} (re-run the publish job: it skips the "
+              "files already there): " + "; ".join(problems))
         return 1
     try:
-        old = [] if a.only else earlier_not_yanked(a.index)
+        old = earlier_not_yanked(a.index)
     except TRANSIENT as exc:  # only a reminder: never a reason to fail the release
         print(f"::notice::could not check whether kitten-inference 0.1.x are yanked ({exc})")
         old = []
     if old:
-        print(f"::warning::kitten-inference {', '.join(old)} not yanked: where an extra's engine has no wheel, pip "
-              "installs that version instead (with only a warning). Yank them on PyPI (pinned installs still work).")
-    print("ready:", "these distributions are" if a.only else "every distribution the extras name is", "on", a.index)
+        print(f"::warning::kitten-inference {', '.join(old)} not yanked: where no 0.2 wheel matches, pip installs that "
+              "version instead (with only a warning). Yank them on PyPI (pinned installs still work).")
+    print(f"{NAME} {a.version}: all {len(local)} wheels are on {a.index}, byte for byte, published by {a.publisher} "
+          f"({WORKFLOW})")
     return 0
 
 

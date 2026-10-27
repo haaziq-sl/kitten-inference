@@ -1,4 +1,4 @@
-# kitten-inference-tts2
+# Kitten TTS 2 from Python
 
 Kitten TTS 2 text-to-speech on NVIDIA and AMD GPUs, from Python or the `kitten-tts2` command. On an RTX PRO 6000 it
 streams its first audio after about **11 ms**, and finishes complete files **5 to 7 times faster** than Kitten TTS 2
@@ -14,14 +14,15 @@ pip install "kitten-inference[tts-2]"
 
 - NVIDIA GPU on Linux x86-64 or Windows x64, with driver R570 or newer.
 - On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
-- Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
 - AMD Radeon RX 7000 and RX 9000, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
   ROCm 7.x first (WSL2: step 1 of [AMD Radeon](https://github.com/KittenML/kitten-inference/blob/main/tts-2/docs/amd-radeon.md); Linux
   without WSL2: [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution),
-  then `pip install "kitten-inference[tts-2-rocm]"` in place of the last line. That package has no voice cloning.
-- Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). Other systems have no engine: pip then stops with "No matching distribution", or installs the
-  old version 0.1.1 of `kitten-inference` instead (`pip show kitten-inference` says which).
+  then run the same commands: the package finds the Radeon. No voice cloning on Radeon. With both an NVIDIA and an
+  AMD GPU the NVIDIA one is used; `KittenTTS2(backend="rocm")`, `kitten-tts2 --backend rocm` or
+  `KITTEN_TTS2_BACKEND=rocm` picks the AMD one.
+- Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). Kitten TTS 2 runs on Linux x86-64 and Windows x64; elsewhere the Python API and
+  `kitten-tts2` stop with a message that says so.
 - GeForce GTX 10, GTX 16 and RTX 20: supported, not optimal: these GPUs have no bf16 tensor cores, so part of the
   math runs in software (real-time factor 0.22 to 0.28, against 0.05 to 0.08 on RTX 40 and 50 cards; measured with
   an earlier model revision).
@@ -91,7 +92,7 @@ Streamed audio with the same seed can differ from run to run on any GPU.
 
 ## Model license
 
-The package code is Apache-2.0 AND MIT: KittenML's own code is Apache-2.0, and the model preparation includes ported
+This Python code is Apache-2.0 AND MIT: KittenML's own code is Apache-2.0, and the model preparation includes ported
 MIT-licensed code (see [NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-2/NOTICE)). The Kitten TTS 2
 model this downloads on first use is under the
 [Stellon Labs Community License](https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md), not Apache or
