@@ -4,20 +4,14 @@ Small, fast text-to-speech that runs on a CPU. Three models from 15M to 80M para
 24 kHz audio, on a native C++ engine.
 
 **The nano model speaks about 60 times faster than real time on a 12-core desktop CPU, and 1.1 to 2.3 times
-faster than kittenml 0.9.6 (ONNX Runtime) on every machine we compared: macOS, Linux (x86-64 and Arm) and
-Windows.** On Linux x86-64 and Windows it also uses 3 to 42% less memory than kittenml.
+faster than kittenml 0.9.6 (ONNX Runtime) on Linux (x86-64 and ARM64), Windows x64 and Apple Silicon Macs.** On
+Linux x86-64 and Windows x64 it also uses 3 to 42% less memory than kittenml.
 
-Default settings of both packages on the same machine, a 41-word text (15 to 17 s of speech), median of 10 calls.
-On a Ryzen 9 9900X, nano speaks it in 0.29 s against 0.54 s (real-time factor 0.017). On Apple Silicon this engine
-runs nano on the GPU (Metal) and ONNX Runtime on the CPU: 0.37 s against 0.71 s on an Apple M4.
+A 41-word text (15 to 17 s of speech) takes nano 0.29 s against 0.54 s on a Ryzen 9 9900X, and 0.37 s against
+0.71 s on an Apple M4, where this engine uses the GPU (Metal) and ONNX Runtime the CPU. Both packages at default
+settings on the same machine, median of 10 calls.
 
-![Kitten TTS 0.8 engine against ONNX Runtime on the CPU, 80M int8 model: latency and peak memory on an Android phone (Cortex-A77), a Core i7-12650H laptop and an Apple M2 Pro](https://raw.githubusercontent.com/KittenML/kitten-inference/v0.2.0/tts-0.8/docs/assets/benchmarks/cpu_onnx_summary.svg)
-
-The chart is from June 2026 runs of the engine's own benchmark program, not of this release's package: the 80M int8
-(mini) model against plain ONNX Runtime, both given the same phonemes, so text processing is not timed; an 18-word
-text; `t=1` and `t=8` threads (the Mac, an M2 Pro, uses one core either way). Its Android engine and ONNX bars come
-from different runs. The other numbers on this page compare this release's package with kittenml 0.9.6 at default
-settings.
+![Kitten TTS 0.8 engine against ONNX Runtime on the CPU, 80M int8 model: latency and peak memory on an Android phone (Cortex-A77), a Core i7-12650H laptop and an Apple M2 Pro](docs/assets/benchmarks/cpu_onnx_summary.svg)
 
 ## Install
 
@@ -28,12 +22,11 @@ pip install "kitten-inference[tts-0.8]"
 ```
 
 - On Windows, run the commands in a Command Prompt, with `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line.
-- Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning.
 - On Ubuntu and Debian, `python3 -m venv` needs `sudo apt-get update && sudo apt-get install -y python3-venv` first.
-- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"` (this needs pip 20.3 or newer on Linux x86-64;
-  older pip finds no wheel of this version there): supported, not optimal, because pip older than 23.3 (for example
-  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) skips `[tts-0.8]` with only a
-  warning: Kitten TTS 0.8 is then installed without the Python packages it needs, and says so when you import it.
+- Upgrade pip as shown: pip older than 23.3 skips the `[tts-0.8]` extra with only a warning, and Kitten TTS 0.8
+  then reports the missing packages when you import it.
+- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"`: supported, not optimal, because it is a
+  workaround for old pip, and on Linux x86-64 it still needs pip 20.3 or newer.
 
 ## Use
 
@@ -56,10 +49,13 @@ The first use of a model downloads it from Hugging Face; later uses load it from
 | `KittenML/kitten-tts-nano-0.8` | 15M | 56 MB |
 
 Add `-int8` to a name, for example `KittenML/kitten-tts-nano-0.8-int8`, for the smaller int8 weights
-(116, 71 and 19 MB). On the AMD and Linux ARM64 machines we tested they are faster than kittenml. Supported, not
-optimal on Intel CPUs and on the Mac CPU, because the int8 kernels for x86 are not tuned yet and the macOS build uses
-one CPU core: 1.6 to 2.2 times the kittenml time on an Intel Xeon, 1.2 to 1.5 times on a Core i9-12900, and 1.4 to 1.8
-times on an Apple M4. Apple Silicon runs them on the CPU by default, because on Metal they are about 5 times slower.
+(116, 71 and 19 MB). They are usually faster than kittenml on AMD CPUs and on Linux ARM64. Apple Silicon runs them
+on the CPU by default; on Metal they are about 5 times slower.
+
+- int8 on Intel CPUs: supported, not optimal, because the int8 kernels for x86 are not tuned yet (1.2 to 2.2 times
+  the kittenml time).
+- int8 on the Mac CPU: supported, not optimal, because the macOS build uses one CPU core (1.4 to 1.8 times the
+  kittenml time on an Apple M4).
 
 Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
 
@@ -70,23 +66,23 @@ Options:
 - `KittenTTS(..., backend="cpu")` or `"metal"`: by default Apple Silicon uses Metal for the full-size
   models and the CPU for the int8 models. On the CPU, models in different threads generate at the same
   time; one model shared by several threads runs their calls one at a time, and Metal runs one call at a time.
-- On Metal, create each model once and reuse it. Creating it again is supported, not optimal: every new
-  `KittenTTS` keeps about 290 MB (nano) to 470 MB (mini) until the process ends, because the engine does not free
-  its GPU copies of the weights yet (Apple M4; the CPU backend does not do this).
+- On Metal, create each model once and reuse it. Creating it again is supported, not optimal, because the engine
+  does not free its GPU copy of the weights yet: every new `KittenTTS` keeps about 290 MB (nano) to 470 MB (mini)
+  until the process ends. The CPU backend frees it.
 
 Audio can differ slightly between Metal and the CPU (clip lengths within about 3.5%), between CPU types, and with
-the number of CPU threads (`OMP_NUM_THREADS`; the same clip lengths).
+the number of CPU threads (`OMP_NUM_THREADS`).
 
 ## Platforms
 
-| Platform | Python | |
+| Platform | Python | Status |
 |---|---|---|
-| Linux x86_64 and ARM64 | 3.8–3.14 | tested |
-| Windows x64 | 3.8–3.14 | tested |
-| macOS Apple Silicon | 3.8–3.14 | tested |
-| macOS Intel | 3.8–3.14 | automated tests only |
-| Windows ARM64 | 3.11–3.14 | automated tests only; about 9 times slower than Linux ARM64 |
-| Android ARM64 (experimental) | 3.13 | built, not tested |
+| Linux x86_64 and ARM64 | 3.8–3.14 | Supported |
+| Windows x64 | 3.8–3.14 | Supported |
+| macOS Apple Silicon | 3.8–3.14 | Supported |
+| macOS Intel | 3.8–3.14 | Experimental |
+| Windows ARM64 | 3.11–3.14 | Experimental; about 9 times slower than Linux ARM64 |
+| Android ARM64 | 3.13 | Experimental |
 
 - Linux needs glibc 2.29 or newer (Ubuntu 20.04, Debian 11, RHEL 9 or later); macOS needs version 11 or newer.
 - The CPU needs AVX2 on x86-64, or dot-product instructions on ARM64 (a Raspberry Pi 5 works, a Raspberry Pi 4 does not).
@@ -107,8 +103,8 @@ exceptions, and the Microsoft Visual C++ runtime terms): see
 carries in its `.dist-info/licenses/tts-0.8/` folder. The same wheels also hold Kitten TTS 2, whose third-party
 code is listed in [tts-2/NOTICE](https://github.com/KittenML/kitten-inference/blob/main/tts-2/NOTICE).
 
-The models are downloaded on first use. They are the Kitten TTS 0.8 models, which KittenML publishes under
-Apache-2.0 ([nano](https://huggingface.co/KittenML/kitten-tts-nano-0.8),
+The models are the Kitten TTS 0.8 models, which KittenML publishes under Apache-2.0
+([nano](https://huggingface.co/KittenML/kitten-tts-nano-0.8),
 [micro](https://huggingface.co/KittenML/kitten-tts-micro-0.8),
 [mini](https://huggingface.co/KittenML/kitten-tts-mini-0.8)); this package downloads them converted to its
 engine's format from [KittenML/meownn-models](https://huggingface.co/KittenML/meownn-models).

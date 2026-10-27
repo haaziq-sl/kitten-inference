@@ -1,19 +1,17 @@
 # Voice cache and memory
 
-The model comes from the latest revision on Hugging Face (115 built-in voices). Figures marked "(47-voice revision)" were measured with an earlier revision that had 47 voices.
+`kitten-tts-native` picks working settings by itself, so most users need nothing on this page. It is for running several streams, for the C API, and for using less GPU memory.
 
-`kitten-tts-native` picks working settings by itself, so most users need nothing in this section. It is for running several streams, for the C API, and for using less GPU memory.
+By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one voice per run (a built-in, cloned or loaded one), so without a `--voice-cache` option it prepares only that voice, right after the engine starts or the voice is built or loaded (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13,500 MiB instead of 33,200 MiB with all 115 built-in voices), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
 
-By default the engine (the C API) prepares all built-in voices on the GPU when it starts, so every voice is ready for its first request. `kitten-tts-native` speaks with one voice per run (a built-in, cloned or loaded one), so without a `--voice-cache` option it prepares only that voice, right after the engine starts or the voice is built or loaded (`lru` with one voice per stream). That uses much less GPU memory with the default profile (about 13,500 MiB instead of 33,200 MiB with the 115 voices of the current model), and the first audio comes as soon as with all voices prepared. In the C API, `kt2n_voice_prepare()` does the same for a voice cache in `lru` mode.
-
-Two settings make the engine use less GPU memory: the voice cache keeps only some voices on the GPU, and the low memory profile uses smaller working buffers. They can be combined. Neither changes the audio; what changes is the time to the first audio of a voice that is not on the GPU yet. With the same text, voice, seed, model and GPU, `--stream false` output is byte for byte the same with every cache mode and both profiles, when requests run one at a time (as `kitten-tts-native` runs them).
+Two settings make the engine use less GPU memory: the voice cache keeps only some voices on the GPU, and the low-memory profile uses smaller working buffers. They can be combined. Neither changes the audio: with the same text, voice, seed, model and GPU, `--stream false` output is byte for byte the same with every cache mode and both profiles, when requests run one at a time (as `kitten-tts-native` runs them). What changes is the time to the first audio of a voice that is not on the GPU yet.
 
 ```sh
 build/default/bin/kitten-tts-native --assets models/kitten-tts-2 --voice Bruno \
   --text "Speaking with less GPU memory." --voice-cache none --memory-profile low --output low.wav
 ```
 
-GPU memory in use with the current model (115 voices), including the CUDA context:
+GPU memory in use, including the CUDA context:
 
 | Setting | Default profile | Low-memory profile |
 |---|---:|---:|
@@ -34,7 +32,7 @@ optimal, see [below](#--memory-profile-autodefaultlow)) and build a voice only w
 - **In host memory:** with `lru` and `none`, the engine reads every built-in voice when it starts and keeps it there, about 21 MiB for the 115 voices (the size of `voices.kt2n`).
 - **On the GPU:** the state the model needs to speak with the voice: about 175 MiB per built-in voice on average, and 197 MiB for the largest.
 
-Preparing a voice copies it from host memory into GPU memory, in about 9 ms (47-voice revision). Removing a voice from the GPU keeps its host copy, so using it again only prepares it again.
+Preparing a voice copies it from host memory into GPU memory, in about 9 ms. Removing a voice from the GPU keeps its host copy, so using it again only prepares it again.
 
 ## `--voice-cache all|lru|none`
 
@@ -51,7 +49,7 @@ These limits need an explicit `--voice-cache lru` or `--voice-cache none`. Witho
 - `--voice-cache-voices N` keeps at most N voices on the GPU at once (1 to 4096).
 - `--voice-cache-mib N` keeps at most N MiB of GPU memory for voices.
 
-With both options, both limits apply. With only `--voice-cache-mib`, as many voices are kept as fit in the budget. With neither, `none` keeps one voice for each stream (`--max-streams`), and `lru` keeps 16 voices, or one for each stream when that is more. The engine sets aside GPU memory for these limits when it starts, so the limits, not the number of voices used so far, decide how much memory the cache takes. Plain `--voice-cache lru` therefore sets aside room for 16 voices (about 3,000 MiB), which does not fit on 4 GB cards: there, use `--voice-cache none` or `--voice-cache lru --voice-cache-voices 1`. The engine refuses to start when the MiB budget cannot hold the largest built-in voice, and the message gives both sizes, for example `voice_cache_max_bytes (100 MiB) cannot hold the largest voice (197 MiB)`.
+With both options, both limits apply. With only `--voice-cache-mib`, as many voices are kept as fit in the budget. With neither, `none` keeps one voice for each stream (`--max-streams`), and `lru` keeps 16 voices, or one for each stream when that is more. The engine sets aside GPU memory for these limits when it starts, so the limits, not the number of voices used so far, decide how much memory the cache takes. Plain `--voice-cache lru` therefore sets aside room for 16 voices (about 3,000 MiB), which does not fit on 4 GB cards: there, leave out `--voice-cache`, or use `--voice-cache none` or `--voice-cache lru --voice-cache-voices 1`. The engine refuses to start when the MiB budget cannot hold the largest built-in voice, and the message gives both sizes, for example `voice_cache_max_bytes (100 MiB) cannot hold the largest voice (197 MiB)`.
 
 Cloned and loaded voices go through the same cache. A cloned or loaded voice larger than the whole budget is refused when it is built or loaded.
 
@@ -59,9 +57,9 @@ Cloned and loaded voices go through the same cache. A cloned or loaded voice lar
 
 `auto` is what `kitten-tts-native` uses when you do not pass `--memory-profile`. It uses the default profile when that fits the free GPU memory and `low` otherwise. When it uses `low`, it prints one line that says so and how much memory was free.
 
-- The audio does not depend on the choice: with the same text, voice, seed and GPU, `--stream false` output is byte for byte the same with `low` and `default`.
-- With `kitten-tts-native`'s own voice setting (one voice prepared), the default profile needs about 13,500 MiB of GPU memory (the low-memory line prints the number for your card), and keeps 10% of the GPU free; with `--voice-cache all` it needs about 33,200 MiB, more than a 24 GB card has, so `auto` then uses `low` (about 13,000 MiB). Below that, `auto` uses `low`: supported, not optimal. With several streams (C API), requests that arrive together are batched less than with the default profile (not measured). One request at a time runs as fast (`--stream false` real-time factor 0.050 with `low` and 0.051 with the default profile on a 16 GB RTX 5060 Ti; 47-voice revision).
-- `auto` decides from the free memory before it loads the model. When the default profile clearly cannot fit, it does not try it. Only when it is close (about 12 to 14 GB free) does it try the default profile first; when that does not fit, starting takes a few seconds longer.
+- The default profile keeps 10% of the GPU free. With `--voice-cache all` it needs about 33,200 MiB, more than a 24 GB card has, so `auto` then uses `low`.
+- When `auto` uses `low`: supported, not optimal, because with several streams (C API) requests that arrive together are batched less. One request at a time runs as fast (`--stream false` real-time factor 0.050 with `low` and 0.051 with the default profile on a 16 GB RTX 5060 Ti).
+- `auto` decides from the free memory before it loads the model. Only when it is close (about 12 to 14 GB free) does it try the default profile first; when that does not fit, starting takes a few seconds longer.
 - When even `low` does not fit, the engine does not start, and the message says how much free memory one stream needs.
 - With an explicit `--memory-profile default` on a GPU too small for it, the engine stops at start with `the default memory profile needs about N MiB or more of free GPU memory; this GPU has M MiB free after the CUDA context`, followed by what to use instead (exit status 1).
 - In the C API, set `memory_profile` to `KT2N_MEMORY_PROFILE_AUTO` for the same choice. The C API default stays `KT2N_MEMORY_PROFILE_DEFAULT`, and `auto` never changes the voice cache setting.
@@ -73,11 +71,12 @@ Cloned and loaded voices go through the same cache. A cloned or loaded voice lar
 On GPUs with about 8 GB or less, `low` also fits its buffers to the free memory when it starts. Supported, not optimal:
 
 - It serves one stream, and a new segment can wait for the previous segment's memory.
-- The decoder runs without CUDA graphs: `--stream false` is about 1.5% slower on an 8 GB laptop GPU (47-voice revision). The audio is the same.
-- On about 4 GB, streaming text chunks longer than the fitted limit (about 330 to 480 characters, depending on the card; 47-voice revision) are cut into shorter pieces, which are spoken separately. This is the only setting that changes the audio; see [Output differences](consumer-gpus.md#output-differences). Set the environment variable `KT2N_FIT_SPLIT=0` to refuse such text instead. Complete files (`--stream false`) are never cut.
-- Voice cloning is off (see [Voice cloning](../README.md#voice-cloning)). Saved voices (`--load-voice`) work.
+- The decoder runs without CUDA graphs: `--stream false` is about 1.5% slower on an 8 GB laptop GPU. The audio is the same.
+- On about 4 GB, streaming text chunks longer than the fitted limit (about 330 to 480 characters, depending on the card) are cut into shorter pieces, which are spoken separately. This is the only setting that changes the audio; see [Output differences](consumer-gpus.md#output-differences). Set the environment variable `KT2N_FIT_SPLIT=0` to refuse such text instead. Complete files (`--stream false`) are never cut.
+- Voice cloning is off (see [Voice cloning](../README.md#voice-cloning)). Saved voices (`--load-voice`) work; a saved voice with a long prompt leaves less room for text, so its streaming segments are shorter.
+- Host memory: about 0.9 to 1.2 GB at peak.
 
-The engine keeps 128 MiB or 1/64 of the GPU free, whichever is larger. When even the smallest fit does not fit, it does not start, and the message says how much free memory one stream needs, for example: `the low-memory profile needs about 2583 MiB of free GPU memory for one stream; this GPU has 1730 MiB free after the CUDA context (min_free_device_bytes 128 MiB)` (47-voice revision). A 2 GB GPU is therefore not supported. [docs/consumer-gpus.md](consumer-gpus.md#small-memory-cards) has the measured numbers and how the sizes are fitted.
+The engine keeps 128 MiB or 1/64 of the GPU free, whichever is larger. It needs about 2,583 MiB of free GPU memory after the CUDA context, and up to about 3,000 MiB under Windows and WSL2, where some display drivers take more GPU memory once the engine has written about 2 GB. GPUs with less than 4 GB are not supported. Below the minimum the engine does not start, and the message says how much free memory one stream needs, for example: `the low-memory profile needs about 2583 MiB of free GPU memory for one stream; this GPU has 1730 MiB free after the CUDA context (min_free_device_bytes 128 MiB)`. If a start is refused while the desktop takes GPU memory, start again.
 
 A request that needs more memory than was fitted fails with the error code `gpu_memory_limit_exceeded` (`KT2N_ERR_GPU_MEMORY_LIMIT`, status 111; `kitten-tts-native` prints the reason and `(status 111)`). The message gives the size the request needs and the size fitted on this GPU. It is never shortened silently. A streaming request can deliver audio for its first segments and then fail this way on a later, longer segment.
 

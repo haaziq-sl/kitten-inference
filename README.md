@@ -5,30 +5,18 @@ Fast native inference engines for the Kitten TTS text-to-speech models: Kitten T
 
 |  | **Kitten TTS 2** on an NVIDIA GPU | **Kitten TTS 0.8** on the CPU |
 |---|---|---|
-| Headline | Complete files **5 to 7 times faster** than Kitten TTS 2 on vLLM or llama.cpp | The nano model **1.1 to 2.3 times faster** than kittenml 0.9.6 (ONNX Runtime), on every machine we tested |
-| Speed | First streamed audio after **about 11 ms** | **About 60 times faster than real time** |
-| Example | A short text (one chunk) in 82 ms, a long text (about three chunks) in 0.95 s | A 41-word text (15 to 17 s of speech) in 0.29 s, against 0.54 s with ONNX Runtime |
-| Measured on | RTX PRO 6000, one request at a time; on smaller GPUs the lead is smaller (below) | Ryzen 9 9900X (12 cores); the 1.1 to 2.3 times covers macOS, Linux (x86-64 and ARM64) and Windows |
+| Headline | Complete files **5 to 7 times faster** than Kitten TTS 2 on vLLM or llama.cpp | The nano model **1.1 to 2.3 times faster** than kittenml 0.9.6 (ONNX Runtime) on Linux (x86-64 and ARM64), Windows x64 and Apple Silicon Macs |
+| Speed | First streamed audio after **about 11 ms** (vLLM and llama.cpp: 481 to 643 ms, as they stream whole sentences) | **About 60 times faster than real time** |
+| Example | A short text in 82 ms and a long text in 0.95 s, against 453 to 584 ms and 4.9 to 6.6 s on vLLM, 520 ms and 5.4 s on llama.cpp | A 41-word text (15 to 17 s of speech) in 0.29 s, against 0.54 s with ONNX Runtime |
+| Measured on | RTX PRO 6000, one request at a time; vLLM through kittenml 0.9.6 | Ryzen 9 9900X (12 cores), default settings of both packages (on Apple Silicon this engine uses the GPU) |
 
-- **Kitten TTS 2:** the pip package with its default settings and the current model, medians of 300 short and 12 long
-  texts, the same texts, voice and seeds for every engine. On vLLM (kittenml 0.9.6) 453 ms / 4.9 s with 4-bit weights
-  and 584 ms / 6.6 s with bf16, its default; on llama.cpp (GPU) 520 ms / 5.4 s. Word error rate 0.02 to 0.05% for all
-  four on the short texts. vLLM and llama.cpp stream whole sentences, so on a short text their first audio comes with
-  the complete file (481 to 643 ms). On an RTX 4090: first audio 22 ms, complete files 4.5 to 6.9 times faster. On a
-  12 GB RTX 3060: 58 ms, and 2.4 to 4.3 times faster.
-- **Kitten TTS 0.8:** the default settings of both packages on the same machine, median of 10 calls. On Apple Silicon
-  this engine runs nano on the GPU (Metal) and ONNX Runtime on the CPU. "Times faster than real time" is speech length
-  divided by compute time over six test clips (real-time factor 0.017).
+On smaller GPUs the Kitten TTS 2 lead is smaller: first audio after 22 ms and complete files 4.5 to 6.9 times faster
+on an RTX 4090, 58 ms and 2.4 to 4.3 times on a 12 GB RTX 3060. Word error rate on short texts is 0.02 to 0.05% for
+every engine compared.
 
 ![Kitten TTS 2 native against vLLM and llama.cpp: time to make a complete file on an RTX PRO 6000, RTX 4090 and RTX 3060](tts-2/docs/assets/benchmarks/tts2-complete-files.svg)
 
 ![Kitten TTS 0.8 engine against ONNX Runtime on the CPU, 80M int8 model: latency and peak memory on an Android phone (Cortex-A77), a Core i7-12650H laptop and an Apple M2 Pro](tts-0.8/docs/assets/benchmarks/cpu_onnx_summary.svg)
-
-The Kitten TTS 0.8 chart is from June 2026 runs of the engine's own benchmark program, not of this release's package:
-the 80M int8 (mini) model against plain ONNX Runtime, both given the same phonemes, so text processing is not timed;
-an 18-word text; `t=1` and `t=8` threads (the Mac, an M2 Pro, uses one core either way). Its Android engine and ONNX
-bars come from different runs. The table above compares this release's package with kittenml 0.9.6 at default
-settings.
 
 ## Install
 
@@ -45,27 +33,26 @@ pip install "kitten-inference[tts-2]"
 kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 ```
 
-- NVIDIA GPU on Linux x86-64 (glibc 2.28 or newer: Ubuntu 20.04, Debian 10, RHEL 8 or later) or Windows x64, with
-  driver R570 or newer.
-- Python 3.9 to 3.14 (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). First use downloads the model (about 4.6 GB) and prepares it once: about 1 to 3 minutes on
-  our test machines (57 s with a 1 Gbit/s connection, 160 s on Windows). Later starts reuse the prepared model.
-- **AMD Radeon RX 7000 and RX 9000**, inside WSL2 on Windows 11 (tested) or on Linux x86-64 (not tested): install
-  ROCm 7 first (WSL2: step 1 of [AMD Radeon](tts-2/docs/amd-radeon.md); Linux without WSL2:
+- NVIDIA GPU on Linux x86-64 (glibc 2.28 or newer: Ubuntu 20.04, Debian 10, RHEL 8 or later) or Windows x64, with driver R570 or newer.
+- Python 3.9 to 3.14 (Python 3.15 needs a C compiler until PyYAML, a dependency, ships ready-made 3.15 packages).
+  First use downloads the model (about 4.6 GB) and prepares it once, in about 1 to 3 minutes; later starts reuse it.
+- **AMD Radeon RX 7000 and RX 9000:** supported inside WSL2 on Windows 11, experimental on Linux x86-64 without WSL2.
+  Install ROCm 7 first (WSL2: step 1 of [AMD Radeon](tts-2/docs/amd-radeon.md); Linux without WSL2:
   [AMD's ROCm guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for your distribution), then
   run the same commands: the package finds the Radeon (on a PC that also has an NVIDIA GPU, add `--backend rocm`).
   Real-time factor about 0.06 on an RX 9070 XT (10 s of speech in about 0.6 s). No voice cloning on Radeon.
 - **Voice cloning** (NVIDIA only) needs FFmpeg (`sudo apt-get update && sudo apt-get install -y ffmpeg`; on Windows
-  `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and activate the venv again; Windows 10 and 11
-  include winget, Windows Server 2022 needs it installed first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a 12 GB card, other programs may
-  use at most about 500 MiB.
+  `winget install --id Gyan.FFmpeg -e`, then open a new Command Prompt and activate the venv again; Windows Server
+  2022 needs winget installed first) and about 11,300 MiB (11 GB) of free GPU memory while the voice is built: on a
+  12 GB card, other programs may use at most about 500 MiB.
 - **GeForce GTX 10, GTX 16 and RTX 20 series:** supported, not optimal: they have no bf16 tensor cores, so part of the
-  math runs in software (real-time factor 0.22 to 0.28 on an RTX 2060, GTX 1660 Ti and GTX 1080 Ti, against 0.05 to
-  0.08 on RTX 40 and 50 series cards).
+  math runs in software (real-time factor 0.22 to 0.37 for complete files on desktop cards with 6 GB or more, against
+  0.05 to 0.08 on RTX 30, 40 and 50 series cards).
 - **Without Python:** the engine is also a C library and the `kitten-tts-native` command. Build it with
   `git clone --branch v0.2.0 https://github.com/KittenML/kitten-inference.git`, then `cd kitten-inference/tts-2`, and
   follow [tts-2/README.md](tts-2/README.md).
 
-The package picks its memory settings from the free GPU memory:
+The package picks its memory settings from the free GPU memory ([GPU memory](tts-2/docs/memory.md)):
 
 | GPU memory | Built-in voices | Voice cloning |
 |---|---|---|
@@ -83,39 +70,28 @@ pip install "kitten-inference[tts-0.8]"
 python -c "from kitten_inference.tts08 import KittenTTS; KittenTTS('KittenML/kitten-tts-nano-0.8').generate_to_file('Hello from Kitten TTS.', 'hello.wav', voice='Jasper')"
 ```
 
-- Python 3.8 to 3.14 on Linux x86-64 and ARM64, Windows x64 and Apple Silicon Macs (Python 3.15 works only where a C compiler is installed, until PyYAML (a dependency) ships ready-made 3.15 packages). Intel Macs and Windows ARM64:
-  built; passes an automated audio check, not tested by hand. Android ARM64: built, not tested.
+- Supported: Python 3.8 to 3.14 on Linux x86-64 and ARM64, Windows x64 and Apple Silicon Macs (Python 3.15 needs a C
+  compiler until PyYAML ships ready-made 3.15 packages). Experimental: Intel Macs (the macOS build uses one CPU core),
+  Windows ARM64 (no ARM vector kernels, about 9 times slower than Linux ARM64) and Android ARM64
+  ([platforms](tts-0.8/README.md#platforms)).
 - On Windows, if `KittenTTS()` reports "espeak not installed", install the Microsoft Visual C++ Redistributable:
   `winget install Microsoft.VCRedist.2015+.x64`.
-- With a pip you cannot upgrade, write `"kitten-inference[tts-0-8]"` (this needs pip 20.3 or newer on Linux x86-64;
-  older pip finds no wheel of this version there): supported, not optimal, because pip older than 23.3 (for example
-  pip 22.0.2 on Ubuntu 22.04, or pip 21.2.4 with the python3 that macOS includes) skips `[tts-0.8]` with only a
-  warning: Kitten TTS 0.8 is then installed without the Python packages it needs, and says so when you import it.
 - On Windows, keep the virtual environment's path under about 150 characters; longer paths stop TTS 0.8 with an error
-  that says so ([details](tts-0.8/README.md#platforms)).
+  that says so.
+- With a pip older than 23.3 that you cannot upgrade, write the extra as `"kitten-inference[tts-0-8]"` (on Linux
+  x86-64 this needs pip 20.3 or newer): supported, not optimal, because such a pip skips `[tts-0.8]` with only a
+  warning and leaves out the Python packages Kitten TTS 0.8 needs (it says so when you import it).
 - **Supported, not optimal:**
-  - int8 models on Intel CPUs: 1.6 to 2.2 times the ONNX Runtime time on an Intel Xeon, and 1.2 to 1.5 times on a
-    Core i9-12900, because the int8 kernels for x86 are not tuned yet (on the AMD and Arm CPUs we tested they are
-    faster than ONNX Runtime);
-  - the Mac CPU (int8 models on Apple Silicon, every model on Intel Macs): the macOS build uses one CPU core, so int8
-    on an Apple M4 takes 1.4 to 1.8 times the ONNX Runtime time;
-  - Windows ARM64: built without ARM vector kernels, so about 9 times slower than Linux ARM64;
+  - int8 models on Intel CPUs: the int8 kernels for x86 are not tuned yet, so they take 1.2 to 2.2 times the ONNX
+    Runtime time;
+  - int8 models on Apple Silicon: the macOS build uses one CPU core, so they take 1.4 to 1.8 times the ONNX Runtime
+    time;
   - creating a model again on the Mac GPU (Metal): each new `KittenTTS` keeps about 290 MB (nano) to 470 MB (mini)
     until the process ends, because the engine does not free its GPU copies of the weights yet. Create each model
     once and reuse it.
 
 Both engines in one environment: `pip install "kitten-inference[tts-0.8,tts-2]"` (Linux x86-64 and Windows x64,
 Python 3.9 to 3.14).
-
-## Same audio?
-
-- **Kitten TTS 2:** seeded complete files are bit for bit the same on Linux and Windows with the same GPU model.
-  Different GPU models give slightly different samples with the same words and voice. These can differ more: AMD
-  Radeon, GeForce GTX 10, GTX 16 and RTX 20 (close to, not bit for bit the same as, a newer NVIDIA GPU's), and 4 GB
-  cards, which cut long streamed text into shorter pieces (word error rate 1.43% against 0.58%). Streamed audio with
-  the same seed can differ from run to run on any GPU.
-- **Kitten TTS 0.8:** audio can differ slightly between Metal and the CPU, between CPU types and with the number of
-  threads.
 
 ## Use from Python
 
@@ -137,7 +113,7 @@ KittenTTS("KittenML/kitten-tts-nano-0.8").generate_to_file("Hello from Kitten TT
 ## Docs
 
 - [Kitten TTS 2 from Python and the `kitten-tts2` command](tts-2/python/README.md): voices, streaming, voice
-  cloning, saved voices, caches.
+  cloning, saved voices, caches, and when the same seed gives the same audio.
 - [Kitten TTS 2 engine](tts-2/README.md): speed tables, [supported GPUs](tts-2/README.md#supported-gpus), building
   from source, the command-line tool and the C API. Also: [Windows](tts-2/docs/windows.md),
   [AMD Radeon](tts-2/docs/amd-radeon.md), [GPU memory](tts-2/docs/memory.md),

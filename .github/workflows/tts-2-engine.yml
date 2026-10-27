@@ -7,7 +7,7 @@
 # generation is tested on GPU machines (tts-2/packaging/smoke_wheel.py --assets). The CLI's reference-audio decode
 # with the system ffmpeg (voice cloning) is tested on both systems without a GPU (job cli-ffmpeg).
 # Nothing here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json,
-# from its artifacts (kept 90 days; RELEASING.md).
+# from its artifacts (kept 90 days; .github/RELEASING.md).
 name: tts-2 engine wheels
 
 on:
@@ -39,7 +39,7 @@ jobs:
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install dist/*.whl
           cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
-      # Release input: kept 90 days (RELEASING.md).
+      # Release input: kept 90 days (.github/RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: tts2-cu12-linux
@@ -94,7 +94,7 @@ jobs:
           Set-Location $env:RUNNER_TEMP
           & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\tts-2\packaging\smoke_wheel.py"
           if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
-      # Release input: kept 90 days (RELEASING.md).
+      # Release input: kept 90 days (.github/RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: tts2-cu12-windows

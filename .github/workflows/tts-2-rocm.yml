@@ -5,7 +5,7 @@ name: tts-2 ROCm wheel
 # manylinux_2_28 container with ROCm 7.1 from AMD's RHEL 8 repository (tts-2/packaging/build_wheel_rocm.sh).
 # The runners have no AMD GPU: the install job checks the package and the documented missing-ROCm failure only.
 # Nothing here is uploaded to PyPI: a release takes the wheel of a tested run, pinned in .github/release-inputs.json,
-# from its artifact (kept 90 days; RELEASING.md).
+# from its artifact (kept 90 days; .github/RELEASING.md).
 
 on:
   push:
@@ -51,7 +51,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$size" -ge 100000000 ]; then echo "::warning::the wheel is over PyPI's default 100 MB file limit"; fi
-      # Release input: kept 90 days (RELEASING.md).
+      # Release input: kept 90 days (.github/RELEASING.md).
       - uses: actions/upload-artifact@v4
         with:
           name: kitten-inference-tts2-rocm-manylinux_2_28_x86_64

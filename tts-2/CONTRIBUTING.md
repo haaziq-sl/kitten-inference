@@ -24,6 +24,60 @@ python -m pytest tests/assets
 - `ctest` lists skipped tests under "The following tests did not run"; that is expected. Two tests need inputs these steps do not set, and are skipped and counted as passed: `Text.TokenizerAndPrompt` (`KT2N_TOKENIZER_JSON`) and `GpuSmoke.RealEngineFileUnpackMatchesCpu` (`KT2N_REAL_ENGINE_FILE`).
 - The third `ctest` line runs the `cpu` tests again with `KT2N_TEST_GPU=1`: this adds the engine's runtime tests that load the real model on the GPU (for example the low-memory fit and the automatic profile). Without `KT2N_TEST_GPU` they are skipped and still counted as passed. One of them needs about 21.5 GB (20 GiB) of free GPU memory, so it is skipped on every card below 24 GB; on 8 GB cards one more is skipped.
 
+### Windows
+
+The tests need steps 1 to 3 of the [Windows guide](docs/windows.md) first, and a Python with numpy: the `.venv-prepare` environment from step 3 has it. In a new Command Prompt, in the `kitten-inference\tts-2` folder, first restore the environment of steps 2 and 3:
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+set KT2N_TEXT_DEPS=%CD%\build-deps\text
+call .venv-prepare\Scripts\activate.bat
+```
+
+Then:
+
+```bat
+cmake --preset windows-dev
+cmake --build --preset windows-dev --parallel
+ctest --preset windows-cpu
+set KT2N_TEST_ASSETS=%CD%\models\kitten-tts-2
+ctest --preset windows-gpu
+set KT2N_TEST_GPU=1
+ctest --preset windows-cpu
+```
+
+- `windows-dev` builds into `build\windows-dev`: a second full build, about 20 minutes on 8 cores and about 4 GB more
+  disk.
+- The `windows-gpu` tests need the prepared model in `KT2N_TEST_ASSETS`; without it they fail.
+- The last line runs the `windows-cpu` tests again with `KT2N_TEST_GPU=1`, which adds the engine's runtime tests that
+  load the real model on the GPU; without it they are skipped and still counted as passed.
+- Two tests need inputs these steps do not set, and are skipped: `Text.TokenizerAndPrompt` and
+  `GpuSmoke.RealEngineFileUnpackMatchesCpu`. One GPU runtime test needs about 21.5 GB (20 GiB) of free GPU memory, so
+  it is skipped on every card below 24 GB; on 8 GB cards one more is skipped. Skipped tests count as passed.
+
+### AMD Radeon (ROCm)
+
+The tests need steps 1 to 4 of the [AMD Radeon guide](docs/amd-radeon.md) first. In the Ubuntu terminal, in the `kitten-inference/tts-2` folder:
+
+```sh
+export HSA_ENABLE_DXG_DETECTION=1
+. .venv-prepare/bin/activate
+export KT2N_TEXT_DEPS="$PWD/build-deps/text"
+cmake --preset hip-dev
+cmake --build --preset hip-dev --parallel "$(nproc)"
+ctest --preset hip-cpu
+KT2N_TEST_ASSETS="$PWD/models/kitten-tts-2" ctest --preset hip-gpu
+KT2N_TEST_GPU=1 KT2N_TEST_ASSETS="$PWD/models/kitten-tts-2" ctest --preset hip-cpu
+```
+
+The last line runs the `hip-cpu` tests again with `KT2N_TEST_GPU=1`, which adds the engine's runtime tests that load
+the real model on the GPU; without it they are skipped and still counted as passed. One of them needs about 20 GB of
+free GPU memory and is skipped unless that much is free, which in practice means on every card under 24 GB. A few tests need inputs these steps do not set (for
+example `KT2N_TOKENIZER_JSON`) and are skipped.
+
+`cmake --preset hip-dev` needs a Python with numpy: activate `.venv-prepare` first, as above. It builds into
+`build/hip-dev`, a second full build (4 to 10 minutes).
+
 ## Offline preparation
 
 `tools/prepare_assets.py` takes the latest model revision unless `--revision` pins one, and checks the SHA-256 of every other file it downloads ([PROVENANCE.md](PROVENANCE.md) lists them, from huggingface.co, github.com and raw.githubusercontent.com, and files.pythonhosted.org). The prepared manifest records the model revision it used. Keep the whole prepared directory, including `config.json`. To prepare without network access, fill a cache on a connected machine with `--cache-dir DIR`, then run with `--offline` and the same `--cache-dir`. `--help` lists the options for local copies of each source.

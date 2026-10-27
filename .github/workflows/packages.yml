@@ -4,7 +4,7 @@
 # artifacts of the runs that built and tested them, in this repository, pinned with every file's sha256 in
 # .github/release-inputs.json (the lock): the engine binaries in every wheel are the tested ones, byte for byte.
 # Then the 54 wheels are tested on Linux, Windows and macOS. A v* tag in KittenML/kitten-inference also uploads them
-# to PyPI (job publish, RELEASING.md).
+# to PyPI (job publish, .github/RELEASING.md).
 # When the lock names another repository (for example a pull request to KittenML before its own lock is committed),
 # the jobs that need the inputs are skipped with a notice; on a tag that is an error. A push or pull request is also
 # skipped, with a warning, when the lock's artifacts expired or the engine sources, TTS 0.8 sources or versions differ
@@ -40,7 +40,7 @@ on:
       - "tts-0.8/licenses/**"
       - "NOTICE"
       - "LICENSE"
-      - "RELEASING.md"
+      - ".github/RELEASING.md"
       - ".github/release-inputs.json"
       - ".github/workflows/**"
       - ".github/scripts/**"
@@ -69,7 +69,7 @@ on:
       - "tts-0.8/licenses/**"
       - "NOTICE"
       - "LICENSE"
-      - "RELEASING.md"
+      - ".github/RELEASING.md"
       - ".github/release-inputs.json"
       - ".github/workflows/**"
       - ".github/scripts/**"
@@ -188,7 +188,7 @@ jobs:
               why = (f"the release inputs are artifacts of {lock['repository']} (.github/release-inputs.json), which "
                      f"a run in {here} cannot download")
               if tag_run:
-                  print(f"::error::{why}. A release tag needs a lock of this repository's own runs (RELEASING.md).")
+                  print(f"::error::{why}. A release tag needs a lock of this repository's own runs (.github/RELEASING.md).")
                   sys.exit(1)
               print(f"::notice::{why}: the jobs that assemble and test the kitten-inference wheels are skipped, and "
                     "the Python unit tests run without them.")
@@ -255,7 +255,7 @@ jobs:
 
           if problems:
               # A dry run or a tag must assemble. A push or pull request is skipped instead: after the inputs expired,
-              # or when it changes the engine sources or the versions before new builds are locked (RELEASING.md).
+              # or when it changes the engine sources or the versions before new builds are locked (.github/RELEASING.md).
               strict = tag_run or by_hand
               for p in problems:
                   print(f"::{'error' if strict else 'warning'}::{p}")
@@ -263,7 +263,7 @@ jobs:
                   sys.exit(1)
               print("::warning::the kitten-inference wheels cannot be assembled from the locked builds at this "
                     "commit: the jobs that assemble and test them are skipped, and the Python unit tests run "
-                    "without them. A new release needs new builds and a new lock (RELEASING.md).")
+                    "without them. A new release needs new builds and a new lock (.github/RELEASING.md).")
               out.write("assemble=false\n")
               sys.exit(0)
           out.write("assemble=true\n")
@@ -326,7 +326,7 @@ jobs:
         run: |
           python -m twine check --strict assembled/*.whl
           python tts-2/packaging/size_check.py assembled/*.whl --max-mb 100
-      - name: sha256 of every wheel (the tag run must give the same as the dry run, RELEASING.md)
+      - name: sha256 of every wheel (the tag run must give the same as the dry run, .github/RELEASING.md)
         shell: bash
         run: |
           (cd assembled && sha256sum *.whl > SHA256SUMS)
