@@ -1,0 +1,162 @@
+# Kitten TTS 2 engine for NVIDIA GPUs: the CUDA payload wheels (Linux manylinux_2_28 and Windows) that the
+# kitten-inference wheels for Linux x86-64 and Windows x64 are assembled from (packages.yml), built with the scripts in
+# tts-2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
+# The build scripts compare the GPU code with the default build's (tts-2/packaging/sass_manifest.py against
+# tts-2/packaging/sass-reference.txt) and compile again the files whose code came out differently, so every wheel this
+# workflow uploads has the reference GPU code; a job that cannot get there fails. The runners have no GPU: speech
+# generation is tested on GPU machines (tts-2/packaging/smoke_wheel.py --assets). The CLI's reference-audio decode
+# with the system ffmpeg (voice cloning) is tested on both systems without a GPU (job cli-ffmpeg).
+# Nothing here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json,
+# from its artifacts (kept 90 days).
+name: tts-2 engine wheels
+
+on:
+  push:
+    branches: ["**"]
+    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+  pull_request:
+    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux wheel (manylinux_2_28 x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build (CUDA 12.8 in the manylinux_2_28 container), with the GPU code check
+        run: JOBS=4 tts-2/packaging/build_linux_docker.sh "$PWD/dist"
+      - name: Size check
+        run: python3 tts-2/packaging/size_check.py dist/*.whl
+      - name: Install into a fresh virtual environment and smoke test
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/python -m pip install dist/*.whl
+          cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
+      # Release input: kept 90 days.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tts2-cu12-linux
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  windows:
+    name: Windows wheel (win_amd64)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CUDA 12.8.1 (compiler, runtime, cuRAND headers; cuobjdump and nvdisasm for the GPU code check)
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\cuda_12.8.1_windows_network.exe"
+          Invoke-WebRequest -Uri https://developer.download.nvidia.com/compute/cuda/12.8.1/network_installers/cuda_12.8.1_windows_network.exe -OutFile $installer
+          # Run it only if it carries a valid NVIDIA Authenticode signature (a network installer's bytes change, so a
+          # fixed hash would not do): otherwise a tampered download would run with the job's privileges.
+          $sig = Get-AuthenticodeSignature $installer
+          if ($sig.Status -ne 'Valid') { throw "CUDA installer signature is $($sig.Status)" }
+          if ($sig.SignerCertificate.Subject -notmatch 'NVIDIA') { throw "CUDA installer not signed by NVIDIA: $($sig.SignerCertificate.Subject)" }
+          $p = Start-Process -FilePath $installer -ArgumentList '-s nvcc_12.8 cudart_12.8 curand_12.8 curand_dev_12.8 thrust_12.8 cuobjdump_12.8 nvdisasm_12.8 visual_studio_integration_12.8' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "CUDA installer failed with exit code $($p.ExitCode)" }
+          $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          & "$cuda\bin\nvcc.exe" --version
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job that builds the published wheel)
+        with:
+          arch: x64
+      - name: Build tools
+        run: python -m pip install ninja==1.13.0
+      - name: Build, with the GPU code check
+        shell: pwsh
+        run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
+      - name: GPU code check self-test (the rebuild step can read the CUDA object files)
+        run: python tts-2/packaging/sass_manifest.py objects tts-2/build/wheel-windows --arch sm_75
+      - name: Size check
+        shell: pwsh
+        run: python tts-2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
+      - name: Install into a fresh virtual environment and smoke test
+        shell: pwsh
+        run: |
+          python -m venv "$env:RUNNER_TEMP\venv"
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -m pip install (Get-ChildItem dist\*.whl).FullName
+          if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+          Set-Location $env:RUNNER_TEMP
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\tts-2\packaging\smoke_wheel.py"
+          if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
+      # Release input: kept 90 days.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tts2-cu12-windows
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  cli-ffmpeg:
+    # kitten-tts-native decodes the reference audio for voice cloning with the system's ffmpeg program
+    # (tts-2/cli/ffmpeg_decode.cc: posix_spawn on Linux, CreateProcessW on Windows). CPU only: its tests without and
+    # with ffmpeg on PATH.
+    name: CLI ffmpeg decode (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job)
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Build the CLI's CPU tests (no CUDA)
+        shell: bash
+        run: |
+          python -m pip install -q ninja==1.13.0 numpy
+          extra=(); [ "$RUNNER_OS" = Windows ] && extra=(-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
+          cmake -S tts-2 -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DKT2N_CUDA=OFF -DKT2N_BUILD_TESTS=ON \
+            -DKT2N_BUILD_TEXT=OFF -DKT2N_BUILD_CLONING=OFF -DKT2N_VOICE_AV=OFF -DKT2N_AV=OFF \
+            -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" "${extra[@]}"
+          cmake --build build-cli --target test_cli_ffmpeg test_cli_core
+      - name: Without ffmpeg on PATH (the decode tests skip; the missing-ffmpeg message is checked)
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'ffmpeg')) -and -not (Test-Path (Join-Path $_ 'ffmpeg.exe')) }) -join [IO.Path]::PathSeparator
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { throw "ffmpeg is still on PATH" }
+          $x = if ($IsWindows) { '.exe' } else { '' }
+          & "build-cli/bin/test_cli_ffmpeg$x"
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
+      - name: Install ffmpeg
+        shell: bash
+        timeout-minutes: 40  # package managers on the runners can be slow or stall: retried, with a time limit
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            for try in 1 2 3; do
+              choco install ffmpeg -y --no-progress --execution-timeout=240 && break
+              echo "::warning::choco try $try of 3 failed or timed out"; sleep 10
+            done
+          else
+            bash .github/scripts/apt_install.sh ffmpeg
+          fi
+          ffmpeg -version | head -1
+      - name: With ffmpeg (decode, the file-name fallback with a non-ASCII name with spaces, errors)
+        shell: pwsh
+        run: |
+          $x = if ($IsWindows) { '.exe' } else { '' }
+          & "build-cli/bin/test_cli_ffmpeg$x"
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_ffmpeg failed" }
+          & "build-cli/bin/test_cli_core$x" --gtest_filter='CliArgs.*'
+          if ($LASTEXITCODE -ne 0) { throw "test_cli_core failed" }
