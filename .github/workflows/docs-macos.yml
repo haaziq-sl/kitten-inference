@@ -15,6 +15,16 @@ on:
         required: false
         default: ""
         type: string
+      version:
+        description: "version of the distribution (pip list and pip download checks after each install)"
+        required: false
+        default: ""
+        type: string
+      expect_sha256:
+        description: "space-separated sha256 of the release wheels for this platform (checked after each install)"
+        required: false
+        default: ""
+        type: string
       wheels_run:
         description: "CI run with the tts08-wheels-macos-arm64 artifact (PIP_FIND_LINKS)"
         required: false
@@ -96,9 +106,11 @@ jobs:
         group: ${{ fromJSON(inputs.groups) }}
     name: test (${{ matrix.group }})
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       DIST: ${{ inputs.dist }}
+      DIST_VERSION: ${{ inputs.version }}
+      EXPECT_SHA256: ${{ inputs.expect_sha256 }}
     steps:
       - name: Harness files
         run: |
@@ -131,7 +143,8 @@ jobs:
           done
           echo | openssl s_client -connect huggingface.co:443 -servername huggingface.co 2>/dev/null | openssl x509 -noout -subject -issuer -dates
           curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("versions on pypi.org:", sorted(d["releases"]))' || true
-          curl -sS "https://pypi.org/pypi/$DIST-tts08/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("tts08 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]][:12])' || true
+          curl -sS "https://pypi.org/pypi/$DIST/json" | /usr/bin/python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("macOS arm64 files:", [f["filename"] for v in d["releases"].values() for f in v if "macosx" in f["filename"] and "arm64" in f["filename"]])' || true
+          python3 -m pip index versions "$DIST" 2>&1 | head -3 || true
       - name: CI wheels, TTS 0.8 macOS arm64 (PIP_FIND_LINKS)
         if: inputs.wheels_run != ''
         uses: actions/download-artifact@v4
@@ -212,7 +225,7 @@ jobs:
           PIP_FIND_LINKS="${SESSION_PIP_FIND_LINKS:-}" /usr/bin/python3 -I "$RUNNER_TEMP/harness/post.py" "$RUNNER_TEMP/out/S8-bash-system-oldpip" || echo "post rc $?"
       - name: Selected sessions
         if: inputs.sessions != ''
-        timeout-minutes: 60
+        timeout-minutes: 130
         env:
           SESSIONS: ${{ inputs.sessions }}
         run: |

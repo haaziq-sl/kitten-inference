@@ -112,9 +112,38 @@ def c_backends():
     return r
 
 
+def footprint_mb():
+    # the process's physical footprint (what Activity Monitor shows as Memory), from libproc
+    import ctypes, os
+    lib = ctypes.CDLL('/usr/lib/libproc.dylib')
+    buf = (ctypes.c_uint64 * 40)()
+    if lib.proc_pid_rusage(os.getpid(), 2, ctypes.byref(buf)) != 0:   # RUSAGE_INFO_V2
+        raise OSError('proc_pid_rusage failed')
+    return round(buf[9] / 2 ** 20, 1)   # 16-byte uuid, then u64 fields: ri_phys_footprint is field 9 of 8-byte words
+
+
+def c_metal_recreate():
+    # README: on Metal each new KittenTTS keeps about 290 MB (nano) to 470 MB (mini) until the process ends;
+    # the CPU backend frees it.
+    import gc
+    r = {}
+    for base, backend in [('KittenML/kitten-tts-nano-0.8', 'metal'), ('KittenML/kitten-tts-mini-0.8', 'metal'),
+                          ('KittenML/kitten-tts-nano-0.8', 'cpu')]:
+        steps = []
+        for i in range(4):
+            m = KittenTTS(base, backend=backend)
+            m.generate('Hello there.', voice='Jasper')
+            del m
+            gc.collect()
+            steps.append(footprint_mb())
+        r[f'{base} {backend}'] = {'footprint_mb_after_each': steps,
+                                  'growth_per_model_mb': round((steps[-1] - steps[0]) / 3, 1)}
+    return r
+
+
 for name, fn in [('voices', c_voices), ('generate', c_generate), ('every_voice', c_every_voice), ('speed', c_speed),
                  ('clean_text', c_clean_text), ('generate_stream', c_stream), ('all_models', c_all_models),
-                 ('backends', c_backends)]:
+                 ('backends', c_backends), ('metal_recreate', c_metal_recreate)]:
     check(name, fn)
 
 with open('claims.json', 'w') as f:

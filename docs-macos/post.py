@@ -12,7 +12,11 @@ out = Path(sys.argv[1])
 S = json.loads((out / 'steps.json').read_text(encoding='utf-8'))
 root, home = Path(S['root']), Path(S['home'])
 dist = os.environ['DIST']
+version = os.environ.get('DIST_VERSION', '')
+# sha256 of the release's wheels for this platform (workflow input), and the prefix every test-account name shares
+expected = set(os.environ.get('EXPECT_SHA256', '').split())
 norm = lambda n: re.sub(r'[-_.]+', '-', n).lower()
+test_prefix = norm(dist).split('-')[0] + '-'
 res = {'session': S['session'], 'units': {}}
 
 
@@ -53,12 +57,15 @@ for d in sorted({Path(x) for x in [str(p.parent) for p in root.rglob('hello.wav'
         u['packages'] = pkgs
         ours = [f'{n}=={v}' for n, v in pkgs.items() if norm(n).startswith(norm(dist))]
         u['test_release_installed'] = ours
-        if ours:
+        u['test_account_packages'] = [f'{n}=={v}' for n, v in pkgs.items() if norm(n).startswith(test_prefix)]
+        u['pip_list_ok'] = [norm(x) for x in u['test_account_packages']] == [norm(f'{dist}=={version}')]
+        if version:
             wd = out / ('wheels-' + d.name)
-            rc, txt = sh(str(py), '-m', 'pip', 'download', '--no-deps', '--only-binary=:all:', '--disable-pip-version-check',
-                         '-d', str(wd), *ours)
+            rc, txt = sh(str(d / '.venv' / 'bin' / 'pip'), 'download', '--no-deps', '--only-binary=:all:',
+                         f'{dist}=={version}', '-d', str(wd), cwd=str(d))
             u['download_rc'] = rc
             u['wheels'] = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(wd.glob('*.whl'))}
+            u['wheels_match_release'] = bool(u['wheels']) and all(h in expected for h in u['wheels'].values())
             for f in wd.glob('*.whl'):
                 f.unlink()
         rc, txt = sh(str(py), '-c', 'import kitten_inference, kitten_inference.tts08 as t; print(kitten_inference.__file__); print(t.__file__)')

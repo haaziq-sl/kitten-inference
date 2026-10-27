@@ -51,6 +51,17 @@ SESSIONS = {
     'R2-zsh-pyorg-paste':  ('zsh-pty',       'pyorg',  ['top-paste', 'pkg-paste'], False),
     # the same path in bash (the code fences' shell), one real pseudo-terminal, Apple's python3
     'R2-bash-pty-apple':   ('bash-pty',      'system', ['top', 'pkg'], True),
+    # one-package release (extras [tts-0.8] and [tts-2]): interactive zsh (Terminal's default shell)
+    # with the python3 every Mac has (Apple's /usr/bin/python3), with Homebrew and python.org Python 3.14,
+    # and as a login shell (what Terminal opens); then the same path in one bash pseudo-terminal
+    'T-zsh-apple':         ('zsh-pty',       'system', ['top', 'pkg', 'claims'], False),
+    'T-zsh-apple-paste':   ('zsh-pty',       'system', ['top-paste', 'pkg-paste'], False),
+    'T-zsh-apple-oldpip':  ('zsh-pty',       'system', ['oldpip'], False),
+    'T-zsh-login':         ('zsh-login-pty', 'system', ['top', 'pkg'], False),
+    'T-zsh-brew':          ('zsh-pty',       'brew',   ['top', 'pkg', 'claims'], False),
+    'T-zsh-brew-paste':    ('zsh-pty',       'brew',   ['top-paste', 'pkg-paste'], False),
+    'T-zsh-pyorg':         ('zsh-pty',       'pyorg',  ['top', 'pkg'], False),
+    'T-bash-pty-apple':    ('bash-pty',      'system', ['top', 'pkg'], True),
     # machine check before the release exists: no doc lines
     'P0-smoke-zsh':        ('zsh-pty',       'runner', ['smoke'], False),
     'P0-smoke-zsh-login':  ('zsh-login-pty', 'system', ['smoke'], False),
@@ -65,6 +76,18 @@ def doc_lines(name):
             line = line.replace('pip install "kitten-inference[', f'pip install "{DIST}[', 1)
         out.append(line)
     return out
+
+
+VERSION = os.environ.get('DIST_VERSION', '')
+
+
+def record_steps(d):
+    """After each install: what pip installed and the wheel pip picks for this machine (not doc lines)."""
+    if not VERSION:
+        return []
+    return [('record', 'pip list', d),
+            ('record', f'pip download --no-deps --only-binary=:all: "{DIST}=={VERSION}" -d chk', d),
+            ('record', 'shasum -a 256 chk/*', d)]
 
 
 def units_to_steps(units, root):
@@ -82,6 +105,7 @@ def units_to_steps(units, root):
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps += [('doc', l, d) for l in top]
             steps.append(('doc', 'python use_from_python.py', d))
+            steps += record_steps(d)
             active = True
         elif u == 'pkg':
             d.mkdir(parents=True)
@@ -91,6 +115,7 @@ def units_to_steps(units, root):
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps += [('doc', l, d) for l in doc_lines('pkg_install_block.sh')]
             steps.append(('doc', 'python use.py', d))
+            steps += record_steps(d)
             active = True
         elif u == 'claims':
             d = root / 'pkg'
@@ -110,6 +135,7 @@ def units_to_steps(units, root):
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps.append(('paste', '\n'.join(top), d))
             steps.append(('doc', 'python use_from_python.py', d))
+            steps += record_steps(d)
             active = True
         elif u == 'pkg-paste':
             d.mkdir(parents=True)
@@ -119,6 +145,7 @@ def units_to_steps(units, root):
             steps.append(('setup', f'cd {shlex.quote(str(d))}', d))
             steps.append(('paste', '\n'.join(doc_lines('pkg_install_block.sh')), d))
             steps.append(('doc', 'python use.py', d))
+            steps += record_steps(d)
             active = True
         elif u == 'smoke':
             for l in ['echo one # two', 'setopt 2>/dev/null | tr "\\n" " "; echo', 'echo "$PATH"', 'tty']:
@@ -130,6 +157,7 @@ def units_to_steps(units, root):
             steps.append(('doc', top[0], d))
             steps.append(('doc', f'pip install "{DIST}[tts-0-8]"', d))
             steps.append(('doc', top[3], d))
+            steps += record_steps(d)
             active = True
     return steps
 
@@ -155,7 +183,7 @@ def session_env(home, path_kind, shell):
         env['PIP_FIND_LINKS'] = os.environ['SESSION_PIP_FIND_LINKS']
         print('@@INFO deviation: PIP_FIND_LINKS=' + env['PIP_FIND_LINKS'], flush=True)
     env.pop('SESSION_PIP_FIND_LINKS', None)
-    for k in ('DIST', 'GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'):
+    for k in ('DIST', 'DIST_VERSION', 'EXPECT_SHA256', 'GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'):
         env.pop(k, None)
     return env
 
@@ -290,7 +318,7 @@ def run_pty(argv, steps, env, out, stop):
         else:
             send(line)
         send(f'echo "@@EXIT {i} $?"')
-        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT if kind in ('doc', 'check', 'paste') else 60)
+        m = pump(r'@@EXIT %d (\d+)' % i, STEP_TIMEOUT if kind in ('doc', 'check', 'paste') else (300 if kind == 'record' else 60))
         rc = int(m.group(1)) if m else None
         res.append({'i': i, 'kind': kind, 'line': line, 'rc': rc, 'seconds': round(time.time() - t)})
         if rc is None:
@@ -325,10 +353,11 @@ def main():
         argv = {'bash-pty': ['/bin/bash', '-i'], 'zsh-pty': ['/bin/zsh', '-i'],
                 'zsh-login-pty': ['/bin/zsh', '-il']}[shell]
         res, notes = run_pty(argv, steps, env, out, stop)
-    first_fail = next((r for r in res if r['rc'] != 0 and r['kind'] != 'info'), None)
+    first_fail = next((r for r in res if r['rc'] != 0 and r['kind'] not in ('info', 'record')), None)
+    record_fail = [r for r in res if r['kind'] == 'record' and r['rc'] != 0]
     summary = {'session': name, 'shell': shell, 'path': path_kind, 'units': units, 'stop_on_fail': stop,
                'home': str(home), 'root': str(root), 'steps': res,
-               'all_ran': len(res) == len(steps), 'first_failure': first_fail, 'notes': notes}
+               'all_ran': len(res) == len(steps), 'first_failure': first_fail, 'record_failures': record_fail, 'notes': notes}
     (out / 'steps.json').write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding='utf-8')
     print('\n@@RESULT ' + json.dumps({'session': name, 'first_failure': first_fail,
                                       'rcs': [r['rc'] for r in res], 'n_steps': len(steps)}, ensure_ascii=False))
