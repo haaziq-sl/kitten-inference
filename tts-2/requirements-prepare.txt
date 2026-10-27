@@ -1,0 +1,13 @@
+# Model preparation (tools/prepare_assets.py), validated with Python 3.12.
+# Not needed at runtime. No PyTorch and no GPU: the decoder weight norms are
+# folded in numpy, with the same result on every machine.
+#   python -m pip install -r requirements-prepare.txt
+# Only --weight-norm-device cuda also needs torch 2.7.1+cu128 and an NVIDIA GPU.
+# It writes the files earlier versions wrote. They record the GPU model and the
+# torch version, so they come out the same again only on the same GPU model with
+# the same torch; a voice saved with a model prepared by an earlier version
+# loads only with such files:
+#   python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+numpy>=1.24
+tokenizers>=0.22,<0.23
+huggingface-hub>=0.25,<2

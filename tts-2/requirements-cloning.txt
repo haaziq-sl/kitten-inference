@@ -1,0 +1,5 @@
+# Optional cloning step: prepare_assets.py --with-cloning, or --cloning-only on
+# a prepared model. It needs nothing beyond the preparation requirements: the
+# cloning weights come from the model repository (no Hugging Face login), and
+# no PyTorch is needed. Not needed for native inference.
+-r requirements-prepare.txt

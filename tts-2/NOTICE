@@ -1,0 +1,275 @@
+Kitten TTS 2 native inference engine
+Copyright 2026 KittenML
+
+Original KittenML material is licensed under the Apache License, Version 2.0
+(LICENSE). This repository also contains material under other licenses, listed
+below; the complete library must not be described as Apache-2.0-only.
+Full license texts are in licenses/.
+
+
+Model weights
+-------------
+This repository contains no model weights, with one exception: the 80
+band-pass filters of the voice cloning speaker network's SincNet front end
+(sincnet.conv1d.0.filters in tools/kt2n_assets/clone_sincnet_reference.json,
+with the fixed filterbank buffers n_ and window_) are computed from the learned
+cut-off frequencies of pyannote/embedding (below; MIT, Copyright (c) 2022
+CNRS), so they are derived from its weights. tools/prepare_assets.py downloads
+the weights and converts them into a local model directory. Converted files are
+derived from these weights and remain subject to their licenses.
+
+- KittenML/kitten-tts-2 on Hugging Face (latest revision): speech language
+  model, tokenizer and built-in voices. Licensed under the Stellon Labs
+  Community License (shown on Hugging Face as license "other"):
+  https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md
+  Read it before using or distributing the weights or files converted from
+  them. Among other terms, it asks anyone who distributes the model materials
+  to keep this notice in a "Notice" text file: "This Stellon Labs Model is
+  licensed under the Stellon Labs Community License, Copyright © Stellon Labs
+  Inc. All Rights Reserved".
+- ResembleAI/chatterbox-turbo on Hugging Face (revision 1e4698ca, file
+  s3gen_meanflow.safetensors): speech decoder weights. The model card declares
+  the MIT license.
+- pyannote/embedding (revision 4db48997), only for optional voice cloning.
+  Preparation reads its weights from speaker/model.safetensors in
+  KittenML/kitten-tts-2 (no login needed). The model card and that folder's
+  licence file declare the MIT license, Copyright (c) 2022 CNRS; see
+  licenses/pyannote-embedding.txt.
+
+
+Speech decoder
+--------------
+The CUDA encoder, MeanFlow estimator and HiFT vocoder (src/render/,
+include/kt2n/render/) and the decoder conversion (tools/kt2n_assets/) are a
+port of the S3Gen decoder in Chatterbox by Resemble AI:
+https://github.com/resemble-ai/chatterbox
+MIT, Copyright (c) 2025 Resemble AI; see licenses/Chatterbox.txt.
+That decoder is itself built from:
+- CosyVoice, https://github.com/FunAudioLLM/CosyVoice
+  Apache-2.0, Copyright (c) 2024 Alibaba Inc; see licenses/Apache-2.0.txt.
+  Its transformer components carry Apache-2.0 notices from ESPnet
+  (Copyright (c) 2019 Shigeki Karita; Copyright (c) 2020 Johns Hopkins
+  University) and WeNet (Copyright (c) 2020-2021 Mobvoi Inc.).
+- Matcha-TTS, https://github.com/shivammehta25/Matcha-TTS
+  MIT, Copyright (c) 2023 Shivam Mehta; see licenses/Matcha-TTS.txt.
+  Its transformer blocks use Hugging Face diffusers (Apache-2.0).
+
+
+Voice cloning
+-------------
+The optional cloning networks (src/voice/) and their preparation tools
+(tools/kt2n_assets/clone_assets.py, export_clone.py) are ports of:
+- the pyannote.audio speaker-embedding network (SincNet front end and x-vector)
+  used by pyannote/embedding: https://github.com/pyannote/pyannote-audio
+  MIT, Copyright (c) 2020 CNRS; see licenses/pyannote-audio.txt.
+- the CAM++ speaker encoder from 3D-Speaker,
+  https://github.com/modelscope/3D-Speaker (Apache-2.0; see
+  licenses/Apache-2.0.txt), in the form adapted by FunASR
+  (https://github.com/modelscope/FunASR, MIT; see licenses/FunASR.txt) and
+  included in Chatterbox's S3Gen.
+- the S3Tokenizer speech tokenizer, https://github.com/xingchensong/S3Tokenizer
+  Apache-2.0; see licenses/Apache-2.0.txt.
+Front-end constants (Kaldi filter banks, mel bases, windows and resampling
+kernels) and the speaker network's SincNet filterbank were computed once with
+torchaudio (BSD-2-Clause), librosa (ISC), SciPy (BSD-3-Clause) and
+asteroid-filterbanks (MIT), and ship as reference values in
+tools/kt2n_assets/ (clone_consts_reference.json, clone_sincnet_reference.json).
+Those packages are used only by the maintainers' export tool
+(tools/export_clone_assets.py) and are not included here.
+
+The decoder conversion's weight-norm fold (tools/kt2n_assets/weight_norm.py)
+evaluates, in NumPy, the same floating-point operations as PyTorch's CUDA
+weight-norm kernel (aten/src/ATen/native/cuda/WeightNorm.cu, BSD-3-Clause),
+so that it reproduces the weights folded with PyTorch; that file itself
+contains no PyTorch code.
+
+
+PyTorch kernels reproduced in the engine
+----------------------------------------
+So that the engine's results match the reference model bit for bit, some of
+its GPU code is written after PyTorch 2.7.1's CUDA kernels (BSD-3-Clause):
+- the LayerNorm in src/cuda/kernels/ops_spk.cu follows
+  aten/src/ATen/native/cuda/layer_norm_kernel.cu (vectorized_layer_norm_kernel
+  and its Welford helpers compute_stats, cuWelfordOnlineSum,
+  cuWelfordCombine), with the same thread layout and order of operations;
+- the sampling noise (src/cuda/kernels/samp_philox.cuh), the sampler's
+  softmax block (src/cuda/kernels/samp_sampler.cu) and a scan in the vocoder
+  (src/render/hift/hift.cu) follow the launch geometry and arithmetic of
+  PyTorch's exponential_, softmax and scan kernels.
+This code is compiled into the CUDA and HIP engine libraries (the CUDA and
+ROCm engines in the kitten-inference wheels). PyTorch's copyright notice and
+license: licenses/PyTorch.txt.
+
+
+Text normalization
+------------------
+The normalization token parser in src/text/nemo.cc is derived from NVIDIA
+NeMo Text Processing (nemo_text_processing/text_normalization/token_parser.py,
+Apache-2.0; see licenses/Apache-2.0.txt):
+Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+https://github.com/NVIDIA/NeMo-text-processing
+KittenML ported it to C++ and changed it to run on the engine's OpenFst
+graphs.
+The detokenizer in src/text/nemo.cc ports the English MosesDetokenizer of
+sacremoses 0.2.0, and the Moses character classes kMosesIsAlpha and kMosesIsSc
+in src/text/unicode_tables.inc (perluniprops) are exported from sacremoses
+0.2.0 (MIT License; see licenses/Sacremoses.txt):
+Copyright (c) 2020 alvations
+https://github.com/alvations/sacremoses
+This code is compiled into the engine library (the CUDA and ROCm engines in the
+kitten-inference wheels, and every source build with text normalization).
+Preparation reads English word lists from the nemo_text_processing 1.2.0 wheel
+on PyPI (Apache-2.0; read as data, never installed) and English grammar data
+from KittenML/kitten-text-processing at commit 1988d61 (Apache-2.0):
+https://github.com/KittenML/kitten-text-processing
+Grammar generation and word lists retain their original NeMo notices and
+source identifiers in the asset manifest.
+
+OpenFst 1.8.3 is distributed under Apache-2.0; see licenses/OpenFst.txt.
+The build helper repairs two template copy-operation typos for newer GCC.
+PCRE2 10.42 is distributed under its BSD license; see licenses/PCRE2.txt.
+
+The optional multilingual normalization tables retain their Unicode license,
+notice and source manifest in src/text/voice/. Unicode 14 character tables
+are generated from Python's Unicode database. Tokenizer character classes
+follow Hugging Face tokenizers 0.22.2 (Apache-2.0).
+The generated character-category and normalization tables retain these
+licenses in licenses/Python.txt, licenses/Unicode.txt and licenses/Tokenizers.txt.
+They are compact tables extracted from the named versions; they do not
+include a Python interpreter or the tokenizers runtime.
+
+src/voice/consent_phrase.cc also contains a C++ port of CPython's
+difflib.SequenceMatcher (used for the voice-cloning consent-phrase check),
+under the Python Software Foundation License retained in licenses/Python.txt.
+Summary of the changes made to Python (PSF License section 3): the pure-Python
+class is rewritten in C++ over byte strings; only __chain_b (with autojunk),
+find_longest_match, get_matching_blocks and ratio are ported; isjunk is not
+supported (always None); the public SequenceMatcher API, the quick-ratio
+shortcuts and Differ/HtmlDiff are omitted.
+
+
+Audio processing and random numbers
+-----------------------------------
+The always-compiled tempo stretcher in src/post/atempo.cc and
+include/kt2n/post/atempo.h is adapted from FFmpeg libavfilter/af_atempo.c:
+Copyright (c) 2012 Pavel Koshevoy <pkoshevoy at gmail dot com>.
+The upstream file is licensed under the GNU Lesser General Public License,
+version 2.1 or (at your option) any later version. See
+licenses/FFmpeg-LGPL-2.1.txt and the upstream notice:
+https://github.com/FFmpeg/FFmpeg/blob/n7.1/libavfilter/af_atempo.c
+Upstream acknowledges MIT-licensed Apprentice Video algorithm ancestors;
+that acknowledgement does not replace the LGPL notice on FFmpeg's file.
+KittenML's adaptation uses mono streaming C++ classes, float64 time-domain
+correlation, staged speed changes and an exact output-length policy.
+This code remains present when the optional FFmpeg encoder build is disabled.
+Source of the adapted files, which are compiled into every engine library:
+src/post/atempo.cc and include/kt2n/post/atempo.h in
+https://github.com/KittenML/kitten-inference/tree/v<version>/tts-2, where
+<version> is the version of the package (for example v0.2.0). The
+kitten-inference wheels also carry both files, in a folder lgpl-source/ beside
+the license texts.
+
+The Windows build's log1pf (src/render/log1pf_fdlibm.h, used by
+src/render/rng.cc) is fdlibm's s_log1pf.c as in glibc:
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+Developed at SunPro, a Sun Microsystems, Inc. business. Permission to use,
+copy, modify, and distribute this software is freely granted, provided that
+this notice is preserved. Conversion to float by Ian Lance Taylor, Cygnus
+Support. The notice is also in licenses/fdlibm.txt.
+
+The float32 ziggurat constants in src/render/ziggurat_f32.inc are copied from
+NumPy 1.26.4, Copyright (c) 2005-2023, NumPy Developers, under BSD-3-Clause.
+The full license is retained in licenses/NumPy.txt. Those tables and the
+standard-normal ziggurat method ported in src/render/rng.cc were derived, via
+NumPy, from Julia (Copyright (c) 2009-2019 Jeff Bezanson, Stefan Karpinski,
+Viral B. Shah and other contributors), under the MIT license; that notice is
+retained in licenses/Julia.txt.
+The PCG64 and SeedSequence implementation in src/render/rng.cc follows
+NumPy 1.26.4 and Melissa E. O'Neill's reference algorithms. Their MIT notices
+are retained in licenses/PCG64.txt and licenses/SeedSequence.txt. The
+numpy.random module these follow is dual-licensed (NCSA and 3-Clause BSD) by
+Kevin Sheppard; that notice is retained in licenses/NumPy-random.txt.
+
+
+Microsoft Visual C++ runtime
+----------------------------
+The CUDA engine in the Windows kitten-inference wheels links the static
+Microsoft Visual C++ runtime (CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, /MT)
+into kt2n_engine.dll, kitten-tts-native.exe and kt2n_prepare_text_data.exe,
+so they need no Visual C++ redistributable. That code is distributed under
+Microsoft's licence terms for distributable code
+(https://learn.microsoft.com/visualstudio/releases/2026/redistribution).
+Copyright (c) Microsoft Corporation.
+
+NVIDIA CUDA runtime
+-------------------
+The NVIDIA CUDA Toolkit is installed separately for builds. The CUDA build
+(the default build and the CUDA engine in the kitten-inference wheels) links
+CUDA::cudart_static and uses CMAKE_CUDA_RUNTIME_LIBRARY=Static, so its
+shared library contains NVIDIA CUDA runtime code. That code retains
+NVIDIA's terms; it is not Apache-2.0 material. CUDA 12.8's EULA lists
+libcudart_static.a among redistributable components, subject to its distribution
+requirements. Review those terms before distributing binaries:
+https://docs.nvidia.com/cuda/archive/12.8.0/eula/index.html
+
+The CUDA build also compiles cuRAND's device functions from the CUDA
+Toolkit's headers (curand_kernel.h: curand_init, curand_normal4, used by the
+vocoder in src/render/hift/hift.cu) into its GPU code. They are NVIDIA
+software under the same EULA. Their Philox4x32-10 generator
+(curand_philox4x32_x.h) also carries D. E. Shaw Research's Random123 notice,
+which licenses/Random123.txt reproduces.
+
+Philox4x32-10 is the counter-based generator of J. K. Salmon, M. A. Moraes,
+R. O. Dror and D. E. Shaw, "Parallel random numbers: as easy as 1, 2, 3"
+(SC '11), from the Random123 library. src/cuda/kernels/samp_philox.cuh (both
+builds), include/kt2n/gpu_rand.h (HIP build, on rocRAND) and
+tests/gpu/philox_ref.h (tests) implement it and the Box-Muller transform with
+the stream layout of cuRAND's device API, so that a seed gives the same
+numbers in every build.
+
+The ROCm (HIP) build links no NVIDIA library and does not use cuRAND: its
+random numbers come from rocRAND and include/kt2n/gpu_rand.h (above). See the
+next section.
+
+
+AMD ROCm (HIP build)
+--------------------
+ROCm is installed separately for builds. The HIP build (cmake --preset hip,
+and the ROCm engine in the Linux x86-64 kitten-inference wheels) compiles code
+from these ROCm components into its shared library:
+- rocRAND, https://github.com/ROCm/rocRAND: the Philox4x32-10 generator
+  (rocrand_init, rocrand4), used through include/kt2n/gpu_rand.h in GPU code.
+  MIT, Copyright (C) Advanced Micro Devices, Inc.; see
+  licenses/rocm/rocRAND.txt.
+- HIP, https://github.com/ROCm/hip and https://github.com/ROCm/clr: inline
+  functions from the HIP headers. MIT, Copyright (C) Advanced Micro Devices,
+  Inc.; see licenses/rocm/HIP.txt.
+- ROCm Device Libraries (amd/device-libs in
+  https://github.com/ROCm/llvm-project): the GPU math and runtime functions
+  that the HIP compiler links into every GPU code object. University of
+  Illinois/NCSA Open Source License, Copyright (c) 2014-2016, Advanced Micro
+  Devices, Inc.; see licenses/rocm/ROCm-Device-Libs.txt.
+These texts are the ones the ROCm 7.1 packages ship (the version the ROCm
+engine in the kitten-inference wheels is built with). The ROCm runtime itself
+(libamdhip64.so.7 and the libraries it loads) is not included: the HIP build
+uses the ROCm 7.x installed on the system.
+
+
+FFmpeg libraries
+----------------
+Optional output encoders (KT2N_AV) and reference-audio decoding for cloning
+(KT2N_VOICE_AV) link FFmpeg's libavformat, libavcodec, libswresample and libavutil.
+The enabled FFmpeg build's own license and configuration apply; some builds
+include GPL components. Review the actual linked libraries before distributing
+a cloning-enabled shared library. See https://ffmpeg.org/legal.html
+FFmpeg source is not bundled here.
+
+
+Other dependencies
+------------------
+Python preparation dependencies (NumPy, huggingface_hub, tokenizers; PyTorch
+only for the optional --weight-norm-device cuda|cpu; PyTorch, torchaudio,
+SciPy, librosa and asteroid-filterbanks only for the maintainers' export tool)
+and GoogleTest (tests only) retain their upstream licenses; their source is
+not included here and none of them is needed at inference time. Source revisions for downloaded files are
+pinned in tools/kt2n_assets/; see PROVENANCE.md.

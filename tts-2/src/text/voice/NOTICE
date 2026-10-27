@@ -1,0 +1,6 @@
+Voice normalization code: Apache-2.0, Copyright KittenML contributors.
+Frozen spellout rules, month names and currency names were exported from ICU
+78.2 / CLDR 48. These Unicode data are distributed under the Unicode License
+v3: https://www.unicode.org/license.txt . The data is frozen so the rules
+stay identical whichever ICU version is installed at run time.
+The NeMo-derived English normalizer (src/text/nemo.cc) is separate and unchanged.

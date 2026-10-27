@@ -1,0 +1,13 @@
+{
+  "upstream": "https://github.com/KittenML/kitten-text-processing",
+  "upstream_base": "1988d61",
+  "rules": "voice-20261015-3",
+  "note": "KittenML voice normalization rules developed on top of upstream_base and exported from ICU 78.2 / CLDR 48; the exporter is not included.",
+  "files": {
+    "voice_normalizer.cpp": "826019df771a33622dfed0252885304df1e6c3cc7183cf63d3ed34af38154e05",
+    "voice_normalizer.h": "1211d50565d12a30fd17376b77775d84a9fae5bc6dcf9c3adaf14a7bd0789930",
+    "voice_data.hpp": "70fc2ccf3ec0462bd9fe620a13168ff49f0390ae84829161077b7e77d10016fe",
+    "NOTICE": "1d4519d61e24eb9184b76b33dd15c204bf38ef0a0e9a9d00eb407e455fa69147",
+    "LICENSE-UNICODE": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96"
+  }
+}
