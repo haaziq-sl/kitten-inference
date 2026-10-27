@@ -356,8 +356,7 @@ def test_the_publish_job_runs_only_for_a_release_tag_after_every_test():
 def test_assembled_artifacts_are_one_per_family():
     text = _workflows()["packages.yml"]
     assert _uploaded(_job(text, "assemble")) == {"assembled-" + f for f in FAMILIES} | {"assembly-report"}
-    # A dry run's are kept as long as a tag run's: .github/RELEASING.md tests its wheels
-    # and compares its sha256 list.
+    # A dry run's are kept as long as a tag run's: the release tests its wheels and compares its sha256 list.
     for step in _steps_using(_job(text, "assemble"), "actions/upload-artifact"):
         assert ("retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || "
                 "github.event_name == 'workflow_dispatch') && 90 || 14 }}") in step, step
@@ -412,12 +411,3 @@ def test_the_lock_job_checks_what_the_assembly_would_refuse():
     assert re.search(r"^    if: needs\.lock\.outputs\.assemble == 'false'$", source, re.M)
     assert "umbrella/tests" in source and "tts-2/python/tests" in source
 
-
-def test_releasing_md_names_the_publisher():
-    path = ROOT / ".github" / "RELEASING.md"
-    if not path.is_file():
-        pytest.skip("not a source checkout (.github/RELEASING.md is not here)")
-    text = path.read_text(encoding="utf-8")
-    assert "packages.yml" in text and "`pypi`" in text and "KittenML" in text
-    for name in ("kitten-inference-tts08", "kitten-inference-tts2", "tts-2-rocm]"):
-        assert name not in text, name

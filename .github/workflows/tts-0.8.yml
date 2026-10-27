@@ -3,7 +3,7 @@ name: tts-0.8
 # Builds and tests the TTS 0.8 engine wheels that the kitten-inference wheels are assembled from (packages.yml). Every
 # wheel is installed with its dependencies and runs the unit tests and the audio smoke test (tts-0.8/tests). Nothing
 # here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json, from
-# its artifacts (kept 90 days; .github/RELEASING.md).
+# its artifacts (kept 90 days).
 
 on:
   workflow_dispatch:
@@ -230,7 +230,7 @@ jobs:
 
       - run: ls -l wheelhouse
 
-      # Release inputs: kept 90 days (.github/RELEASING.md).
+      # Release inputs: kept 90 days.
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-${{ matrix.artifact }}
@@ -502,7 +502,7 @@ jobs:
       - run: ls -l wheelhouse
         shell: bash
 
-      # Release inputs: kept 90 days (.github/RELEASING.md).
+      # Release inputs: kept 90 days.
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-${{ matrix.artifact }}
@@ -556,7 +556,7 @@ jobs:
 
       - run: ls -l wheelhouse
 
-      # Release inputs: kept 90 days (.github/RELEASING.md).
+      # Release inputs: kept 90 days.
       - uses: actions/upload-artifact@v6
         with:
           name: tts08-wheels-android-arm64

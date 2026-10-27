@@ -118,7 +118,7 @@ def main() -> int:
     a.version = a.version or engine
     if not re.fullmatch(re.escape(engine) + r"(\.post[0-9]+)?", a.version):
         sys.exit(f"--version {a.version}: must be the engine's version {engine} or {engine}.postN "
-                 "(tts-2/CMakeLists.txt; .github/RELEASING.md)")
+                 "(tts-2/CMakeLists.txt)")
 
     windows = a.plat == "win_amd64"
     exe = ".exe" if windows else ""

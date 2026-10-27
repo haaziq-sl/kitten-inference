@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 NAME = "kitten-inference"
-# The workflow that publishes kitten-inference (.github/RELEASING.md), as PyPI's provenance names it.
+# The workflow that publishes kitten-inference, as PyPI's provenance names it.
 WORKFLOW = "packages.yml"
 PUBLISHER = "KittenML/kitten-inference"
 

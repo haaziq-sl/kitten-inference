@@ -35,7 +35,7 @@ first ([AMD Radeon guide](../docs/amd-radeon.md)). It is built for gfx1100, gfx1
 A release builds no engine. `.github/release-inputs.json` names the CI runs whose engine builds passed the GPU tests,
 with the sha256 of each payload wheel and of each engine file in it. `packages.yml` downloads those runs' artifacts,
 checks them against that file and copies the engine files byte for byte into the kitten-inference wheels. New engine
-builds need new GPU tests and a new `release-inputs.json` ([.github/RELEASING.md](../../.github/RELEASING.md)).
+builds need new GPU tests and a new `release-inputs.json`.
 
 Never run auditwheel, delvewheel or delocate on an assembled wheel: they would change the copied files, and auditwheel
 would also try to bundle `libamdhip64.so.7`. `.github/scripts/check_assembled.py` checks the assembled wheels instead.
