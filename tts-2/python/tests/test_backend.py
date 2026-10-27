@@ -130,6 +130,7 @@ def test_rocm_backend_cannot_clone(no_backends, fake_backend):
     assert b.name == "rocm" and b.label == "AMD (ROCm) engine" and not b.can_clone
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="platform: the AMD engine is Linux only")
 def test_env_selects_backend(no_backends, fake_backend, monkeypatch):
     fake_backend("cuda")
     fake_backend("rocm", caps=())
