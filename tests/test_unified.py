@@ -120,3 +120,11 @@ def test_dependency_markers():
         assert {'numpy','huggingface-hub','soundfile','phonemizer','espeakng-loader'} <= selected
         assert ('tokenizers' in selected) == gpu
         assert ('filelock' in selected) == gpu
+
+
+def test_selected_model_version_reaches_native_command(monkeypatch):
+    from kitten_inference.tts2 import _cli as gpu
+    seen = []
+    monkeypatch.setattr(gpu, 'main', lambda args: seen.extend(args) or 0)
+    assert _cli.main(['--model', 'kitten-tts-2', '--version']) == 0
+    assert seen == ['--version']

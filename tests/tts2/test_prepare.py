@@ -632,7 +632,7 @@ def test_frozen_app_is_told_to_prepare_first(env, monkeypatch):
     # In a PyInstaller/cx_Freeze app sys.executable is the app: `-c` would start the app again, which then waits for
     # ever on the lock this process holds. Refused before any download; a prepared model is still used.
     monkeypatch.setattr(_prepare.sys, "frozen", True, raising=False)
-    with pytest.raises(_prepare.PrepareError, match="frozen app.*kitten-tts2 --prepare-only"):
+    with pytest.raises(_prepare.PrepareError, match="frozen app.*kitten-tts --model KittenML/kitten-tts-2 --prepare-only"):
         env.run()
     assert not [c for c in env.hub.calls if c[0] in ("snapshot", "file")] and env.prep.runs == []
     assert env.prep.pinned == []

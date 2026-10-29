@@ -34,7 +34,7 @@ def hooks(part):
             if part == 'tts08':
                 shutil.copy2(ROOT / 'engines/tts08/NOTICE', stage / 'NOTICE')
                 shutil.copytree(ROOT / 'engines/tts08/licenses', stage / 'licenses')
-                project['license-files'] = ['LICENSE', 'NOTICE', 'licenses/**']
+                project['license-files'] = ['LICENSE', 'NOTICE', 'licenses/*.txt']
                 shutil.copytree(ROOT / 'engines/tts08/engine', stage / 'engine')
                 config['tool'] = {'scikit-build': dict(config['tool']['scikit-build'])}
                 opts = config['tool']['scikit-build']

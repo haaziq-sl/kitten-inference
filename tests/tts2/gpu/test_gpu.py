@@ -78,14 +78,14 @@ def test_generate_complete_is_seeded_and_matches_the_cli(tts, tmp_path):
     b = tts.generate(TEXT, voice="Bruno", seed=SEED)
     assert np.array_equal(a, b), "the same seed gave different audio with stream=False"
     path = tts.save_wav(tmp_path / "py.wav", a)
-    cli = shutil.which("kitten-tts2")
-    assert cli, "kitten-tts2 is not on PATH"
+    cli = shutil.which("kitten-tts")
+    assert cli, "kitten-tts is not on PATH"
     out = tmp_path / "cli.wav"
-    run = subprocess.run([cli, "--revision", REVISION, *(["--cache-dir", CACHE] if CACHE else []), "--text", TEXT,
+    run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--revision", REVISION, *(["--cache-dir", CACHE] if CACHE else []), "--text", TEXT,
                           "--voice", "Bruno", "--seed", str(SEED), "--stream", "false", "--output", str(out)],
                          capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stderr[-2000:]
-    assert np.array_equal(_wav_samples(path), _wav_samples(out)), "Python and kitten-tts2 audio differ"
+    assert np.array_equal(_wav_samples(path), _wav_samples(out)), "Python and kitten-tts audio differ"
     report = json.loads([l for l in run.stderr.splitlines() if l.startswith("{")][-1])
     assert report["engine"]["output"] == "complete"
 
@@ -237,11 +237,11 @@ def test_save_wav_list_of_chunks(tts, tmp_path):
 
 
 def test_cli_list_voices_and_prepare_only(tts):
-    cli = shutil.which("kitten-tts2")
+    cli = shutil.which("kitten-tts")
     cache = ["--cache-dir", CACHE] if CACHE else []
-    run = subprocess.run([cli, "--prepare-only", "--revision", REVISION, *cache], capture_output=True, text=True)
+    run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--prepare-only", "--revision", REVISION, *cache], capture_output=True, text=True)
     assert run.returncode == 0 and Path(run.stdout.strip()) == tts.model_dir, run.stderr
-    run = subprocess.run([cli, "--revision", REVISION, *cache, "--list-voices"], capture_output=True, text=True)
+    run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--revision", REVISION, *cache, "--list-voices"], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     names = [line.split("\t")[0] for line in run.stdout.splitlines()]
     assert names == tts.list_voices()

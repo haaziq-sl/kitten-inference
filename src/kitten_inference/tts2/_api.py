@@ -126,7 +126,7 @@ class KittenTTS2:
     then starts the engine on GPU ``device`` with the same settings as the ``kitten-tts2`` command: the automatic
     memory profile and a voice cache that keeps the voice in use, so small GPUs work.
 
-    ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts2: the voice in
+    ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts: the voice in
     use stays ready; after clone_voice() no voice is kept, which costs each request about 14 ms), "all", "lru" or
     "none". ``backend``: "cuda" or "rocm" (default: $KITTEN_TTS2_BACKEND, else the engine whose GPU driver this
     machine has, NVIDIA first).
@@ -242,7 +242,7 @@ class KittenTTS2:
             if self._engine.busy():
                 raise RuntimeError("finish or close the running stream() first: switching to "
                                    f"{_MODE_NAMES[mode]} restarts the engine")
-            print(f"kitten-tts2: restarting the engine for {_MODE_NAMES[mode]}", file=sys.stderr, flush=True)
+            print(f"kitten-tts: restarting the engine for {_MODE_NAMES[mode]}", file=sys.stderr, flush=True)
             previous = self._mode
             self._engine.destroy()
             self._engine = None
@@ -392,7 +392,7 @@ class KittenTTS2:
         self._custom_users = {i: k for i, k in self._custom_users.items() if engine.is_live(i)}
 
     def load_voice(self, path: Union[str, os.PathLike]) -> Voice:
-        """Reads a voice saved by save_voice() (or kitten-tts2 --save-voice) and loads it into the engine."""
+        """Reads a voice saved by save_voice() (or kitten-tts --model KittenML/kitten-tts-2 --save-voice) and loads it into the engine."""
         path = Path(path)
         size = path.stat().st_size
         if size > VOICE_FILE_LIMIT:
@@ -552,7 +552,7 @@ class KittenTTS2:
                  seed: Optional[int] = None, preset: Optional[str] = None, **sampling) -> np.ndarray:
         """Speaks ``text`` and returns the audio: float32, 24 kHz, mono.
 
-        ``stream=False`` (default) renders each sentence as a whole, as ``kitten-tts2 --stream false``; with a
+        ``stream=False`` (default) renders each sentence as a whole, as ``kitten-tts --model KittenML/kitten-tts-2 --stream false``; with a
         ``seed`` the same input then gives the same audio on the same GPU. ``stream=True`` uses the streaming path
         (as stream()) and returns all of it. ``preset``: "stable" or "expressive". ``sampling``: temperature, top_p,
         top_k, min_p, max_new_tokens (also max_tokens), speed (0.25-4.0) and normalize (False speaks the text as

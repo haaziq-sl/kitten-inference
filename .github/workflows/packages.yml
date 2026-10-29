@@ -564,16 +564,16 @@ jobs:
               --expect-backend cpu
             echo "::endgroup::"
           done
-      - name: kitten-tts2 --version (on Python 3.8 it must say that Kitten TTS 2 needs 3.9)
+      - name: kitten-tts --model KittenML/kitten-tts-2 --version (on Python 3.8 it must say that Kitten TTS 2 needs 3.9)
         shell: bash
         run: |
           set +e
-          out=$("$BIN/kitten-tts2" --version 2>&1); rc=$?
+          out=$("$BIN/kitten-tts" --model KittenML/kitten-tts-2 --version 2>&1); rc=$?
           echo "$out"; echo "exit status $rc"
           if [ "${{ matrix.python }}" = 3.8 ]; then
             if [ "$rc" != 1 ] || ! grep -q "3.9" <<<"$out"; then echo "::error::expected the Python 3.9 message and exit status 1"; exit 1; fi
           elif [ "$rc" != 0 ] || ! grep -qF "$UMBRELLA_VERSION" <<<"$out"; then
-            echo "::error::kitten-tts2 --version failed"; exit 1
+            echo "::error::kitten-tts --model KittenML/kitten-tts-2 --version failed"; exit 1
           fi
       - name: Without the extras (pip install --no-deps), each engine says what to install
         shell: bash

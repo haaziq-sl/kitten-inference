@@ -686,7 +686,7 @@ def build(lock_path: Path, inputs: Path, pure: Path, source: Path, out: Path, ta
         refuse(f"{umbrella.file}: unexpected dist-info files {sorted(umbrella_info)}")
     entry_points = f"{umbrella.dist_info}/entry_points.txt"
     if entry_points not in umbrella.members:
-        refuse(f"{umbrella.file}: no entry_points.txt (the kitten-tts2 command)")
+        refuse(f"{umbrella.file}: no entry_points.txt (the kitten-tts command)")
     tts2_files = sorted(p for p in tts2.members if not p.startswith(tts2.dist_info + "/"))
     outside = [p for p in tts2_files if not p.startswith(TTS2_PREFIX)]
     if outside:

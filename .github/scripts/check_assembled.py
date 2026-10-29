@@ -9,7 +9,7 @@ IN is the folder of inputs the wheels were assembled from, --source the release 
     pypi_ready.COMPLETE["kitten-inference"];
   - each wheel: one kitten_inference-<V>.dist-info; WHEEL tags equal the file name's, Root-Is-Purelib false; RECORD
     lists every member once, with the right hash and size; no directory entries, __pycache__, .pyc or SBOM; every
-    License-File is there and every licence file is listed; the kitten-tts2 command; at most 100 MB; no member path
+    License-File is there and every licence file is listed; the kitten-tts command; at most 100 MB; no member path
     over 90 characters (the dist-info ones counted as for a .post99 version);
   - METADATA and entry_points.txt are the same bytes in every wheel; the extras' requirements, parsed, match the TTS
     0.8 build's and engines/tts2/python/pyproject.toml's, and every [tts-2] one has the Linux x86-64 / Windows x64 marker;

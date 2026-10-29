@@ -1,0 +1,59 @@
+name: Documented user installation
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Published distribution to validate
+        required: true
+        default: kitten-inference
+      version:
+        description: Exact published candidate version
+        required: true
+permissions:
+  contents: read
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-11-arm, macos-14, macos-15-intel]
+        python: ['3.11', '3.14']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      TEST_PROJECT: ${{ inputs.project }}
+      TEST_VERSION: ${{ inputs.version }}
+      PY_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install and run the README commands in a fresh environment
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', os.environ['TEST_PROJECT'])
+          assert re.fullmatch(r'\d+(?:\.\d+)+(?:\.post\d+)?', os.environ['TEST_VERSION'])
+          PY
+          python tests/docs_commands.py --family tts08 --project "$TEST_PROJECT" --version "$TEST_VERSION" --out "$RUNNER_TEMP/kitten-user"
+          cd "$RUNNER_TEMP/kitten-user"
+          if [ -f .venv/Scripts/activate ]; then . .venv/Scripts/activate; else . .venv/bin/activate; fi
+          kitten-tts --model KittenML/kitten-tts-nano-0.8 --text "Hello from Kitten TTS." --voice Jasper --output cli.wav
+          python -m pip check
+          python -m pip freeze > installed.txt
+          python "$GITHUB_WORKSPACE/tests/user_install.py" --model KittenML/kitten-tts-nano-0.8 --project "$TEST_PROJECT" --version "$TEST_VERSION" --out evidence
+          python "$GITHUB_WORKSPACE/tests/user_install.py" --model KittenML/kitten-tts-mini-0.8-int8 --project "$TEST_PROJECT" --version "$TEST_VERSION" --out evidence-int8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: user-install-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            ${{ runner.temp }}/kitten-user/*.txt
+            ${{ runner.temp }}/kitten-user/*.json
+            ${{ runner.temp }}/kitten-user/*.cmd
+            ${{ runner.temp }}/kitten-user/*.sh
+            ${{ runner.temp }}/kitten-user/*.log
+            ${{ runner.temp }}/kitten-user/*.wav
+            ${{ runner.temp }}/kitten-user/evidence*/

@@ -1,4 +1,4 @@
-"""kitten-tts2: wrapper options, --assets injection, --prepare-only, pass-through to kitten-tts-native, and what it
+"""kitten-tts: wrapper options, --assets injection, --prepare-only, pass-through to kitten-tts-native, and what it
 says when this Python, install or machine cannot run Kitten TTS 2."""
 import os
 import platform
@@ -100,7 +100,7 @@ def test_version_needs_no_model(harness, capsys):
     # The installed kitten-inference's version (a post release changes only that one) and the engine's.
     version = getattr(kitten_inference, "__version__", tts2.__version__)
     assert re.sub(r"\.post\d+$", "", version) == tts2.__version__
-    assert capsys.readouterr().out.strip() == f"kitten-tts2 {version} (NVIDIA (CUDA) engine 0.2.0)"
+    assert capsys.readouterr().out.strip() == f"kitten-tts {version} (NVIDIA (CUDA) engine 0.2.0)"
 
 
 def test_help(harness, capsys):
@@ -111,7 +111,7 @@ def test_help(harness, capsys):
 
 def test_missing_backend(no_backends, capsys):
     assert _cli.main(["--text", "x"]) == 1
-    assert capsys.readouterr().err == f"kitten-tts2: {_backend.no_engine_message()}\n"
+    assert capsys.readouterr().err == f"kitten-tts: {_backend.no_engine_message()}\n"
 
 
 def test_version_on_a_platform_without_an_engine(no_backends, monkeypatch, capsys):
@@ -121,8 +121,8 @@ def test_version_on_a_platform_without_an_engine(no_backends, monkeypatch, capsy
     version = getattr(kitten_inference, "__version__", tts2.__version__)
     assert _cli.main(["--version"]) == 0
     out, err = capsys.readouterr()
-    assert out == f"kitten-tts2 {version} (no Kitten TTS 2 engine on this platform)\n"
-    assert err == ("kitten-tts2: Kitten TTS 2 runs on Linux x86-64 (NVIDIA or AMD Radeon GPU) and Windows x64 "
+    assert out == f"kitten-tts {version} (no Kitten TTS 2 engine on this platform)\n"
+    assert err == ("kitten-tts: Kitten TTS 2 runs on Linux x86-64 (NVIDIA or AMD Radeon GPU) and Windows x64 "
                    "(NVIDIA GPU); this is macOS arm64. Kitten TTS 0.8 (kitten_inference.tts08) runs here.\n")
     assert _cli.main(["--text", "x"]) == 1 and capsys.readouterr().out == ""
     # Linux x86-64 and Windows x64 have an engine: an install without its files is an error, --version included.
@@ -130,7 +130,7 @@ def test_version_on_a_platform_without_an_engine(no_backends, monkeypatch, capsy
     monkeypatch.setattr(platform, "machine", lambda: "x86_64")
     assert _cli.main(["--version"]) == 1
     out, err = capsys.readouterr()
-    assert out == "" and err == f"kitten-tts2: {_backend.no_engine_message()}\n" and "engine files" in err
+    assert out == "" and err == f"kitten-tts: {_backend.no_engine_message()}\n" and "engine files" in err
 
 
 def test_missing_libraries_are_one_line_before_preparing(harness, hide_modules, capsys):
@@ -138,7 +138,7 @@ def test_missing_libraries_are_one_line_before_preparing(harness, hide_modules, 
     for argv in (["--text", "x"], ["--prepare-only"]):
         assert _cli.main(argv) == 1, argv
         err = capsys.readouterr().err
-        assert err == ('kitten-tts2: Kitten TTS 2 needs more Python packages (not installed: numpy, tokenizers). '
+        assert err == ('kitten-tts: Kitten TTS 2 needs more Python packages (not installed: numpy, tokenizers). '
                        'Install them: pip install "kitten-inference"\n'), err
     assert harness["prepare"] == [] and harness["run"] == []
     # --help, --version and a model given with --assets need none of them
@@ -149,7 +149,7 @@ def test_missing_libraries_are_one_line_before_preparing(harness, hide_modules, 
 def test_python_38_is_one_line(harness, python38, capsys):
     for argv in (["--help"], ["--version"], ["--text", "x"]):
         assert _cli.main(argv) == 1, argv
-        assert capsys.readouterr().err == ("kitten-tts2: Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). "
+        assert capsys.readouterr().err == ("kitten-tts: Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). "
                                            "Kitten TTS 0.8 (kitten_inference.tts08) works on Python 3.8.\n")
     assert harness["run"] == [] and harness["prepare"] == []
 
@@ -308,7 +308,7 @@ def test_no_gpu_runtime_names_both_vendors(no_backends, fake_backend, monkeypatc
     _no_runtime(monkeypatch, "libcuda.so.1", "libamdhip64.so.7")
     assert _cli.main(["--text", "x"]) == 1
     assert capsys.readouterr().err == (
-        "kitten-tts2: no NVIDIA driver found on this machine (libcuda.so.1 is missing). Kitten TTS 2 needs an NVIDIA "
+        "kitten-tts: no NVIDIA driver found on this machine (libcuda.so.1 is missing). Kitten TTS 2 needs an NVIDIA "
         "GPU with the NVIDIA driver R570 or newer, or an AMD Radeon RX 7000 or RX 9000 with ROCm 7 (libamdhip64.so.7 "
         "is missing too; setup: https://github.com/KittenML/kitten-inference/blob/main/engines/tts2/docs/amd-radeon.md). In "
         "a container, attach the GPU (docker run --gpus all, or --device /dev/kfd --device /dev/dri for AMD). With "
@@ -328,7 +328,7 @@ def test_nvidia_that_cannot_start_hands_over_to_amd(no_backends, fake_backend, m
     monkeypatch.setattr(_gpu, "check_rocm", lambda device: 1)
     assert _cli.main(["--assets", "m", "--text", "x"]) == 0
     assert os.path.join("rocm", "bin", "kitten-tts-native") in ran[0]
-    assert capsys.readouterr().err == ("kitten-tts2: the NVIDIA driver could not start (cuInit error 999); using the "
+    assert capsys.readouterr().err == ("kitten-tts: the NVIDIA driver could not start (cuInit error 999); using the "
                                        "AMD (ROCm) engine instead\n")
     # Asked for: no check and no hand-over (the tool reports for itself).
     assert _cli.main(["--backend", "cuda", "--assets", "m", "--text", "x"]) == 0

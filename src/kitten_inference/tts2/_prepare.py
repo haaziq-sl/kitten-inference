@@ -70,7 +70,7 @@ class PrepareError(RuntimeError):
 
 
 def _log(message: str) -> None:
-    print(f"kitten-tts2: {message}", file=sys.stderr, flush=True)
+    print(f"kitten-tts: {message}", file=sys.stderr, flush=True)
 
 
 def _ascii(text: str) -> bool:
@@ -180,7 +180,7 @@ def _reject_reparse(path: Path, what: str) -> None:
     if path.exists() and _is_reparse_point(path):
         raise PrepareError(f"the model {what} {path} is a reparse point (a junction or symbolic link); it could "
                            "point to another user's folder. Delete it, or pass a new folder as cache_dir "
-                           "(KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir)")
+                           "(KittenTTS2(cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir)")
 
 
 def _win32():
@@ -331,7 +331,7 @@ def _set_private(path: Path) -> None:
 def _refuse_folder(root: Path, mine: bool) -> None:
     why = "belongs to another user" if not mine else "can be changed by other users of this computer"
     raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
-                       "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts2 --cache-dir), which is then made "
+                       "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir), which is then made "
                        "so that only you can change it, or delete this one")
 
 
@@ -416,7 +416,7 @@ def _check_fallback(fallback: Path) -> None:
     if not _owned_by_me(fallback) or (_windows() and _other_writers(fallback)):
         raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user or can be changed by "
                            "other users; pass a new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") "
-                           "or kitten-tts2 --cache-dir C:\\kitten-tts2), which is then made for you only")
+                           "or kitten-tts --model KittenML/kitten-tts-2 --cache-dir C:\\kitten-tts2), which is then made for you only")
 
 
 def _recheck_root(root: Path, cache_dir: Optional[os.PathLike]) -> bool:
@@ -479,7 +479,7 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
                 pass
     raise PrepareError(f"the model folder {root} has characters outside ASCII, which the engine cannot open on Windows "
                        "with this system's code page. Use an ASCII folder: KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
-                       "kitten-tts2 --cache-dir C:\\kitten-tts2, a new folder, which is then made so that only you can "
+                       "kitten-tts --model KittenML/kitten-tts-2 --cache-dir C:\\kitten-tts2, a new folder, which is then made so that only you can "
                        "change it (or turn on \"Use Unicode UTF-8 for worldwide language support\" in the Region "
                        "settings)")
 
@@ -608,7 +608,7 @@ def _check_child_python() -> None:
     if getattr(sys, "frozen", False) or not sys.executable:
         raise PrepareError("this program is a frozen app (PyInstaller, cx_Freeze or similar), which cannot start the "
                            "Python process that prepares the model. Prepare it once from a normal Python install with "
-                           "kitten-tts2 --prepare-only (add --revision R and --cache-dir DIR as needed), then pass the "
+                           "kitten-tts --model KittenML/kitten-tts-2 --prepare-only (add --revision R and --cache-dir DIR as needed), then pass the "
                            "same revision= and cache_dir= to KittenTTS2 in the app")
 
 
@@ -721,9 +721,9 @@ def ensure(*, text_data_tool: Path, revision: Optional[str] = None, cache_dir: O
             raise
         if not is_prepared(root / previous, with_cloning):
             raise PrepareError(f"{exc} (the earlier revision {previous} is prepared without voice cloning: "
-                               f"revision=\"{previous}\" or kitten-tts2 --revision {previous} uses it)") from exc
+                               f"revision=\"{previous}\" or kitten-tts --model KittenML/kitten-tts-2 --revision {previous} uses it)") from exc
         log(f"warning: the new {repo} revision {sha[:12]} could not be prepared ({exc}); using the revision prepared "
-            f"before, {previous[:12]}. The next start tries again; revision=\"{previous}\" (kitten-tts2 --revision "
+            f"before, {previous[:12]}. The next start tries again; revision=\"{previous}\" (kitten-tts --model KittenML/kitten-tts-2 --revision "
             f"{previous}) keeps this one")
         return root / previous
     _record_ref(root, repo, revision, sha)

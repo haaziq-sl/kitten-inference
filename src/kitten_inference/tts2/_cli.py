@@ -1,7 +1,7 @@
 """``kitten-tts2``: runs the bundled kitten-tts-native, preparing the model first and adding ``--assets``.
 
-    kitten-tts2 --text "Hello" --voice Bruno --output hello.wav    # any kitten-tts-native options
-    kitten-tts2 --prepare-only [--revision R] [--with-cloning]      # prepare, print the model directory
+    kitten-tts --model KittenML/kitten-tts-2 --text "Hello" --voice Bruno --output hello.wav    # any kitten-tts-native options
+    kitten-tts --model KittenML/kitten-tts-2 --prepare-only [--revision R] [--with-cloning]      # prepare, print the model directory
 
 Options of this wrapper (removed before the native tool runs): --revision R (model revision; default the latest),
 --cache-dir DIR, --backend cuda|rocm, --prepare-only, --with-cloning.
@@ -24,11 +24,11 @@ NATIVE_VALUE_OPTIONS = {
 }
 OWN_VALUE_OPTIONS = {"--revision", "--cache-dir", "--backend"}
 OWN_FLAGS = {"--prepare-only", "--with-cloning"}
-USAGE = """kitten-tts2: Kitten TTS 2 command line (runs the bundled kitten-tts-native).
+USAGE = """kitten-tts: Kitten TTS 2 command line (runs the bundled kitten-tts-native).
 
-  kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
-  kitten-tts2 --list-voices
-  kitten-tts2 --prepare-only [--revision R] [--with-cloning]
+  kitten-tts --model KittenML/kitten-tts-2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
+  kitten-tts --model KittenML/kitten-tts-2 --list-voices
+  kitten-tts --model KittenML/kitten-tts-2 --prepare-only [--revision R] [--with-cloning]
 
 The model is downloaded (about 4.6 GB, kept in the Hugging Face cache) and prepared (2 GB) on first use, once per
 model revision, and --assets is added for you. Options of this command, besides the ones below:
@@ -165,7 +165,7 @@ def _voice_message(path: str, revision: str, other: Optional[str], root: Path) -
                 f"{other}, or clone the voice again with this model")
     return (f"the voice {path} was made with another model than revision {revision}, and that model is not prepared "
             f"in {root}. A saved voice works only with the model it was made with: pass its revision with "
-            "--revision (kitten-tts2 --save-voice prints it), or clone the voice again with this model")
+            "--revision (kitten-tts --model KittenML/kitten-tts-2 --save-voice prints it), or clone the voice again with this model")
 
 
 def _runtime_missing(backend, names: set) -> Optional[str]:
@@ -220,13 +220,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from . import _backend
     too_old = _backend.python_message()  # before anything else: the other modules need Python 3.9
     if too_old is not None:
-        print(f"kitten-tts2: {too_old}", file=sys.stderr)
+        print(f"kitten-tts: {too_old}", file=sys.stderr)
         return 1
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         own, native = split_args(args)
     except UsageError as exc:
-        print(f"kitten-tts2: {exc}\nRun 'kitten-tts2 --help' for usage.", file=sys.stderr)
+        print(f"kitten-tts: {exc}\nRun 'kitten-tts --model KittenML/kitten-tts-2 --help' for usage.", file=sys.stderr)
         return 2
     names = native_options(native)
     from . import _gpu, _prepare
@@ -235,19 +235,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             backend = _backend.find(own.get("--backend"))
         except (ImportError, ValueError) as exc:  # the usage above is still the answer to --help
-            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            print(f"kitten-tts: {exc}", file=sys.stderr)
             return 0
         missing = _runtime_missing(backend, names | {"--help"})
         if missing is not None:  # the usage above is still the answer
-            print(f"kitten-tts2: {missing}", file=sys.stderr)
+            print(f"kitten-tts: {missing}", file=sys.stderr)
             return 0
         return _run(str(backend.cli), ["--help"])
     if own.get("--with-cloning") and not own.get("--prepare-only"):
-        print("kitten-tts2: --with-cloning goes with --prepare-only (cloning files are added on their own when "
+        print("kitten-tts: --with-cloning goes with --prepare-only (cloning files are added on their own when "
               "--reference-audio is used)", file=sys.stderr)
         return 2
     if own.get("--prepare-only") and native:
-        print(f"kitten-tts2: --prepare-only takes only --revision, --cache-dir, --backend and --with-cloning "
+        print(f"kitten-tts: --prepare-only takes only --revision, --cache-dir, --backend and --with-cloning "
               f"(got {' '.join(native)})", file=sys.stderr)
         return 2
     try:
@@ -255,19 +255,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except _backend.EngineNotInstalled as exc:
         if "--version" in names and not _backend._engine_platform():
             # A platform without a Kitten TTS 2 engine (Kitten TTS 0.8 runs there): the version is still the answer.
-            print(f"kitten-tts2 {_package_version()} (no Kitten TTS 2 engine on this platform)")
-            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            print(f"kitten-tts {_package_version()} (no Kitten TTS 2 engine on this platform)")
+            print(f"kitten-tts: {exc}", file=sys.stderr)
             return 0
-        print(f"kitten-tts2: {exc}", file=sys.stderr)
+        print(f"kitten-tts: {exc}", file=sys.stderr)
         return 1
     except (ImportError, ValueError) as exc:
-        print(f"kitten-tts2: {exc}", file=sys.stderr)
+        print(f"kitten-tts: {exc}", file=sys.stderr)
         return 1
     preparing = bool(own.get("--prepare-only")) or "--assets" not in names
     if preparing and "--version" not in names:
         libraries = _backend.modules_message()  # preparing a model needs them; --assets runs only the native tool
         if libraries is not None:
-            print(f"kitten-tts2: {libraries}", file=sys.stderr)
+            print(f"kitten-tts: {libraries}", file=sys.stderr)
             return 1
     gpu_checked = False
     if not own.get("--prepare-only") and _backend.fallback(backend) is not None:
@@ -276,26 +276,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             backend = _backend.check_gpu(backend, _device(native), log=_prepare._log)
         except _gpu.GPUError as exc:
-            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            print(f"kitten-tts: {exc}", file=sys.stderr)
             return 1
         gpu_checked = True
     # Said before anything is downloaded: the native tool could not start without its GPU runtime. Preparing alone
     # needs none (the text-data helper runs without it).
     missing = None if own.get("--prepare-only") else _runtime_missing(backend, names)
     if "--version" in names:
-        print(f"kitten-tts2 {_package_version()} ({backend.label} {backend.version})")
+        print(f"kitten-tts {_package_version()} ({backend.label} {backend.version})")
         if missing is not None:
-            print(f"kitten-tts2: {missing}", file=sys.stderr)
+            print(f"kitten-tts: {missing}", file=sys.stderr)
             return 1
         return _run(str(backend.cli), native)
     if (own.get("--with-cloning") or "--reference-audio" in names) and not backend.can_clone:
         # Before the cloning files are downloaded and prepared (1.1 GB): this engine could not use them.
-        print(f"kitten-tts2: voice cloning needs the NVIDIA (CUDA) engine; the {backend.label} has no voice cloning. "
-              "Clone and save the voice on an NVIDIA GPU (kitten-tts2 --reference-audio ... --save-voice FILE), then "
+        print(f"kitten-tts: voice cloning needs the NVIDIA (CUDA) engine; the {backend.label} has no voice cloning. "
+              "Clone and save the voice on an NVIDIA GPU (kitten-tts --model KittenML/kitten-tts-2 --reference-audio ... --save-voice FILE), then "
               "use it here with --load-voice FILE", file=sys.stderr)
         return 2
     if missing is not None:
-        print(f"kitten-tts2: {missing}", file=sys.stderr)
+        print(f"kitten-tts: {missing}", file=sys.stderr)
         return 1
     if preparing:
         # A saved voice works only with the model it was made with (the native tool would only print its status code).
@@ -321,17 +321,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                         with_cloning=bool(own.get("--with-cloning")) or "--reference-audio" in names,
                                         before_download=None if own.get("--prepare-only") else before_download)
         except KeyboardInterrupt:
-            print("kitten-tts2: cancelled", file=sys.stderr)
+            print("kitten-tts: cancelled", file=sys.stderr)
             return 130
         except _VoiceNeedsRevision as needed:
             asked = f"revision {own['--revision']}" if own.get("--revision") else "the latest revision"
-            print(f"kitten-tts2: the voice {voice_path} was made with the model revision {needed}, which is prepared "
+            print(f"kitten-tts: the voice {voice_path} was made with the model revision {needed}, which is prepared "
                   f"in {_prepare.cache_root(own.get('--cache-dir'))}; {asked} is not prepared yet, and the voice would "
-                  f"not work with it. Add --revision {needed} to use the voice (kitten-tts2 --prepare-only prepares "
+                  f"not work with it. Add --revision {needed} to use the voice (kitten-tts --model KittenML/kitten-tts-2 --prepare-only prepares "
                   "the latest revision)", file=sys.stderr)
             return 1
         except Exception as exc:
-            print(f"kitten-tts2: {exc}", file=sys.stderr)
+            print(f"kitten-tts: {exc}", file=sys.stderr)
             return 1
         if own.get("--prepare-only"):
             print(directory)
@@ -340,16 +340,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             model = Path(directory)
             others = [r for r in _revisions_for(model.parent, voice) if r != model.name]
             message = _voice_message(voice_path, model.name, others[0] if others else None, model.parent)
-            print(f"kitten-tts2: {message}", file=sys.stderr)
+            print(f"kitten-tts: {message}", file=sys.stderr)
             return 1
         if "--save-voice" in names:
             revision = Path(directory).name
-            print(f"kitten-tts2: model revision {revision}; a voice saved now loads only with this revision "
-                  f"(kitten-tts2 --revision {revision} --load-voice ... once Hugging Face has a newer one)",
+            print(f"kitten-tts: model revision {revision}; a voice saved now loads only with this revision "
+                  f"(kitten-tts --model KittenML/kitten-tts-2 --revision {revision} --load-voice ... once Hugging Face has a newer one)",
                   file=sys.stderr)
         native = ["--assets", str(directory), *native]
     elif own.get("--revision") or own.get("--cache-dir"):
-        print("kitten-tts2: --revision and --cache-dir have no effect with --assets", file=sys.stderr)
+        print("kitten-tts: --revision and --cache-dir have no effect with --assets", file=sys.stderr)
         return 2
     return _run(str(backend.cli), native)
 

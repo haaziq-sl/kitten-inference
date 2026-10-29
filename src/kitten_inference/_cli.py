@@ -9,7 +9,9 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog='kitten-tts', add_help=False)
     parser.add_argument('--model', required=True, help='Hugging Face model name or local TTS 0.8 directory')
-    parser.add_argument('--version', action='version', version=__import__('kitten_inference').__version__)
+    if argv == ['--version']:
+        print(__import__('kitten_inference').__version__)
+        return 0
     if argv in (['--help'], ['-h'], []):
         parser.print_help()
         print('\nSelect --model MODEL --help for synthesis and advanced options.')

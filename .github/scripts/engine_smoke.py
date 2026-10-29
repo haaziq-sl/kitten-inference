@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The engines of the installed kitten-inference through kitten_inference.tts2: discovery, the installed engine files
 (with --lock, byte for byte against the tested ones in the lock's engine_files), library load and ABI check, the
-bundled executables through the kitten-tts2 command, the GPU check's answer, the messages of a machine without a GPU
+bundled executables through the kitten-tts command, the GPU check's answer, the messages of a machine without a GPU
 runtime, and (on Windows) how the engine and its text-data tool treat non-ASCII paths, which decides where the model
 folder may be. It runs on CI runners (no GPU) and on GPU hosts.
 
@@ -94,19 +94,19 @@ else:
     check(info == backend.build_info, "BUILD_INFO captured at build time matches the library")
     check(("cap:voice.cloning" in info.split()) == ("voice_cloning" in backend.caps), "CAPS agrees with the library")
 
-cli = shutil.which("kitten-tts2")
-run = subprocess.run([cli, "--backend", backend.name, "--version"], capture_output=True, text=True)
+cli = shutil.which("kitten-tts")
+run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--backend", backend.name, "--version"], capture_output=True, text=True)
 print(run.stdout.strip(), run.stderr.strip()[-600:])
 if backend.name == "rocm" and runtime is None:
     check(run.returncode == 1 and _gpu.HIP_RUNTIME in run.stderr and len(run.stderr.strip().splitlines()) == 1,
-          "kitten-tts2 --backend rocm --version without ROCm: one line naming libamdhip64.so.7")
+          "kitten-tts --backend rocm --version without ROCm: one line naming libamdhip64.so.7")
 else:
     first = run.stdout.splitlines()[0] if run.stdout else ""
     check(run.returncode == 0 and backend.version in run.stdout,
-          "kitten-tts2 --version runs the bundled kitten-tts-native")
+          "kitten-tts --version runs the bundled kitten-tts-native")
     version = getattr(kitten_inference, "__version__", None)
-    check(first == f"kitten-tts2 {version} ({backend.label} {backend.version})",
-          "kitten-tts2 --version names the kitten-inference version and the engine")
+    check(first == f"kitten-tts {version} ({backend.label} {backend.version})",
+          "kitten-tts --version names the kitten-inference version and the engine")
 
 try:
     count = _gpu.check(backend.name, 0)
@@ -130,11 +130,11 @@ if sys.platform == "linux" and both and _gpu.runtime("cuda") is None and _gpu.ru
     check((picked.name, picked.runtime_found) == ("cuda", False),
           "no GPU runtime: find() gives cuda, runtime_found=False")
     with tempfile.TemporaryDirectory() as tmp:
-        run = subprocess.run([cli, "--assets", tmp, "--text", "x"], capture_output=True, text=True)
+        run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--assets", tmp, "--text", "x"], capture_output=True, text=True)
     print(run.stderr.strip()[-600:])
     check(run.returncode == 1 and len(run.stderr.strip().splitlines()) == 1 and "R570" in run.stderr
           and "ROCm 7" in run.stderr and "--backend rocm" in run.stderr,
-          "no GPU runtime: kitten-tts2 says in one line what NVIDIA and AMD GPUs need")
+          "no GPU runtime: kitten-tts says in one line what NVIDIA and AMD GPUs need")
     if backend.name == "cuda":  # the run with --backend rocm checks this above
         try:
             _abi.load(_backend.find("rocm").lib)
@@ -142,9 +142,9 @@ if sys.platform == "linux" and both and _gpu.runtime("cuda") is None and _gpu.ru
         except _abi.LibraryError as exc:
             text = str(exc)
         check(_gpu.HIP_RUNTIME in text, 'no ROCm: the library of find("rocm") fails naming libamdhip64.so.7')
-        run = subprocess.run([cli, "--backend", "rocm", "--version"], capture_output=True, text=True)
+        run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--backend", "rocm", "--version"], capture_output=True, text=True)
         check(run.returncode == 1 and _gpu.HIP_RUNTIME in run.stderr and len(run.stderr.strip().splitlines()) == 1,
-              "no ROCm: kitten-tts2 --backend rocm says in one line that libamdhip64.so.7 is missing")
+              "no ROCm: kitten-tts --backend rocm says in one line that libamdhip64.so.7 is missing")
 
 
 def create(folder: Path):

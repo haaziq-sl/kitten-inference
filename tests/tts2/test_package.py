@@ -113,4 +113,4 @@ def test_import_does_not_load_an_engine():
 def test_module_entry_point_help(no_backends):
     out = subprocess.run([sys.executable, "-m", "kitten_inference.tts2", "--help"], capture_output=True, text=True)
     assert out.returncode in (0, 1), out.stderr
-    assert "kitten-tts2" in out.stdout
+    assert "kitten-tts" in out.stdout

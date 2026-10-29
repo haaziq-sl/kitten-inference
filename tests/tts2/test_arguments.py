@@ -26,7 +26,7 @@ def test_stream_and_seed():
     p = _api.request_params("x", 1, stream=True, seed=42)
     assert p.output == _abi.OUTPUT_STREAM
     assert p.flags & _abi.REQ_SEED and p.seed == 42
-    assert p.request_id is None  # seeded: the seed alone decides (same audio as kitten-tts2 --seed)
+    assert p.request_id is None  # seeded: the seed alone decides (same audio as kitten-tts --model KittenML/kitten-tts-2 --seed)
     big = _api.request_params("x", 1, stream=False, seed=2**64 - 1)
     assert big.seed == 2**64 - 1
     for bad in (-1, 2**64, 1.5, True, "7"):
