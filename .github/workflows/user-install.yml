@@ -1,5 +1,7 @@
 name: Documented user installation
 on:
+  push:
+    paths: ['.github/workflows/user-install.yml']
   workflow_dispatch:
     inputs:
       project:
@@ -13,6 +15,8 @@ permissions:
   contents: read
 jobs:
   install:
+    # Repository variables also let a fork test this workflow before it reaches the default branch.
+    if: github.event_name == 'workflow_dispatch' || vars.USER_INSTALL_VERSION != ''
     strategy:
       fail-fast: false
       matrix:
@@ -21,8 +25,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      TEST_PROJECT: ${{ inputs.project }}
-      TEST_VERSION: ${{ inputs.version }}
+      TEST_PROJECT: ${{ inputs.project || vars.USER_INSTALL_PROJECT || 'kitten-inference' }}
+      TEST_VERSION: ${{ inputs.version || vars.USER_INSTALL_VERSION }}
       PY_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +44,12 @@ jobs:
           python tests/docs_commands.py --family tts08 --project "$TEST_PROJECT" --version "$TEST_VERSION" --out "$RUNNER_TEMP/kitten-user"
           cd "$RUNNER_TEMP/kitten-user"
           if [ -f .venv/Scripts/activate ]; then . .venv/Scripts/activate; else . .venv/bin/activate; fi
+          python - <<'PY'
+          import os, platform, sys
+          assert '.'.join(map(str, sys.version_info[:2])) == os.environ['PY_PYTHON']
+          machines = {'arm64', 'aarch64'} if os.environ['RUNNER_ARCH'] == 'ARM64' else {'amd64', 'x86_64'}
+          assert platform.machine().lower() in machines, platform.machine()
+          PY
           kitten-tts --model KittenML/kitten-tts-nano-0.8 --text "Hello from Kitten TTS." --voice Jasper --output cli.wav
           python -m pip check
           python -m pip freeze > installed.txt
