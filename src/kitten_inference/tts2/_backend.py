@@ -169,8 +169,8 @@ def find(name: Optional[str] = None) -> Backend:
     found = [(key, module) for key, module in ((k, _import(k)) for k in MODULES) if module is not None]
     if not found:
         raise EngineNotInstalled(no_engine_message())
-    # Loading a runtime below can come before the process's first driver call: the engine's eager module loading
-    # (both variables, see _gpu.request_eager_loading) is asked for first, which protects the first audio's latency.
+    # Request CUDA eager loading before probing runtimes. HIP's loading policy is set by the native engine after
+    # dlopen; forcing it here can hang ROCm kernel registration (see _gpu.request_eager_loading).
     _gpu.request_eager_loading("rocm")
     for key, module in found:
         if _driver_present(key):

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import wave
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +52,16 @@ def tts(backend):
     t.close()
 
 
+@contextmanager
+def child_owns_gpu(tts):
+    """Release the fixture while a subprocess tests its own engine on a consumer GPU."""
+    tts.close()
+    try:
+        yield
+    finally:
+        tts.__init__(revision=REVISION, cache_dir=CACHE)
+
+
 def _wav_samples(path):
     with wave.open(str(path)) as w:
         assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 24000)
@@ -81,9 +92,10 @@ def test_generate_complete_is_seeded_and_matches_the_cli(tts, tmp_path):
     cli = shutil.which("kitten-tts")
     assert cli, "kitten-tts is not on PATH"
     out = tmp_path / "cli.wav"
-    run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--revision", REVISION, *(["--cache-dir", CACHE] if CACHE else []), "--text", TEXT,
-                          "--voice", "Bruno", "--seed", str(SEED), "--stream", "false", "--output", str(out)],
-                         capture_output=True, text=True, timeout=600)
+    with child_owns_gpu(tts):
+        run = subprocess.run([cli, "--model", "KittenML/kitten-tts-2", "--revision", REVISION, *(["--cache-dir", CACHE] if CACHE else []), "--text", TEXT,
+                              "--voice", "Bruno", "--seed", str(SEED), "--stream", "false", "--output", str(out)],
+                             capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stderr[-2000:]
     assert np.array_equal(_wav_samples(path), _wav_samples(out)), "Python and kitten-tts audio differ"
     report = json.loads([l for l in run.stderr.splitlines() if l.startswith("{")][-1])
@@ -206,21 +218,23 @@ def test_engine_modules_load_eagerly(tts, backend):
             "t = KittenTTS2(revision=sys.argv[1], cache_dir=sys.argv[2] or None); m = ctypes.c_int(0); "
             "s = ctypes.CDLL(_gpu.CUDA_DRIVER).cuModuleGetLoadingMode(ctypes.byref(m)); print(s, m.value); t.close()")
     env = {k: v for k, v in os.environ.items() if k not in ("CUDA_MODULE_LOADING", "KT2N_CUDA_EAGER")}
-    for extra, want in (({}, "0 1"), ({"KT2N_CUDA_EAGER": "0"}, "0 2")):  # CU_MODULE_EAGER_LOADING 1, LAZY 2
-        run = subprocess.run([sys.executable, "-c", code, REVISION, CACHE or ""], capture_output=True, text=True,
-                             env=dict(env, **extra), timeout=600)
-        assert run.returncode == 0 and run.stdout.split()[-2:] == want.split(), (extra, run.stdout, run.stderr[-800:])
+    with child_owns_gpu(tts):
+        for extra, want in (({}, "0 1"), ({"KT2N_CUDA_EAGER": "0"}, "0 2")):  # CU_MODULE_EAGER_LOADING 1, LAZY 2
+            run = subprocess.run([sys.executable, "-c", code, REVISION, CACHE or ""], capture_output=True, text=True,
+                                 env=dict(env, **extra), timeout=600)
+            assert run.returncode == 0 and run.stdout.split()[-2:] == want.split(), (extra, run.stdout, run.stderr[-800:])
 
 
-def test_ctrl_c_during_start_frees_the_engine(backend, tmp_path):
+def test_ctrl_c_during_start_frees_the_engine(tts, backend, tmp_path):
     """A real interrupt (as Ctrl-C) while kt2n_engine_create runs: no engine may stay behind, and the next
     KittenTTS2() in the same process starts normally."""
     if backend.name != "cuda":
         pytest.skip("CUDA only (the helper reads the GPU memory with nvidia-smi)")
     script = Path(__file__).with_name("ctrl_c_start.py")
     out = tmp_path / "r.json"
-    run = subprocess.run([sys.executable, str(script), REVISION, str(CACHE or ""), str(out)], capture_output=True,
-                         text=True, timeout=600)
+    with child_owns_gpu(tts):
+        run = subprocess.run([sys.executable, str(script), REVISION, str(CACHE or ""), str(out)], capture_output=True,
+                             text=True, timeout=600)
     assert run.returncode == 0, run.stderr[-2000:]
     r = json.loads(out.read_text())
     print(f"\nCtrl-C during start: {r}", file=sys.stderr)

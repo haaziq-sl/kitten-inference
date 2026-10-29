@@ -196,17 +196,15 @@ def _atoi(text: str) -> int:
 
 
 def request_eager_loading(backend: str) -> None:
-    """Asks the driver to load every GPU module when the context is made, as the engine does at create
-    (request_eager_module_loading in src/engine/engine.cc): CUDA_MODULE_LOADING=EAGER, and on ROCm also
-    HIP_ENABLE_DEFERRED_LOADING=0. The driver reads these once, when this process first initialises it, and the check
-    below does that before the engine starts; without them first requests of the process pay lazy module loading
-    inside their kernel launches (the engine measured first audio 35 -> 44 ms on an RTX 4090). As in the engine, a
-    value already set wins and KT2N_CUDA_EAGER=0 keeps the driver's lazy default."""
+    """Ask CUDA to load modules when its context is made, before the first driver call.
+
+    Leave HIP_ENABLE_DEFERRED_LOADING to the native engine, after its shared library has loaded. Forcing it to 0
+    before dlopen hangs during kernel registration on ROCm 7.2.4 under WSL2, including when the CLI inherits it.
+    A user-supplied value is preserved. As in the engine, KT2N_CUDA_EAGER=0 keeps the driver's lazy default.
+    """
     if _atoi(os.environ.get("KT2N_CUDA_EAGER", "1")) == 0:
         return
     os.environ.setdefault("CUDA_MODULE_LOADING", "EAGER")
-    if backend == "rocm":
-        os.environ.setdefault("HIP_ENABLE_DEFERRED_LOADING", "0")
 
 
 def check(backend: str, device: int = 0, log: Optional[Callable[[str], None]] = None) -> int:

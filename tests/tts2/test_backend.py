@@ -189,7 +189,7 @@ def test_eager_loading_is_asked_for_before_the_probe(no_backends, fake_backend, 
     seen = []
     monkeypatch.setattr(_backend, "_driver_present", lambda name: seen.append(dict(environ)) or False)
     assert _backend.find().name == "cuda"
-    assert seen[0] == {"CUDA_MODULE_LOADING": "EAGER", "HIP_ENABLE_DEFERRED_LOADING": "0"}
+    assert seen[0] == {"CUDA_MODULE_LOADING": "EAGER"}
 
 
 class _NoDevice:

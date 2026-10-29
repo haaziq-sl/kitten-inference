@@ -201,7 +201,7 @@ def test_eager_module_loading_is_asked_for_before_the_driver_starts(monkeypatch)
     assert seen[-1] == {"CUDA_MODULE_LOADING": "EAGER"}
     environ.clear()
     _gpu.check("rocm", 0)
-    assert seen[-1] == {"CUDA_MODULE_LOADING": "EAGER", "HIP_ENABLE_DEFERRED_LOADING": "0"}
+    assert seen[-1] == {"CUDA_MODULE_LOADING": "EAGER"}
     # As in the engine: a value already set wins, and KT2N_CUDA_EAGER=0 (atoi) keeps the driver's lazy default.
     environ.clear()
     environ.update(CUDA_MODULE_LOADING="LAZY", HIP_ENABLE_DEFERRED_LOADING="1")
