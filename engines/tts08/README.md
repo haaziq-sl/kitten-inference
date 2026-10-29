@@ -53,7 +53,7 @@ on the CPU by default; on Metal they are about 5 times slower.
 - int8 on the Mac CPU: supported, not optimal, because the macOS build uses one CPU core (1.4 to 1.8 times the
   kittenml time on an Apple M4).
 
-Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.available_voices`).
+Voices: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki and Leo (`tts.list_voices()`).
 
 Options:
 - `speed`: 1.0 is normal, higher is faster.

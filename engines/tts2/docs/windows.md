@@ -17,10 +17,10 @@ py -m venv .venv
 .venv\Scripts\activate
 python -m pip install -U pip
 pip install "kitten-inference"
-kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
+kitten-tts --model KittenML/kitten-tts-2 --text "Hello" --voice Bruno --output hello.wav
 ```
 
-The first run downloads about 4.6 GB and prepares the model, in about 1 to 3 minutes; later runs reuse it. Seeded complete files are byte for byte the same as on Linux with the same GPU model. The Python API is in [python/README.md](../python/README.md).
+The first run downloads about 4.6 GB and prepares the model, in about 1 to 3 minutes; later runs reuse it. Seeded complete files are byte for byte the same as on Linux with the same GPU model. The Python API is in [Python API](../../../docs/api.md).
 
 ## Requirements
 

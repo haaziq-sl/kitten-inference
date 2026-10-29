@@ -131,3 +131,16 @@ def test_selected_model_version_reaches_native_command(monkeypatch):
     monkeypatch.setattr(gpu, 'main', lambda args: seen.extend(args) or 0)
     assert _cli.main(['--model', 'kitten-tts-2', '--version']) == 0
     assert seen == ['--version']
+
+
+@pytest.mark.parametrize('sample_rate', [16000, 24000])
+def test_wav_preserves_native_pcm_rounding_and_validation(tmp_path, sample_rate):
+    from kitten_inference._audio import save_wav
+    from kitten_inference.tts2._audio import save_wav as native_save
+    audio = np.array([-2, -0.51, -1.6 / 32768, 0, 1.6 / 32768, 0.51, 2], np.float32)
+    old = native_save(tmp_path / 'native.wav', audio, sample_rate)
+    new = save_wav(tmp_path / 'unified.wav', audio, sample_rate)
+    assert new.read_bytes() == old.read_bytes()
+    for bad, message in [(np.zeros((2, 2)), 'one channel'), (np.array([np.nan]), 'NaN')]:
+        with pytest.raises(ValueError, match=message):
+            save_wav(new, bad, sample_rate)

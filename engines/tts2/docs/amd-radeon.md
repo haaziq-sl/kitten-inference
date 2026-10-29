@@ -92,7 +92,7 @@ python3 -m venv ~/kitten-tts
 . ~/kitten-tts/bin/activate
 python -m pip install -U pip
 pip install "kitten-inference"
-kitten-tts2 --text "Hello" --voice Bruno --output hello.wav
+kitten-tts --model KittenML/kitten-tts-2 --text "Hello" --voice Bruno --output hello.wav
 ```
 
 The package's AMD engine needs Linux x86_64 with glibc 2.28 or newer and runs on gfx1100, gfx1101, gfx1102, gfx1200

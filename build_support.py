@@ -29,6 +29,8 @@ def hooks(part):
                     shutil.copy2(p, target / p.name)
             else:
                 project['name'] += '-' + part
+                # Post releases reuse the locked native builds; internal inputs keep their base version.
+                project['version'] = project['version'].split('.post', 1)[0]
                 project.pop('scripts', None)
                 shutil.copytree(ROOT / 'src/kitten_inference' / part, target / part)
             if part == 'tts08':

@@ -108,7 +108,7 @@ jobs:
         shell: bash
         run: |
           echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
-          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1 | sed 's/\.post[0-9]*$//')" >> "$GITHUB_ENV"
       - name: Build sdists and wheels (each wheel is built from its sdist)
         run: |
           python -m build umbrella --outdir dist
@@ -248,7 +248,7 @@ jobs:
           # that do not fit the lock, and engine or TTS 0.8 sources other than those the locked builds were made from.
           base = lock["version"]
           umbrella = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          tts2 = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          tts2 = umbrella.split(".post", 1)[0]
           if not re.fullmatch(re.escape(base) + r"(\.post\d+)?", umbrella):
               problems.append(f"kitten-inference {umbrella} (pyproject.toml) is neither {base}, the "
                               "version of the locked builds, nor a post release of it")

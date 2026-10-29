@@ -14,14 +14,14 @@ A fast C++/CUDA inference engine for [Kitten TTS 2](https://huggingface.co/Kitte
 python3 -m venv .venv && . .venv/bin/activate
 python -m pip install -U pip
 pip install "kitten-inference"
-kitten-tts2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
+kitten-tts --model KittenML/kitten-tts-2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
 ```
 
 This works on Linux x86-64 and Windows x64 with an NVIDIA GPU (driver R570 or newer), and on AMD Radeon RX 7000 and RX 9000
 with ROCm 7 installed first ([AMD Radeon](docs/amd-radeon.md)). On Ubuntu and Debian, `python3 -m venv` needs
 `sudo apt-get update && sudo apt-get install -y python3-venv` first. On Windows, run the commands in a Command Prompt, with
 `py -m venv .venv` and then `.venv\Scripts\activate.bat` in place of the first line. The Python API, voices, streaming and voice
-cloning: [python/README.md](python/README.md). Speed, memory and audio quality on each GPU group:
+cloning: [Python API](../../docs/api.md). Speed, memory and audio quality on each GPU group:
 [docs/consumer-gpus.md](docs/consumer-gpus.md).
 
 ## Performance

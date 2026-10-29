@@ -502,6 +502,8 @@ class WindowsRuntimeTests(unittest.TestCase):
         import ctypes
         from ctypes import wintypes
 
+        if _root_source_build():
+            self.skipTest("source build: Windows runtimes are bundled during release wheel repair")
         folder = Path(self.cm.__file__).parent / "_msvc"
         if not (Path(self.cm.__file__).parent / "_cpu_requirements.txt").is_file():
             self.skipTest("not running from an installed wheel")
@@ -517,6 +519,16 @@ class WindowsRuntimeTests(unittest.TestCase):
         print(f"MSVCP140.dll loaded from {buf.value}")
         # GitHub's Windows runners have the Visual C++ redistributable installed: its copy is the one in use.
         self.assertNotEqual(Path(buf.value).parent.resolve(), folder.resolve())
+
+
+def _root_source_build():
+    if os.environ.get("KITTEN_RELEASE_WHEEL") == "1":
+        return False
+    try:
+        wheel = metadata.distribution("kitten-inference").read_text("WHEEL") or ""
+    except metadata.PackageNotFoundError:
+        return False
+    return any(line.startswith("Generator: scikit-build-core") for line in wheel.splitlines())
 
 
 def _engine_folders(wheel):
@@ -552,7 +564,7 @@ class PackagingTests(unittest.TestCase):
             self.assertIn("kitten_inference/tts2/__init__.py", names)
             wheel = dist.read_text("WHEEL") or ""
             have = {e for e in ("_tts2_cuda", "_tts2_rocm") if f"kitten_inference/{e}/__init__.py" in names}
-            self.assertEqual(have, _engine_folders(wheel), wheel)
+            self.assertEqual(have, set() if _root_source_build() else _engine_folders(wheel), wheel)
         if not owners:
             self.skipTest("not running from an installed wheel")
         self.assertEqual(len(owners), 1, owners)
