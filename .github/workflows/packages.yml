@@ -392,7 +392,7 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && 90 || 14 }}
 
   test:
-    # The wheel pip picks on each runner, installed with  from a local wheelhouse of the packages its
+    # The wheel pip picks on each runner, installed from a local wheelhouse of the packages its
     # metadata names. TTS 0.8 everywhere: unit tests and an audio check. TTS 2 runs on Linux x86-64 and Windows x64
     # with Python 3.9 or newer: there its unit tests run (no GPU); elsewhere Kitten TTS 2 must say so when it starts.
     name: Test, ${{ matrix.os }}, Python ${{ matrix.python }}
@@ -486,7 +486,7 @@ jobs:
           rm -f deps/kitten_inference-*.whl
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
-      - name: What each extra installs with current pip (local folders, and a local index with 0.1.x as on PyPI)
+      - name: Plain installation and dependency selection with current pip
         run: >-
           python tests/packaging/check_extras.py --upgrade-pip --find-links assembled --find-links deps
           --old stubs-old --version "${{ env.UMBRELLA_VERSION }}"
@@ -497,7 +497,7 @@ jobs:
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; BIN=venv/Scripts; else PY=venv/bin/python; BIN=venv/bin; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
           echo "BIN=$BIN" >> "$GITHUB_ENV"
-          # pip older than 23.3 skips the dotted : the venv gets the wheelhouse's current pip first.
+          # Use the current pip from the wheelhouse.
           $PY -m pip install -q --disable-pip-version-check --no-index --find-links deps -U pip
           $PY -m pip install --disable-pip-version-check --no-index --find-links assembled --find-links deps \
             "kitten-inference==$UMBRELLA_VERSION" pytest
@@ -575,7 +575,7 @@ jobs:
           elif [ "$rc" != 0 ] || ! grep -qF "$UMBRELLA_VERSION" <<<"$out"; then
             echo "::error::kitten-tts --model KittenML/kitten-tts-2 --version failed"; exit 1
           fi
-      - name: Without the extras (pip install --no-deps), each engine says what to install
+      - name: Without dependencies (pip install --no-deps), each engine says what to install
         shell: bash
         run: |
           python -m venv bare
@@ -655,7 +655,7 @@ jobs:
             "$GITHUB_WORKSPACE/tests/tts2" "$GITHUB_WORKSPACE/tests/tts08" "$GITHUB_WORKSPACE/tests/test_unified.py"
 
   engines:
-    # The cp312 wheel with  on runners without a GPU: the engines load through kitten_inference.tts2, their
+    # The cp312 wheel on runners without a GPU: the engines load through kitten_inference.tts2, their
     # installed files are the lock's, byte for byte, and the programs start. On Linux both engines are installed, and
     # their text-data tools must write the same bytes (one prepared model folder serves both).
     name: Engines, ${{ matrix.os }} (no GPU)
@@ -685,7 +685,7 @@ jobs:
           $PY -m pip install --disable-pip-version-check -q -U pip
           $PY -m pip install --disable-pip-version-check "${wheel}"
           sha256sum "$wheel"
-      - name: Through kitten_inference.tts2 (discovery, load, ABI, kitten-tts2, installed files against the lock)
+      - name: Through kitten_inference.tts2 (discovery, load, ABI, unified command, installed files against the lock)
         shell: bash
         run: |
           if [ -d venv/Scripts ]; then export PATH="$PWD/venv/Scripts:$PATH"; else export PATH="$PWD/venv/bin:$PATH"; fi
@@ -787,8 +787,6 @@ jobs:
 
   old-pip:
     # Ubuntu 22.04's own pip (22.0.2): plain installation with the system pip; all dependencies are selected without extras.
-    #  with only a warning; Kitten TTS 0.8 then names the missing packages when it is imported. The spelling
-    # [tts-0-8] works with any pip.
     name: Ubuntu 22.04, pip 22.0.2
     needs: assemble
     runs-on: ubuntu-24.04
@@ -807,17 +805,17 @@ jobs:
       - name: Versions (from the pyprojects, which a post release changes)
         shell: bash
         run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
-      - name: Install each spelling with pip 22.0.2
+      - name: Install with pip 22.0.2
         shell: bash
         run: |
           set -o pipefail
           V=$UMBRELLA_VERSION
-          # The packages of both extras, from PyPI (spelled tts-0-8: pip 22.0.2 skips the dotted spelling).
+          # Resolve all dependencies from the assembled wheel's metadata.
           python3 -m pip download -q --disable-pip-version-check --dest deps \
-            "$(ls assembled/kitten_inference-$V-cp310-cp310-*.whl)[tts-0-8,tts-2]"
+            "$(ls assembled/kitten_inference-$V-cp310-cp310-*.whl)"
           rm -f deps/kitten_inference-*.whl
           status=0
-          for spec in "kitten-inference==$V" "kitten-inference[tts-0-8]==$V" "kitten-inference==$V"; do
+          for spec in "kitten-inference==$V"; do
             echo "::group::$spec"
             rm -rf /tmp/v && python3 -m venv /tmp/v
             echo "$ $(/tmp/v/bin/python -m pip --version | cut -d' ' -f1-2) install --no-index --find-links assembled --find-links deps \"$spec\"" \
@@ -829,8 +827,8 @@ jobs:
               | tr -s ' ' | tr '\n' ';')" | tee -a old-pip.log
             tts08=$(/tmp/v/bin/python -c 'from kitten_inference.tts08 import KittenTTS; print("works")' 2>&1 | tail -n 1 || true)
             echo "from kitten_inference.tts08 import KittenTTS: $tts08" | tee -a old-pip.log
-            if [ "$spec" = "kitten-inference[tts-0-8]==$V" ] && [ "$tts08" != works ]; then
-              echo "::error::[tts-0-8] must install what Kitten TTS 0.8 needs with any pip"; status=1
+            if [ "$tts08" != works ]; then
+              echo "::error::plain installation must install what Kitten TTS 0.8 needs"; status=1
             fi
             echo "::endgroup::"
           done
@@ -838,13 +836,14 @@ jobs:
       - name: Plain installation with system pip
         shell: bash
         run: |
-          set +e +o pipefail  # grep -c exits 1 when it counts 0
+          set -euo pipefail
           for v in 22.0.2 22.3.1 23.0.1 23.1.2 23.2.1 23.3 23.3.2 24.0 25.3; do
             rm -rf /tmp/v && python3 -m venv /tmp/v && /tmp/v/bin/python -m pip install -q --disable-pip-version-check "pip==$v"
             out=$(/tmp/v/bin/python -m pip install --disable-pip-version-check --no-index --find-links assembled \
                   --find-links deps "kitten-inference==$UMBRELLA_VERSION" 2>&1)
-            got=$(/tmp/v/bin/python -m pip list --disable-pip-version-check 2>/dev/null | grep -ci -E '^espeakng[-_]loader ')
-            echo "pip $v:  installs the TTS 0.8 packages: $([ "$got" = 1 ] && echo yes || echo no)$(echo "$out" | grep -o "WARNING: .*extra.*" | sed 's/^/ -- /')" \
+            /tmp/v/bin/python -m pip check
+            /tmp/v/bin/python -c 'from kitten_inference import KittenTTS; from kitten_inference.tts2 import KittenTTS2; import espeakng_loader, phonemizer, soundfile, numpy, huggingface_hub, tokenizers, filelock'
+            echo "pip $v: installs the dependencies of both model families" \
               | tee -a old-pip.log
           done
       - uses: actions/upload-artifact@v4
@@ -854,9 +853,9 @@ jobs:
           path: old-pip.log
 
   lowest-deps:
-    # The lower bounds of  (numpy, huggingface-hub, tokenizers, filelock) are the oldest versions tested: the
+    # The dependency lower bounds are the oldest versions tested: the
     # lowest version of each that has a wheel for this Python, with the unit tests. The torch-free weight fold with
-    # the oldest numpy is checked byte for byte in tts-2-prepare.yml; 's bounds in tts-0.8.yml.
+    # the oldest numpy is checked byte for byte in tts-2-prepare.yml; CPU bounds in tts-0.8.yml.
     name: Lowest dependencies, Linux, Python ${{ matrix.python }}
     needs: assemble
     strategy:
@@ -892,7 +891,7 @@ jobs:
           tag="cp${PY/./}"
           wheel=$(ls assembled/kitten_inference-"$UMBRELLA_VERSION"-"$tag"-"$tag"-*.whl)
           python -m pip install -q --disable-pip-version-check packaging==25.0
-          # The  requirements of the assembled METADATA, parsed (not matched as text), with the extra removed.
+          # Parse the assembled METADATA requirements and evaluate their platform markers.
           python - "$wheel" > requirements-lowest.txt <<'PY'
           import sys, zipfile
           from packaging.requirements import Requirement
@@ -905,7 +904,7 @@ jobs:
               req = Requirement(line.split(":", 1)[1].strip())
               marker = req.marker
               if marker is not None and not marker.evaluate({"extra": ""}):
-                  continue  # another extra's, or not for this Python and platform
+                  continue  # not for this Python and platform
               extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
               print(f"{req.name}{extras}{req.specifier}")
           PY

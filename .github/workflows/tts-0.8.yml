@@ -277,10 +277,10 @@ jobs:
               cmake.define.ENABLE_ARM_DOTPROD=OFF
             test_skip: ""
             test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              python -m unittest discover -s {project}/tests/tts08 -v &&
+              python {project}/tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke
               --cache-dir {project}/.hf-cache --expect-backend cpu &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              python {project}/tests/tts08/audio_smoke.py --mode paths --out-dir audio-smoke-paths
               --cache-dir {project}/.hf-cache
             host_pythons: ""
             uv_python: cpython-3.12-windows-x86_64-none
@@ -303,10 +303,10 @@ jobs:
               cmake.define.ENABLE_ARM_DOTPROD=OFF
             test_skip: ""
             test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              python -m unittest discover -s {project}/tests/tts08 -v &&
+              python {project}/tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke
               --cache-dir {project}/.hf-cache --expect-backend cpu &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              python {project}/tests/tts08/audio_smoke.py --mode paths --out-dir audio-smoke-paths
               --cache-dir {project}/.hf-cache
             host_pythons: ""
             uv_python: cpython-3.12-windows-aarch64-none
@@ -334,12 +334,12 @@ jobs:
             # the next step tests it with an arm64 Python 3.8.
             test_skip: "cp38-macosx_arm64"
             test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-metal
+              python -m unittest discover -s {project}/tests/tts08 -v &&
+              python {project}/tests/tts08/audio_smoke.py --mode release --out-dir smoke-metal
               --cache-dir {project}/.hf-cache --expect-backend auto &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir smoke-cpu
+              python {project}/tests/tts08/audio_smoke.py --mode release --out-dir smoke-cpu
               --cache-dir {project}/.hf-cache --backend cpu --expect-backend cpu --compare-to smoke-metal &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir smoke-paths
+              python {project}/tests/tts08/audio_smoke.py --mode paths --out-dir smoke-paths
               --cache-dir {project}/.hf-cache
             host_pythons: "3.8"
             uv_python: cpython-3.12-macos-aarch64-none
@@ -365,10 +365,10 @@ jobs:
               cmake.define.ENABLE_ARM_DOTPROD=OFF
             test_skip: ""
             test_command: >-
-              python -m unittest discover -s {package}/tests -v &&
-              python {package}/tests/audio_smoke.py --mode release --out-dir audio-smoke
+              python -m unittest discover -s {project}/tests/tts08 -v &&
+              python {project}/tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke
               --cache-dir {project}/.hf-cache --expect-backend cpu &&
-              python {package}/tests/audio_smoke.py --mode paths --out-dir audio-smoke-paths
+              python {project}/tests/tts08/audio_smoke.py --mode paths --out-dir audio-smoke-paths
               --cache-dir {project}/.hf-cache
             host_pythons: ""
             uv_python: cpython-3.12-macos-x86_64-none

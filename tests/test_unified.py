@@ -29,7 +29,8 @@ def model(request, monkeypatch):
                 calls.append(('cancel',))
         generate_stream = stream
         def list_voices(self): return ['Bruno']
-        def can_clone(self): return True
+        can_clone = True
+        default_voice = 'Bruno'
         def close(self): calls.append(('close',))
         def clone_voice(self, *args, **kwargs):
             calls.append(('clone', args, kwargs))
@@ -87,10 +88,12 @@ def test_capabilities_and_model_specific_operations(model):
     assert tts.capabilities['streaming']
     if tts.family == 'tts08':
         assert not tts.can_clone()
+        assert tts.default_voice() == 'expr-voice-5-m'
         with pytest.raises(NotImplementedError): tts.clone_voice('ref.wav', 'text')
         with pytest.raises(TypeError, match='seed'): tts.generate('hello', seed=3)
     else:
         assert tts.can_clone()
+        assert tts.default_voice() == 'Bruno'
         assert tts.clone_voice('ref.wav', 'text', language='en') == 'voice'
         assert calls[-1] == ('clone', ('ref.wav', 'text'), {'language': 'en'})
 

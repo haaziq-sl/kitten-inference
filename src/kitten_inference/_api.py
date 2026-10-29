@@ -46,11 +46,11 @@ class KittenTTS:
 
     def can_clone(self):
         m = self._open()
-        return m.can_clone() if self.family == 'tts2' else False
+        return m.can_clone if self.family == 'tts2' else False
 
     def default_voice(self):
         m = self._open()
-        return m.default_voice() if self.family == 'tts2' else 'expr-voice-5-m'
+        return m.default_voice if self.family == 'tts2' else 'expr-voice-5-m'
 
     def list_voices(self):
         m = self._open()
