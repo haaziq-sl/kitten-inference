@@ -21,14 +21,13 @@ The inventory was taken from PR #1's Python APIs, native command wrapper, packag
 
 Install a root wheel before running `python -m pytest tests --ignore=tests/tts2/gpu`; source-tree tests need the built extension and bundled preparation assets. Run GPU tests explicitly on supported devices. Set `KITTEN_RELEASE_WHEEL=1` when testing assembled release wheels to require their platform-specific GPU payloads.
 
-The release input lock remains historical evidence. The source layout and packaged Python code have changed, so fresh native build/test artifacts and a newly recorded tested tree are required before publishing. The existing source and tag checks intentionally reject the old lock; do not rewrite historical hashes or bypass those checks.
+The release input lock records refreshed native artifacts and their source trees. `tested_packaged_trees` remains unset pending Windows CUDA hardware validation. Record the tested trees and satisfy the repository, source, and tag checks before production publication.
 
 The native engines remain separate because their architectures differ. Both user-facing Python implementations now share one install, public interface, command, and dependency table. Model weights remain outside wheels.
 
-## Local verification (2026-10-30)
+## Validation (2026-10-30)
 
-- Root wheel and sdist-to-wheel builds passed on Linux x86-64, Python 3.14. Internal metadata, TTS 0.8, and TTS 2 input builds passed; their actual dependency metadata agrees after normalizing package names and markers.
-- The installed-package suite passed 341 tests and 15 subtests. Eight tests skip here: seven require Windows, and one requires a machine without an NVIDIA driver.
-- A fresh environment installed the plain wheel with dependencies and passed `pip check`. CPU synthesis, CLI file output, and streaming passed. Unified and direct CPU generation were array-identical with the same model, text, voice, speed, and normalization setting.
-- The tested source-built CPU wheel was 887,005 bytes. Its installed dependency closure was 143,617,638 bytes across 27 distributions in the test environment; this is an installed-file measurement, not download size. No PyTorch or model weights were included. GPU release wheel sizes were not remeasured.
-- CUDA/ROCm/Metal inference and cloning were not run. This host has an 8 GB NVIDIA GPU but no matching TTS 2 engine build or prepared model in the inference checkouts. Full platform release validation and refreshed release inputs remain required before publication.
+- Fresh published-package installs following the README passed on Linux, Windows, and macOS, each on x86-64 and ARM64 with Python 3.11 and 3.14: [documented installation results](https://github.com/haaziq-sl/kitten-inference/actions/runs/40973311113).
+- All 54 assembled wheels passed dependency, payload, and provenance checks; platform tests covered older Python/pip, minimum dependencies, and missing-driver diagnostics: [package validation](https://github.com/haaziq-sl/kitten-inference/actions/runs/40971905573).
+- CPU and Apple Silicon Metal inference passed [native validation](https://github.com/haaziq-sl/kitten-inference/actions/runs/40964306931); torch-free model preparation passed [cross-platform checks](https://github.com/haaziq-sl/kitten-inference/actions/runs/40964307132). Android remains experimental and build-only.
+- Published-package hardware checks passed on Linux CUDA (8 GB and 12 GB) and AMD WSL2/ROCm (16 GB), including streaming, cancellation, saved voices, and NVIDIA cloning. Windows CUDA hardware validation remains required; its [native build checks](https://github.com/haaziq-sl/kitten-inference/actions/runs/40963770784) passed.
