@@ -79,12 +79,12 @@ jobs:
         run: python -m pip install ninja==1.13.0
       - name: Build, with the GPU code check
         shell: pwsh
-        run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
+        run: engines\tts2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
       - name: GPU code check self-test (the rebuild step can read the CUDA object files)
         run: python engines/tts2/packaging/sass_manifest.py objects engines/tts2/build/wheel-windows --arch sm_75
       - name: Size check
         shell: pwsh
-        run: python tts-2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
+        run: python engines\tts2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
       - name: Install into a fresh virtual environment and smoke test
         shell: pwsh
         run: |
@@ -92,7 +92,7 @@ jobs:
           & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -m pip install (Get-ChildItem dist\*.whl).FullName
           if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
           Set-Location $env:RUNNER_TEMP
-          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\tts-2\packaging\smoke_wheel.py"
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" "$env:GITHUB_WORKSPACE\engines\tts2\packaging\smoke_wheel.py"
           if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
       # Release input: kept 90 days.
       - uses: actions/upload-artifact@v4
@@ -127,7 +127,7 @@ jobs:
         run: |
           python -m pip install -q ninja==1.13.0 numpy
           extra=(); [ "$RUNNER_OS" = Windows ] && extra=(-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
-          cmake -S tts-2 -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DKT2N_CUDA=OFF -DKT2N_BUILD_TESTS=ON \
+          cmake -S engines/tts2 -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DKT2N_CUDA=OFF -DKT2N_BUILD_TESTS=ON \
             -DKT2N_BUILD_TEXT=OFF -DKT2N_BUILD_CLONING=OFF -DKT2N_VOICE_AV=OFF -DKT2N_AV=OFF \
             -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" "${extra[@]}"
           cmake --build build-cli --target test_cli_ffmpeg test_cli_core
