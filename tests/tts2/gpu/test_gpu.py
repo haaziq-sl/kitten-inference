@@ -320,9 +320,10 @@ def test_loaded_voice_in_a_new_process(tts, reference, tmp_path):
     assert np.array_equal(np.load(tmp_path / "a.npy"), expected)
 
 
-def test_ffmpeg_missing_message(tts, reference, monkeypatch, tmp_path):
+def test_ffmpeg_missing_message(tts, request, monkeypatch, tmp_path):
     if not tts.can_clone:
-        _skip("this engine has no voice cloning")
+        pytest.skip("backend: this engine has no voice cloning")
+    reference = request.getfixturevalue("reference")
     from kitten_inference.tts2 import FFmpegNotFound
     monkeypatch.setenv("PATH", str(tmp_path))  # find_ffmpeg() reads PATH itself (not shutil.which): no ffmpeg there
     with pytest.raises(FFmpegNotFound, match="ffmpeg was not found"):
