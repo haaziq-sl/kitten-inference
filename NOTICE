@@ -4,13 +4,17 @@ Copyright 2026 KittenML
 KittenML's code in this repository is licensed under the Apache License,
 Version 2.0 (LICENSE). Each engine also contains third-party code under other
 licenses, so the repository as a whole is not Apache-2.0-only. Each engine's
-NOTICE lists that code, its licenses and which build or wheel contains it
-(every kitten-inference wheel carries them in its .dist-info/licenses/ folder):
+NOTICE lists that code, its licenses and which build or wheel contains it.
+The source-tree locations are:
 
-- tts-0.8/NOTICE: Kitten TTS 0.8, with license texts in tts-0.8/licenses/.
-- tts-2/NOTICE: Kitten TTS 2 (its Python API and the CUDA and ROCm engines),
-  with license texts in tts-2/licenses/ and the code's origin in
-  tts-2/PROVENANCE.md.
+- engines/tts08/NOTICE: Kitten TTS 0.8, with license texts in engines/tts08/licenses/.
+- engines/tts2/NOTICE: Kitten TTS 2 (its Python API and the CUDA and ROCm engines),
+  with license texts in engines/tts2/licenses/ and the code's origin in
+  engines/tts2/PROVENANCE.md.
+
+Assembled release wheels carry these notices and license texts under
+.dist-info/licenses/tts-0.8/ and .dist-info/licenses/tts-2/. Source-built wheels
+retain the engines/ directory names under .dist-info/licenses/.
 
 The model weights are not in this repository; they are downloaded on first use
 and keep the licenses on their Hugging Face pages.

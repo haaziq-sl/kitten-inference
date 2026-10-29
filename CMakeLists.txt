@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.18)
+project(kitten_inference LANGUAGES C CXX)
+add_subdirectory(engines/tts08/engine)
+install(DIRECTORY engines/tts2/tools/kt2n_assets/ DESTINATION kitten_inference/tts2/_assets COMPONENT python PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(FILES engines/tts2/NOTICE DESTINATION kitten_inference/tts2 COMPONENT python)
+install(DIRECTORY engines/tts2/licenses DESTINATION kitten_inference/tts2 COMPONENT python)

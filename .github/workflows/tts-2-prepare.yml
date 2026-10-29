@@ -9,15 +9,25 @@ on:
   push:
     branches: ["**"]
     paths:
-      - "tts-2/tools/**"
-      - "tts-2/tests/assets/**"
-      - "tts-2/requirements-*.txt"
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
+      - "engines/tts2/tools/**"
+      - "engines/tts2/tests/assets/**"
+      - "engines/tts2/requirements-*.txt"
       - ".github/workflows/tts-2-prepare.yml"
   pull_request:
     paths:
-      - "tts-2/tools/**"
-      - "tts-2/tests/assets/**"
-      - "tts-2/requirements-*.txt"
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
+      - "engines/tts2/tools/**"
+      - "engines/tts2/tests/assets/**"
+      - "engines/tts2/requirements-*.txt"
       - ".github/workflows/tts-2-prepare.yml"
   workflow_dispatch:
 
@@ -53,7 +63,7 @@ jobs:
           - {os: windows-2022, python: "3.9", numpy: latest}
           - {os: windows-2022, python: "3.15", numpy: latest}
           # the oldest dependency versions kitten-inference-tts2 allows (numpy 1.24.0, huggingface-hub 0.25.0,
-          # tokenizers 0.22.0; tts-2/python/pyproject.toml)
+          # tokenizers 0.22.0; pyproject.toml)
           - {os: ubuntu-24.04, python: "3.9", numpy: lowest}
           - {os: windows-2022, python: "3.9", numpy: lowest}
     runs-on: ${{ matrix.os }}
@@ -71,7 +81,7 @@ jobs:
         run: |
           # Wheels only. On Python 3.15 PyYAML (a dependency of huggingface-hub) has no wheel yet: build it alone from source.
           extra=""; [ "${{ matrix.python }}" = "3.15" ] && extra="--no-binary pyyaml"
-          python -m pip install --only-binary :all: $extra -r tts-2/requirements-prepare.txt pytest
+          python -m pip install --only-binary :all: $extra -r engines/tts2/requirements-prepare.txt pytest
           if [ "${{ matrix.numpy }}" = lowest ]; then
             python -m pip install --only-binary :all: numpy==1.24.0 huggingface-hub==0.25.0 tokenizers==0.22.0
           elif [ "${{ matrix.numpy }}" != latest ]; then python -m pip install --only-binary :all: "numpy==${{ matrix.numpy }}"; fi
@@ -84,7 +94,7 @@ jobs:
           numpy.show_runtime()
           PY
       - name: Unit tests (tests/assets)
-        working-directory: tts-2
+        working-directory: engines/tts2
         run: python -m pytest -q -p no:cacheprovider tests/assets
       - name: Download the pinned decoder checkpoint and model files
         run: |
@@ -101,7 +111,7 @@ jobs:
               env.write(f"S3GEN_SRC={src}\nMODEL_DIR={model}\n")
           PY
       - name: Convert the decoder (numpy weight-norm fold) and verify it without torch
-        working-directory: tts-2/tools
+        working-directory: engines/tts2/tools
         run: |
           python -m kt2n_assets.convert_s3gen "$S3GEN_SRC" "$RUNNER_TEMP/s3gen.kt2n" --device numpy \
             --report "$RUNNER_TEMP/s3gen.convert.json" > /dev/null
@@ -122,7 +132,7 @@ jobs:
           print("s3gen_tensors.tsv CRLF line ends in this checkout:", crlf)
           PY
       - name: Convert the speech model and the voices
-        working-directory: tts-2/tools
+        working-directory: engines/tts2/tools
         run: |
           python - <<'PY'
           import json, os, tempfile
@@ -142,7 +152,7 @@ jobs:
                                  sha256_file(out / "model.kt2n"), sha256_file(out / "s3gen.kt2n"), model_dir=model)
           PY
       - name: Cloning files from the model repository (no torch, no login)
-        working-directory: tts-2/tools
+        working-directory: engines/tts2/tools
         run: |
           python - <<'PY'
           import os, sys, tempfile
@@ -176,7 +186,7 @@ jobs:
                     **{name: sha(name) for name in names}}
           print(json.dumps(result, indent=1))
           os.makedirs("digests", exist_ok=True)
-          with open("tts-2/tools/digests/s3gen-meta.json") as f:
+          with open("engines/tts2/tools/digests/s3gen-meta.json") as f:
               result["s3gen_meta"] = json.load(f)
           with open("digests/digest.json", "w") as f:
               json.dump(result, f)

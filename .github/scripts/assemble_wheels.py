@@ -14,7 +14,7 @@ on the committed tree only (never on uncommitted changes).
 verify-inputs: every file the lock names is in IN, with the locked sha256 and size.
 build: one kitten-inference wheel per TTS 0.8 input W, into OUT, plus OUT/assembly-report.json:
   - W's kitten_inference/tts08/** and kitten_inference_tts08.libs/**, except the lock's tts08_python_overlay files,
-    which come from tts-0.8/ at HEAD; the umbrella's kitten_inference/__init__.py; the tts2 wheel's
+    which come from engines/tts08/ at HEAD; the umbrella's kitten_inference/__init__.py; the tts2 wheel's
     kitten_inference/tts2/**; and on CPython 3.9 or newer the engines: CUDA and ROCm for a manylinux_2_28_x86_64 W
     (whose wheel then carries only that tag), CUDA for win_amd64. A copied member keeps its compressed bytes, date,
     mode and RECORD row.
@@ -53,7 +53,6 @@ from pathlib import Path
 
 SCHEMA = 2
 DIST = "kitten-inference"
-EXTRAS = ("tts-0-8", "tts-2")
 # Every [tts-2] requirement carries this marker: TTS 2 runs on CPython 3.9 or newer, on Linux x86-64 and Windows x64.
 TTS2_MARKER = ('python_version >= "3.9" and ((sys_platform == "linux" and platform_machine == "x86_64") '
                'or (sys_platform == "win32" and platform_machine == "AMD64"))')
@@ -72,18 +71,18 @@ UMBRELLA_FILE = "kitten_inference/__init__.py"
 # The sources each tested build was made from, recorded by lock_inputs.py at the build's commit (lock source_trees):
 # git tree or blob ids, None for a path that does not exist. TTS08_PYTHON is recorded file by file, without the
 # overlay files, so that only those may differ at the release commit.
-TTS2_SOURCES = ("tts-2/src", "tts-2/include", "tts-2/cli", "tts-2/CMakeLists.txt", "tts-2/cmake",
-                "tts-2/CMakePresets.json")
-ENGINE_SOURCES = {"tts08": ("tts-0.8/engine", "tts-0.8/CMakeLists.txt"), "cuda": TTS2_SOURCES, "rocm": TTS2_SOURCES}
-TTS08_PYTHON = "tts-0.8/kitten_inference/tts08"
+TTS2_SOURCES = ("engines/tts2/src", "engines/tts2/include", "engines/tts2/cli", "engines/tts2/CMakeLists.txt", "engines/tts2/cmake",
+                "engines/tts2/CMakePresets.json")
+ENGINE_SOURCES = {"tts08": ("engines/tts08/engine", "engines/tts08/CMakeLists.txt"), "cuda": TTS2_SOURCES, "rocm": TTS2_SOURCES}
+TTS08_PYTHON = "src/kitten_inference/tts08"
 # The packaged paths whose git trees the GPU tests and the test-PyPI run used (lock tested_packaged_trees).
-TESTED_TREE_PATHS = ("umbrella", "tts-2/python", "tts-2/tools/kt2n_assets", "tts-0.8/kitten_inference", "NOTICE",
-                     "LICENSE", "tts-0.8/NOTICE", "tts-0.8/licenses", "tts-2/NOTICE", "tts-2/licenses")
+TESTED_TREE_PATHS = ("pyproject.toml", "build_support.py", "src/kitten_inference", "umbrella", "engines/tts2/python", "engines/tts2/tools/kt2n_assets", "src/kitten_inference/tts08", "NOTICE",
+                     "LICENSE", "engines/tts08/NOTICE", "engines/tts08/licenses", "engines/tts2/NOTICE", "engines/tts2/licenses")
 # Licence files: dist-info/licenses/<path> from <path> in the source, so each NOTICE's "licenses/" stays true.
-LICENCE_FILES = ("LICENSE", "NOTICE", "tts-0.8/NOTICE", "tts-2/NOTICE")
-LICENCE_DIRS = ("tts-0.8/licenses", "tts-2/licenses")
-LGPL_SOURCE = {"tts-2/licenses/lgpl-source/atempo.cc": "tts-2/src/post/atempo.cc",
-               "tts-2/licenses/lgpl-source/atempo.h": "tts-2/include/kt2n/post/atempo.h"}
+LICENCE_FILES = ("LICENSE", "NOTICE", "engines/tts08/NOTICE", "engines/tts2/NOTICE")
+LICENCE_DIRS = ("engines/tts08/licenses", "engines/tts2/licenses")
+LGPL_SOURCE = {"engines/tts2/licenses/lgpl-source/atempo.cc": "engines/tts2/src/post/atempo.cc",
+               "engines/tts2/licenses/lgpl-source/atempo.h": "engines/tts2/include/kt2n/post/atempo.h"}
 # Members written here get hatchling's fixed date, so building twice from one tree gives the same bytes.
 DATE = (2020, 2, 2, 0, 0, 0)
 GENERATOR = "kitten-inference assemble_wheels.py"
@@ -274,7 +273,7 @@ def source_trees(src: Source, key: str, overlay, rev: str = "HEAD") -> dict:
     """What lock source_trees records for one build (key tts08, cuda or rocm), at rev."""
     out = {p: src.object_id(p, rev) for p in ENGINE_SOURCES[key]}
     if key == "tts08":
-        skip = {f"tts-0.8/{p}" for p in overlay}
+        skip = {f"src/{p}" for p in overlay}
         out.update({p: oid for p, oid in src.tree(TTS08_PYTHON, rev).items() if p not in skip})
     return out
 
@@ -431,82 +430,29 @@ def selects(marker, extra: str) -> tuple:
 
 
 def check_requirements(umbrella: Wheel, tts08_requires, tts2_requires):
-    """C1, C2: the extras' requirements, parsed, against the engines' own (name, version range, extras, marker)."""
-    from packaging.markers import Marker
+    """Internal inputs and the public package use the same root dependency table."""
     from packaging.requirements import Requirement
-    from packaging.utils import canonicalize_name
-
-    meta = headers(umbrella.metadata)
-    provided = {canonicalize_name(e) for e in meta.get_all("Provides-Extra") or []}
-    if provided != set(EXTRAS):
-        refuse(f"the umbrella provides the extras {sorted(provided)}, expected {list(EXTRAS)}")
-    nowhere = (False,) * len(ENVIRONMENTS)
-    by_extra = {e: [] for e in EXTRAS}
+    def normalized(lines):
+        result = set()
+        for line in lines:
+            r = Requirement(line)
+            result.add((canonical(r.name), r.specifier, frozenset(canonical(e) for e in r.extras), selects(r.marker, "")))
+        return result
+    if headers(umbrella.metadata).get_all("Provides-Extra"):
+        refuse("model extras are no longer supported")
     for line in umbrella.requires:
         r = Requirement(line)
-        if canonicalize_name(r.name).startswith("kitten-inference"):
-            refuse(f"the umbrella requires {r.name}: the engines are in the package itself")
-        if r.url:
-            refuse(f"the umbrella requirement {line!r} is a direct URL")
-        if selects(r.marker, "") != nowhere:
-            refuse(f"the umbrella requirement {line!r} applies without an extra")
-        owners = [e for e in EXTRAS if selects(r.marker, e) != nowhere]
-        if len(owners) != 1:
-            refuse(f"the umbrella requirement {line!r} belongs to {owners or 'no extra'}, expected one extra")
-        by_extra[owners[0]].append(r)
-
-    def compare(extra, mine, theirs, whose, required):
-        problems = []
-        need = {}
-        for r in (Requirement(t) for t in theirs):
-            if canonicalize_name(r.name) in need:
-                refuse(f"{whose} requires {r.name} twice")
-            need[canonicalize_name(r.name)] = r
-        have = {}
-        for r in mine:
-            if canonicalize_name(r.name) in have:
-                refuse(f"[{extra}] requires {r.name} twice")
-            have[canonicalize_name(r.name)] = r
-        base = selects(required, "")
-
-        def extras_of(r):
-            return {canonicalize_name(e) for e in r.extras}
-
-        for name in sorted(set(need) | set(have)):
-            if name not in have:
-                problems.append(f"{whose} requires {need[name]} but [{extra}] does not")
-            elif name not in need:
-                problems.append(f"[{extra}] requires {have[name]}, which {whose} does not")
-            elif have[name].specifier != need[name].specifier or extras_of(have[name]) != extras_of(need[name]):
-                problems.append(f"[{extra}] requires {have[name]}, {whose} {need[name]}")
-            else:
-                want = tuple(a and b for a, b in zip(base, selects(need[name].marker, "")))
-                if selects(have[name].marker, extra) != want:
-                    where = f"; {required}" if required is not None else ""
-                    problems.append(f"[{extra}] {have[name]} applies elsewhere than {whose}'s "
-                                    f"{need[name]}{where}")
-        return problems
-
-    problems = compare("tts-0-8", by_extra["tts-0-8"], tts08_requires, "the TTS 0.8 build", None)
-    problems += compare("tts-2", by_extra["tts-2"], tts2_requires, "the tts2 wheel", Marker(TTS2_MARKER))
-    if problems:
-        refuse("the umbrella's extras drifted from the engines' requirements (umbrella/pyproject.toml):\n  "
-               + "\n  ".join(problems))
+        if canonical(r.name).startswith("kitten-inference") or r.url:
+            refuse(f"invalid package dependency: {line}")
+    if normalized(umbrella.requires) != normalized(tts08_requires) or normalized(umbrella.requires) != normalized(tts2_requires):
+        refuse("build inputs differ from the root dependency table; rebuild the Python inputs")
 
 
 def check_entry_points(umbrella: bytes, tts2: bytes):
-    def scripts(text: bytes) -> dict:
-        parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
-        parser.optionxform = str
-        parser.read_string(text.decode("utf-8"))
-        return dict(parser["console_scripts"]) if parser.has_section("console_scripts") else {}
-
-    mine, theirs = scripts(umbrella), scripts(tts2)
-    if mine.get("kitten-tts2") != "kitten_inference.tts2._cli:main":
-        refuse("the umbrella's entry_points.txt lacks kitten-tts2 = kitten_inference.tts2._cli:main")
-    lost = sorted(n for n, target in theirs.items() if mine.get(n) != target)
-    if lost:
-        refuse(f"the tts2 wheel's commands {lost} are not in the umbrella's entry_points.txt")
+    parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
+    parser.read_string(umbrella.decode())
+    if dict(parser["console_scripts"]) != {"kitten-tts": "kitten_inference._cli:main"}:
+        refuse("expected kitten-tts = kitten_inference._cli:main")
 
 
 def licences(src: Source) -> dict:
@@ -521,7 +467,7 @@ def licences(src: Source) -> dict:
         if target in out:
             refuse(f"{target} is in the source and would also be copied from {path}")
         out[target] = src.read(path)
-    return out
+    return {p.replace("engines/tts08/", "tts-0.8/").replace("engines/tts2/", "tts-2/"): value for p, value in out.items()}
 
 
 def with_licence_files(metadata: bytes, names) -> bytes:
@@ -732,7 +678,7 @@ def build(lock_path: Path, inputs: Path, pure: Path, source: Path, out: Path, ta
 
     # The members each input supplies.
     umbrella_files = [p for p in umbrella.members if not p.startswith(umbrella.dist_info + "/")]
-    if umbrella_files != [UMBRELLA_FILE]:
+    if UMBRELLA_FILE not in umbrella_files or any(not p.startswith("kitten_inference/") or p.count("/") != 1 or not p.endswith(".py") for p in umbrella_files):
         refuse(f"{umbrella.file}: expected only {UMBRELLA_FILE} besides its dist-info, found {sorted(umbrella_files)}")
     umbrella_info = {p[len(umbrella.dist_info) + 1:] for p in umbrella.members
                      if p.startswith(umbrella.dist_info + "/")}
@@ -781,7 +727,7 @@ def build(lock_path: Path, inputs: Path, pure: Path, source: Path, out: Path, ta
     if umbrella.read(f"{umbrella.dist_info}/licenses/LICENSE") != lic["LICENSE"]:
         refuse("the umbrella wheel's LICENSE differs from LICENSE at HEAD")
     metadata = with_licence_files(umbrella.metadata, list(lic))
-    overlay = {p: src.read(f"tts-0.8/{p}") for p in overlay_paths}
+    overlay = {p: src.read(f"src/{p}") for p in overlay_paths}
 
     # Plan every wheel before writing any.
     dist_info = f"kitten_inference-{version}.dist-info"
@@ -797,7 +743,7 @@ def build(lock_path: Path, inputs: Path, pure: Path, source: Path, out: Path, ta
         keep, dropped = tts08_selected[w.file]
         members = [copied(w, p, new.format(dist_info=dist_info) if new else None) for p, new in keep]
         members += [written(p, data) for p, data in sorted(overlay.items())]
-        members.append(copied(umbrella, UMBRELLA_FILE))
+        members += [copied(umbrella, p) for p in umbrella_files]
         members += [copied(tts2, p) for p in tts2_files]
         for part in parts:
             members += [copied(payloads[part], p) for p in selected[part][0]]

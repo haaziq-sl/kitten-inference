@@ -1,10 +1,10 @@
 # Kitten TTS 2 engine for NVIDIA GPUs: the CUDA payload wheels (Linux manylinux_2_28 and Windows) that the
 # kitten-inference wheels for Linux x86-64 and Windows x64 are assembled from (packages.yml), built with the scripts in
-# tts-2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
-# The build scripts compare the GPU code with the default build's (tts-2/packaging/sass_manifest.py against
-# tts-2/packaging/sass-reference.txt) and compile again the files whose code came out differently, so every wheel this
+# engines/tts2/packaging/, size-checked, installed into a fresh virtual environment and smoke tested.
+# The build scripts compare the GPU code with the default build's (engines/tts2/packaging/sass_manifest.py against
+# engines/tts2/packaging/sass-reference.txt) and compile again the files whose code came out differently, so every wheel this
 # workflow uploads has the reference GPU code; a job that cannot get there fails. The runners have no GPU: speech
-# generation is tested on GPU machines (tts-2/packaging/smoke_wheel.py --assets). The CLI's reference-audio decode
+# generation is tested on GPU machines (engines/tts2/packaging/smoke_wheel.py --assets). The CLI's reference-audio decode
 # with the system ffmpeg (voice cloning) is tested on both systems without a GPU (job cli-ffmpeg).
 # Nothing here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json,
 # from its artifacts (kept 90 days).
@@ -13,9 +13,9 @@ name: tts-2 engine wheels
 on:
   push:
     branches: ["**"]
-    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+    paths: ["engines/tts2/**", ".github/workflows/tts-2-engine.yml"]
   pull_request:
-    paths: ["tts-2/**", ".github/workflows/tts-2-engine.yml"]
+    paths: ["engines/tts2/**", ".github/workflows/tts-2-engine.yml"]
   workflow_dispatch:
 
 permissions:
@@ -31,14 +31,14 @@ jobs:
       - name: Free disk space
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Build (CUDA 12.8 in the manylinux_2_28 container), with the GPU code check
-        run: JOBS=4 tts-2/packaging/build_linux_docker.sh "$PWD/dist"
+        run: JOBS=4 engines/tts2/packaging/build_linux_docker.sh "$PWD/dist"
       - name: Size check
-        run: python3 tts-2/packaging/size_check.py dist/*.whl
+        run: python3 engines/tts2/packaging/size_check.py dist/*.whl
       - name: Install into a fresh virtual environment and smoke test
         run: |
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install dist/*.whl
-          cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
+          cd /tmp && /tmp/venv/bin/python "$GITHUB_WORKSPACE/engines/tts2/packaging/smoke_wheel.py"
       # Release input: kept 90 days.
       - uses: actions/upload-artifact@v4
         with:
@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: tts-2\packaging\build_wheel_windows.ps1 -Out "$env:GITHUB_WORKSPACE\dist" -Jobs 4
       - name: GPU code check self-test (the rebuild step can read the CUDA object files)
-        run: python tts-2/packaging/sass_manifest.py objects tts-2/build/wheel-windows --arch sm_75
+        run: python engines/tts2/packaging/sass_manifest.py objects engines/tts2/build/wheel-windows --arch sm_75
       - name: Size check
         shell: pwsh
         run: python tts-2\packaging\size_check.py (Get-ChildItem dist\*.whl).FullName
@@ -104,7 +104,7 @@ jobs:
 
   cli-ffmpeg:
     # kitten-tts-native decodes the reference audio for voice cloning with the system's ffmpeg program
-    # (tts-2/cli/ffmpeg_decode.cc: posix_spawn on Linux, CreateProcessW on Windows). CPU only: its tests without and
+    # (engines/tts2/cli/ffmpeg_decode.cc: posix_spawn on Linux, CreateProcessW on Windows). CPU only: its tests without and
     # with ffmpeg on PATH.
     name: CLI ffmpeg decode (${{ matrix.os }})
     strategy:

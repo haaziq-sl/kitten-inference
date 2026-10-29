@@ -12,7 +12,7 @@ IN is the folder of inputs the wheels were assembled from, --source the release 
     License-File is there and every licence file is listed; the kitten-tts2 command; at most 100 MB; no member path
     over 90 characters (the dist-info ones counted as for a .post99 version);
   - METADATA and entry_points.txt are the same bytes in every wheel; the extras' requirements, parsed, match the TTS
-    0.8 build's and tts-2/python/pyproject.toml's, and every [tts-2] one has the Linux x86-64 / Windows x64 marker;
+    0.8 build's and engines/tts2/python/pyproject.toml's, and every [tts-2] one has the Linux x86-64 / Windows x64 marker;
   - byte for byte: every TTS 0.8 member equals its input's RECORD row and zip attributes, except the overlay files,
     which equal the source; the TTS 0.8 Python and JSON files equal the source (CRLF and the delvewheel block aside);
     kitten_inference/__init__.py, tts2/ and the licence files equal the source; the engine files are exactly the
@@ -131,8 +131,8 @@ class Tree:
 
 
 def run_symbols(source: Path):
-    """The default ELF check: tts-2/packaging/check_wheel_rocm.py symbols FILE (None when it passes)."""
-    script = Path(source) / "tts-2" / "packaging" / "check_wheel_rocm.py"
+    """The default ELF check: engines/tts2/packaging/check_wheel_rocm.py symbols FILE (None when it passes)."""
+    script = Path(source) / "engines" / "tts2" / "packaging" / "check_wheel_rocm.py"
 
     def check(path: Path):
         r = subprocess.run([sys.executable, str(script), "symbols", str(path)], capture_output=True, text=True)
@@ -186,14 +186,14 @@ class Check:
 
     def check_sources(self):
         """C9: the engine and TTS 0.8 sources at HEAD are the ones the tested builds were made from."""
-        overlay = {f"tts-0.8/{p}" for p in self.lock["tts08_python_overlay"]}
+        overlay = {f"src/{p}" for p in self.lock["tts08_python_overlay"]}
         for key, recorded in sorted(self.lock["source_trees"].items()):
-            python = {p for p in recorded if p.startswith("tts-0.8/kitten_inference/tts08/")}
+            python = {p for p in recorded if p.startswith("src/kitten_inference/tts08/")}
             for path, oid in sorted(recorded.items()):
                 if path not in python and self.tree.head_id(path) != oid:
                     self.fail(f"{path} at HEAD differs from the {key} build's source")
             if key == "tts08":
-                now = {p: o for p, o in self.tree.head_files("tts-0.8/kitten_inference/tts08").items()
+                now = {p: o for p, o in self.tree.head_files("src/kitten_inference/tts08").items()
                        if p not in overlay}
                 for path in sorted(set(now) | python):
                     if now.get(path) != recorded.get(path):
@@ -202,23 +202,23 @@ class Check:
 
     def licence_sources(self) -> dict:
         """dist-info/licenses/<path> -> source path."""
-        out = {p: p for p in ("LICENSE", "NOTICE", "tts-0.8/NOTICE", "tts-2/NOTICE")}
-        for folder in ("tts-0.8/licenses", "tts-2/licenses"):
+        out = {p: p for p in ("LICENSE", "NOTICE", "engines/tts08/NOTICE", "engines/tts2/NOTICE")}
+        for folder in ("engines/tts08/licenses", "engines/tts2/licenses"):
             out.update({p: p for p in self.tree.files(folder)})
-        out["tts-2/licenses/lgpl-source/atempo.cc"] = "tts-2/src/post/atempo.cc"
-        out["tts-2/licenses/lgpl-source/atempo.h"] = "tts-2/include/kt2n/post/atempo.h"
-        return out
+        out["engines/tts2/licenses/lgpl-source/atempo.cc"] = "engines/tts2/src/post/atempo.cc"
+        out["engines/tts2/licenses/lgpl-source/atempo.h"] = "engines/tts2/include/kt2n/post/atempo.h"
+        return {p.replace("engines/tts08/", "tts-0.8/").replace("engines/tts2/", "tts-2/"): value for p, value in out.items()}
 
     def tts2_sources(self) -> dict:
-        """kitten_inference/tts2/<path> -> source path (what tts-2/python/hatch_build.py copies)."""
+        """kitten_inference/tts2/<path> -> source path (what engines/tts2/python/hatch_build.py copies)."""
         out = {}
-        for p in self.tree.files("tts-2/python/kitten_inference/tts2"):
-            out["kitten_inference/tts2/" + p[len("tts-2/python/kitten_inference/tts2/"):]] = p
-        for p in self.tree.files("tts-2/tools/kt2n_assets"):
-            out["kitten_inference/tts2/_assets/" + p[len("tts-2/tools/kt2n_assets/"):]] = p
-        for p in self.tree.files("tts-2/licenses"):
-            out["kitten_inference/tts2/licenses/" + p[len("tts-2/licenses/"):]] = p
-        out["kitten_inference/tts2/NOTICE"] = "tts-2/NOTICE"
+        for p in self.tree.files("src/kitten_inference/tts2"):
+            out["kitten_inference/tts2/" + p[len("src/kitten_inference/tts2/"):]] = p
+        for p in self.tree.files("engines/tts2/tools/kt2n_assets"):
+            out["kitten_inference/tts2/_assets/" + p[len("engines/tts2/tools/kt2n_assets/"):]] = p
+        for p in self.tree.files("engines/tts2/licenses"):
+            out["kitten_inference/tts2/licenses/" + p[len("engines/tts2/licenses/"):]] = p
+        out["kitten_inference/tts2/NOTICE"] = "engines/tts2/NOTICE"
         return out
 
     # ---------------------------------------------------------------- METADATA
@@ -231,56 +231,24 @@ class Check:
         h = BytesHeaderParser().parsebytes(meta)
         if canonicalize_name(h["Name"] or "") != "kitten-inference" or (h["Version"] or "").strip() != version:
             self.fail(f"METADATA says {h['Name']} {h['Version']}, the file names kitten-inference {version}")
-        if {canonicalize_name(e) for e in h.get_all("Provides-Extra") or []} != {"tts-0-8", "tts-2"}:
-            self.fail(f"METADATA provides the extras {h.get_all('Provides-Extra')}, expected tts-0-8 and tts-2")
-        grid = [dict(python_version=f"3.{m}", python_full_version=f"3.{m}.0", sys_platform=s, platform_system=ps,
-                     os_name=o, platform_machine=mach, implementation_name="cpython",
-                     platform_python_implementation="CPython")
-                for m, (s, ps, o), mach in itertools.product(
-                    range(8, 16), [("linux", "Linux", "posix"), ("win32", "Windows", "nt"),
-                                   ("darwin", "Darwin", "posix"), ("android", "Android", "posix")],
-                    ["x86_64", "AMD64", "aarch64", "arm64", "ARM64", "i686"])]
-
-        def where(marker, extra):
-            return [marker is None or marker.evaluate(dict(env, extra=extra)) for env in grid]
-
-        groups = {"tts-0-8": {}, "tts-2": {}}
-        for line in h.get_all("Requires-Dist") or []:
-            r = Requirement(line)
-            owners = [e for e in groups if any(where(r.marker, e))]
-            if canonicalize_name(r.name).startswith("kitten-inference") or any(where(r.marker, "")) or len(owners) != 1:
-                self.fail(f"Requires-Dist {line!r}: each requirement must belong to one extra and name no "
-                          "kitten-inference distribution")
-                continue
-            groups[owners[0]][canonicalize_name(r.name)] = r
-        c2 = where(Marker(C2_MARKER), "")
-        for name, r in sorted(groups["tts-2"].items()):
-            if where(r.marker, "tts-2") != c2:
-                self.fail(f"[tts-2] {r}: its marker must be {C2_MARKER} (C2)")
-
-        def compare(extra, mine, lines, whose):
-            theirs = {canonicalize_name(r.name): r for r in map(Requirement, lines)}
-            if set(mine) != set(theirs):
-                self.fail(f"[{extra}] names {sorted(mine)}, {whose} {sorted(theirs)}")
-            for n in sorted(set(mine) & set(theirs)):
-                if mine[n].specifier != theirs[n].specifier or set(mine[n].extras) != set(theirs[n].extras):
-                    self.fail(f"[{extra}] has {mine[n]}, {whose} {theirs[n]}")
-
-        compare("tts-0-8", groups["tts-0-8"], BytesHeaderParser().parsebytes(tts08_meta).get_all("Requires-Dist") or [],
-                "the TTS 0.8 build")
-        for n, r in groups["tts-0-8"].items():
-            if not all(where(r.marker, "tts-0-8")):
-                self.fail(f"[tts-0-8] {r} does not apply everywhere, as the TTS 0.8 build's requirement does")
-        pyproject = self.tree.read("tts-2/python/pyproject.toml")
+        if h.get_all("Provides-Extra"):
+            self.fail("model extras are no longer supported")
         try:
             import tomllib
         except ImportError:
-            tomllib = None
-        if pyproject is not None and tomllib is not None:
-            deps = tomllib.loads(pyproject.decode("utf-8"))["project"].get("dependencies", [])
-            compare("tts-2", groups["tts-2"], deps, "tts-2/python/pyproject.toml")
-        else:
-            self.warnings.append("[tts-2] was not compared with tts-2/python/pyproject.toml (needs Python 3.11+)")
+            import tomli as tomllib
+        deps = tomllib.loads(self.tree.read("pyproject.toml").decode())["project"]["dependencies"]
+        def requirements(lines):
+            out = set()
+            for r in map(Requirement, lines):
+                marker = tuple(r.marker is None or r.marker.evaluate(dict(
+                    python_version=f"3.{minor}", sys_platform=system, platform_machine=machine, extra=""))
+                    for minor, system, machine in itertools.product(range(8, 16),
+                        ("linux", "win32", "darwin", "android"), ("x86_64", "AMD64", "arm64", "aarch64", "ARM64")))
+                out.add((canonicalize_name(r.name), r.specifier, frozenset(r.extras), marker))
+            return out
+        if requirements(h.get_all("Requires-Dist") or []) != requirements(deps):
+            self.fail("Requires-Dist differs from the root project")
 
     # ---------------------------------------------------------------- wheels
 
@@ -352,16 +320,20 @@ class Check:
         parser.optionxform = str
         parser.read_string(data.get(f"{di}/entry_points.txt", b"").decode("utf-8"))
         if not parser.has_section("console_scripts") or \
-                parser["console_scripts"].get("kitten-tts2") != "kitten_inference.tts2._cli:main":
-            self.fail(f"{name}: no kitten-tts2 = kitten_inference.tts2._cli:main in entry_points.txt")
+                parser["console_scripts"].get("kitten-tts") != "kitten_inference._cli:main":
+            self.fail(f"{name}: no kitten-tts = kitten_inference._cli:main in entry_points.txt")
         # contents
         for n in ALWAYS:
             if n not in data:
                 self.fail(f"{name}: {n} is missing")
         if not any(n.startswith("kitten_inference/tts08/_engine") for n in data):
             self.fail(f"{name}: no TTS 0.8 engine (kitten_inference/tts08/_engine*)")
-        if data.get("kitten_inference/__init__.py") != self.tree.read("umbrella/kitten_inference/__init__.py"):
-            self.fail(f"{name}: kitten_inference/__init__.py differs from umbrella/kitten_inference/__init__.py")
+        if data.get("kitten_inference/__init__.py") != self.tree.read("src/kitten_inference/__init__.py"):
+            self.fail(f"{name}: kitten_inference/__init__.py differs from src/kitten_inference/__init__.py")
+        for source in self.tree.files("src/kitten_inference"):
+            if source.count("/") == 2 and source.endswith(".py"):
+                if data.get(source[4:]) != self.tree.read(source):
+                    self.fail(f"{name}: {source} differs from the shared Python source")
         have_tts2 = {n for n in data if n.startswith("kitten_inference/tts2/")}
         if have_tts2 != set(tts2):
             self.fail(f"{name}: kitten_inference/tts2/ differs from the source's files: "
@@ -399,23 +371,23 @@ class Check:
                       f"{sorted(have_tts08 ^ (want_tts08 | overlay))[:4]}")
         for n in sorted(have_tts08):
             if n in overlay:
-                if data[n] != self.tree.read(f"tts-0.8/{n}"):
-                    self.fail(f"{name}: overlay file {n} differs from tts-0.8/{n}")
+                if data[n] != self.tree.read(f"src/{n}"):
+                    self.fail(f"{name}: overlay file {n} differs from engines/tts08/{n}")
                 continue
             if n not in w_rows or rows.get(n, [[]])[0] != w_rows[n] or attrs[n] != w_attrs.get(n):
                 self.fail(f"{name}: {n} differs from {w_file} (RECORD row or zip attributes)")
                 continue
             self.copied += 1
             if n.endswith((".py", ".json")):
-                src = self.tree.read(f"tts-0.8/{n}")
+                src = self.tree.read(f"src/{n}")
                 text = data[n].replace(b"\r\n", b"\n")
                 if n.endswith("/tts08/__init__.py"):
                     text = DELVEWHEEL_BLOCK.sub(b"", text, count=1)
                 if src is not None and text != src:
-                    self.fail(f"{name}: {n} differs from tts-0.8/{n} (CRLF and the delvewheel block aside)")
-        for p in self.tree.files("tts-0.8/kitten_inference/tts08"):
-            if p[len("tts-0.8/"):] not in data:
-                self.fail(f"{name}: {p[len('tts-0.8/'):]} (in the source) is missing")
+                    self.fail(f"{name}: {n} differs from engines/tts08/{n} (CRLF and the delvewheel block aside)")
+        for p in self.tree.files("src/kitten_inference/tts08"):
+            if p[len("src/"):] not in data:
+                self.fail(f"{name}: {p[len('src/'):]} (in the source) is missing")
         delve = f"{w_dist}/DELVEWHEEL"
         if delve in w_rows and (f"{di}/DELVEWHEEL" not in data or b64(data[f"{di}/DELVEWHEEL"]) != w_rows[delve][0]):
             self.fail(f"{name}: DELVEWHEEL differs from {w_file}'s")

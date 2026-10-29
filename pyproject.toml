@@ -1,0 +1,41 @@
+[build-system]
+requires = ["scikit-build-core==1.1.1; python_version >= '3.9'", "scikit-build-core==1.0.3; python_version < '3.9'", "pybind11==3.1.0; python_version >= '3.9'", "pybind11==3.0.4; python_version < '3.9'"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "kitten-inference"
+version = "0.2.0"
+description = "Native inference for Kitten TTS 0.8 and Kitten TTS 2"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "Apache-2.0 AND MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND NCSA AND PSF-2.0 AND Unicode-3.0 AND SunPro AND BSD-3-Clause WITH PCRE2-exception AND GPL-3.0-or-later WITH GCC-exception-3.1 AND Apache-2.0 WITH LLVM-exception AND LicenseRef-Microsoft-Visual-C-Runtime AND LicenseRef-NVIDIA-CUDA-EULA"
+license-files = ["LICENSE", "NOTICE", "engines/tts08/NOTICE", "engines/tts08/licenses/**", "engines/tts2/NOTICE", "engines/tts2/licenses/**"]
+dependencies = [
+    "numpy>=1.23; python_version < \"3.9\"",
+    "numpy>=1.24; python_version >= \"3.9\"",
+    "huggingface-hub>=0.25,<2",
+    "soundfile>=0.12.1",
+    "espeakng_loader>=0.2.4",
+    "phonemizer>=3.3",
+    "tokenizers>=0.22,<0.23; python_version >= \"3.9\" and ((sys_platform == \"linux\" and platform_machine == \"x86_64\") or (sys_platform == \"win32\" and platform_machine == \"AMD64\"))",
+    "filelock>=3.12; python_version >= \"3.9\" and ((sys_platform == \"linux\" and platform_machine == \"x86_64\") or (sys_platform == \"win32\" and platform_machine == \"AMD64\"))"
+]
+
+[project.scripts]
+kitten-tts = "kitten_inference._cli:main"
+
+[project.urls]
+Homepage = "https://github.com/KittenML/kitten-inference"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.define = { ENABLE_CUDA = "OFF", ENABLE_NATIVE_ARCH = "OFF", KITTEN_BUILD_EXTRAS = "OFF" }
+build.targets = ["_engine"]
+install.components = ["python"]
+wheel.packages = ["src/kitten_inference"]
+wheel.exclude = ["**/__pycache__", "**/*.py[co]"]
+sdist.exclude = [".venv*", "build", "dist", "wheelhouse"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]

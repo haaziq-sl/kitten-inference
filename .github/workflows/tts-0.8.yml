@@ -1,7 +1,7 @@
-name: tts-0.8
+name: engines/tts08
 
 # Builds and tests the TTS 0.8 engine wheels that the kitten-inference wheels are assembled from (packages.yml). Every
-# wheel is installed with its dependencies and runs the unit tests and the audio smoke test (tts-0.8/tests). Nothing
+# wheel is installed with its dependencies and runs the unit tests and the audio smoke test (tests/tts08). Nothing
 # here is uploaded to PyPI: a release takes the wheels of a tested run, pinned in .github/release-inputs.json, from
 # its artifacts (kept 90 days).
 
@@ -10,12 +10,22 @@ on:
   push:
     branches: ["**"]
     paths:
-      - "tts-0.8/**"
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
+      - "engines/tts08/**"
       - ".github/workflows/tts-0.8.yml"
       - ".github/scripts/add_msvc_runtime.py"   # only this workflow runs it (the Windows wheel repair)
   pull_request:
     paths:
-      - "tts-0.8/**"
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
+      - "engines/tts08/**"
       - ".github/workflows/tts-0.8.yml"
       - ".github/scripts/add_msvc_runtime.py"
 
@@ -23,7 +33,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tts-0.8-${{ github.ref }}
+  group: engines/tts08-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
@@ -132,7 +142,7 @@ jobs:
           CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
-          package-dir: tts-0.8
+          package-dir: engines/tts08
           output-dir: wheelhouse
 
       # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same image, flags and tests.
@@ -146,7 +156,7 @@ jobs:
           CIBW_CONFIG_SETTINGS: ${{ matrix.cmake_config_settings }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
-          package-dir: tts-0.8
+          package-dir: engines/tts08
           output-dir: wheelhouse
 
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff  # v6: pinned to a commit (a movable tag could run other code in a job that builds a published wheel)
@@ -162,10 +172,10 @@ jobs:
             echo "::group::Python $py"
             uv venv -q -p "$py" "venv-$tag"
             uv pip install -q -p "venv-$tag/bin/python" wheelhouse/*-"$tag"-"$tag"-*.whl
-            "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
-            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "audio-smoke/$tag" \
+            "venv-$tag/bin/python" -m unittest discover -s tests/tts08 -v
+            "venv-$tag/bin/python" tests/tts08/audio_smoke.py --mode release --out-dir "audio-smoke/$tag" \
               --cache-dir .hf-cache --expect-backend cpu
-            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode paths --out-dir "audio-smoke/paths-$tag" \
+            "venv-$tag/bin/python" tests/tts08/audio_smoke.py --mode paths --out-dir "audio-smoke/paths-$tag" \
               --cache-dir .hf-cache
             echo "::endgroup::"
           done
@@ -181,7 +191,7 @@ jobs:
           status=0
           for mode in models auto mix threads memory; do
             echo "::group::$mode"
-            "$py" tts-0.8/tests/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
+            "$py" tests/tts08/audio_smoke.py --mode "$mode" --out-dir "audio-smoke/$mode" --cache-dir .hf-cache \
               || { echo "::error::audio_smoke --mode $mode failed (exit $?)"; status=1; }
             echo "::endgroup::"
           done
@@ -193,7 +203,7 @@ jobs:
           set -euo pipefail
           nproc
           for i in 1 2 3; do
-            OMP_NUM_THREADS=33 venv-cp312/bin/python tts-0.8/tests/audio_smoke.py --mode release \
+            OMP_NUM_THREADS=33 venv-cp312/bin/python tests/tts08/audio_smoke.py --mode release \
               --out-dir "audio-smoke/omp33-$i" --cache-dir .hf-cache --expect-backend cpu > /dev/null
             echo "run $i ok"
           done
@@ -419,7 +429,7 @@ jobs:
           CIBW_TEST_SKIP: ${{ matrix.test_skip }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
-          package-dir: tts-0.8
+          package-dir: engines/tts08
           output-dir: wheelhouse
 
       # CPython 3.15 needs cibuildwheel 4, which no longer builds 3.8. Same flags, repair and tests.
@@ -441,7 +451,7 @@ jobs:
           CIBW_TEST_COMMAND: ${{ matrix.test_command }}
           CIBW_BUILD_VERBOSITY: "1"
         with:
-          package-dir: tts-0.8
+          package-dir: engines/tts08
           output-dir: wheelhouse
 
       - name: Test the cp38 arm64 wheel (Metal, then CPU)
@@ -455,10 +465,10 @@ jobs:
             uv venv -q --managed-python -p "cpython-$py-macos-aarch64-none" "venv-$tag"
             uv pip install -q -p "venv-$tag/bin/python" wheelhouse/*-"$tag"-"$tag"-*.whl
             "venv-$tag/bin/python" -c "import platform; print(platform.python_version(), platform.machine())"
-            "venv-$tag/bin/python" -m unittest discover -s tts-0.8/tests -v
-            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-metal-$tag" \
+            "venv-$tag/bin/python" -m unittest discover -s tests/tts08 -v
+            "venv-$tag/bin/python" tests/tts08/audio_smoke.py --mode release --out-dir "smoke-metal-$tag" \
               --cache-dir .hf-cache --expect-backend auto
-            "venv-$tag/bin/python" tts-0.8/tests/audio_smoke.py --mode release --out-dir "smoke-cpu-$tag" \
+            "venv-$tag/bin/python" tests/tts08/audio_smoke.py --mode release --out-dir "smoke-cpu-$tag" \
               --cache-dir .hf-cache --backend cpu --expect-backend cpu --compare-to "smoke-metal-$tag"
           done
 
@@ -478,7 +488,7 @@ jobs:
           status=0
           run() {
             echo "::group::$*"
-            "$py" tts-0.8/tests/audio_smoke.py --cache-dir .hf-cache "$@" \
+            "$py" tests/tts08/audio_smoke.py --cache-dir .hf-cache "$@" \
               || { echo "::error::audio_smoke $* failed (exit $?)"; status=1; }
             echo "::endgroup::"
           }
@@ -551,7 +561,7 @@ jobs:
             cmake.define.ENABLE_OPENMP=OFF
           CIBW_BUILD_VERBOSITY_ANDROID: "1"
         with:
-          package-dir: tts-0.8
+          package-dir: engines/tts08
           output-dir: wheelhouse
 
       - run: ls -l wheelhouse
@@ -595,8 +605,8 @@ jobs:
 
       - name: Test
         run: |
-          venv/bin/python -m unittest discover -s tts-0.8/tests -v
-          venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
+          venv/bin/python -m unittest discover -s tests/tts08 -v
+          venv/bin/python tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   lowest-deps:
     name: Lowest dependencies, Linux x86_64, Python ${{ matrix.python }}
@@ -645,8 +655,8 @@ jobs:
 
       - name: Test
         run: |
-          venv/bin/python -m unittest discover -s tts-0.8/tests -v
-          venv/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
+          venv/bin/python -m unittest discover -s tests/tts08 -v
+          venv/bin/python tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache --expect-backend cpu
 
   espeak-paths:
     # espeak-ng ends the Python process (exit 1, no exception) when its data folder path is 160 bytes or longer, and on
@@ -681,11 +691,11 @@ jobs:
           path: wheelhouse
 
       - name: A virtual environment in a deep folder (espeak-ng data path over 160 characters)
-        run: python tts-0.8/tests/espeak_paths.py deep --wheels wheelhouse --expect fixed --out espeak-deep.json
+        run: python tests/tts08/espeak_paths.py deep --wheels wheelhouse --expect fixed --out espeak-deep.json
 
       - name: Virtual environments under folders named José and Łukasz (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' }}
-        run: python tts-0.8/tests/espeak_paths.py names --wheels wheelhouse --expect fixed --out espeak-names.json
+        run: python tests/tts08/espeak_paths.py names --wheels wheelhouse --expect fixed --out espeak-names.json
 
       - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}

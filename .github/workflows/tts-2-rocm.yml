@@ -2,7 +2,7 @@ name: tts-2 ROCm wheel
 
 # Kitten TTS 2 engine for AMD GPUs: the ROCm payload wheel (the HIP engine library, the native CLI and the text-data
 # helper) that the kitten-inference wheels for Linux x86-64 are assembled from (packages.yml), built in the
-# manylinux_2_28 container with ROCm 7.1 from AMD's RHEL 8 repository (tts-2/packaging/build_wheel_rocm.sh).
+# manylinux_2_28 container with ROCm 7.1 from AMD's RHEL 8 repository (engines/tts2/packaging/build_wheel_rocm.sh).
 # The runners have no AMD GPU: the install job checks the package and the documented missing-ROCm failure only.
 # Nothing here is uploaded to PyPI: a release takes the wheel of a tested run, pinned in .github/release-inputs.json,
 # from its artifact (kept 90 days).
@@ -10,9 +10,9 @@ name: tts-2 ROCm wheel
 on:
   push:
     branches: ['**']
-    paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
+    paths: ['engines/tts2/**', '.github/workflows/tts-2-rocm.yml']
   pull_request:
-    paths: ['tts-2/**', '.github/workflows/tts-2-rocm.yml']
+    paths: ['engines/tts2/**', '.github/workflows/tts-2-rocm.yml']
   workflow_dispatch:
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
       - name: Build the wheel
         env:
           JOBS: '4'
-        run: tts-2/packaging/build_wheel_rocm.sh wheelhouse
+        run: engines/tts2/packaging/build_wheel_rocm.sh wheelhouse
       - name: Size and contents
         run: |
           ls -l wheelhouse
@@ -89,9 +89,9 @@ jobs:
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install --no-index --no-deps wheelhouse/*.whl
           venv/bin/python -m pip show -f kitten-inference-tts2-rocm | head -n 20
-      # BACKEND, ABI, CAPS, VERSION == the engine version in tts-2/CMakeLists.txt, the files are there and executable,
+      # BACKEND, ABI, CAPS, VERSION == the engine version in engines/tts2/CMakeLists.txt, the files are there and executable,
       # the text-data helper runs, and without ROCm the library and the CLI fail naming libamdhip64.so.7.
       - name: Check the package
         run: |
           ldd "$(venv/bin/python -c 'import kitten_inference._tts2_rocm as m; print(m.TEXT_DATA_TOOL)')"
-          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/venv/bin/python" "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py" --backend rocm
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/venv/bin/python" "$GITHUB_WORKSPACE/engines/tts2/packaging/smoke_wheel.py" --backend rocm

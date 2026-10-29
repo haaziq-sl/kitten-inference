@@ -17,27 +17,31 @@ on:
     branches: ["**"]
     tags: ["v*"]
     paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
       - "umbrella/**"
-      - "tts-2/python/**"
-      - "tts-2/tools/kt2n_assets/**"
-      - "tts-2/src/**"
-      - "tts-2/include/**"
-      - "tts-2/cli/**"
-      - "tts-2/cmake/**"
-      - "tts-2/CMakeLists.txt"
-      - "tts-2/CMakePresets.json"
-      - "tts-2/NOTICE"
-      - "tts-2/licenses/**"
-      - "tts-2/packaging/smoke_wheel.py"
-      - "tts-2/packaging/check_wheel_rocm.py"
-      - "tts-2/packaging/size_check.py"
-      - "tts-0.8/kitten_inference/**"
-      - "tts-0.8/engine/**"
-      - "tts-0.8/CMakeLists.txt"
-      - "tts-0.8/pyproject.toml"
-      - "tts-0.8/tests/**"
-      - "tts-0.8/NOTICE"
-      - "tts-0.8/licenses/**"
+      - "engines/tts2/python/**"
+      - "engines/tts2/tools/kt2n_assets/**"
+      - "engines/tts2/src/**"
+      - "engines/tts2/include/**"
+      - "engines/tts2/cli/**"
+      - "engines/tts2/cmake/**"
+      - "engines/tts2/CMakeLists.txt"
+      - "engines/tts2/CMakePresets.json"
+      - "engines/tts2/NOTICE"
+      - "engines/tts2/licenses/**"
+      - "engines/tts2/packaging/smoke_wheel.py"
+      - "engines/tts2/packaging/check_wheel_rocm.py"
+      - "engines/tts2/packaging/size_check.py"
+      - "engines/tts08/engine/**"
+      - "engines/tts08/CMakeLists.txt"
+      - "engines/tts08/pyproject.toml"
+      - "tests/tts08/**"
+      - "engines/tts08/NOTICE"
+      - "engines/tts08/licenses/**"
       - "NOTICE"
       - "LICENSE"
       - ".github/release-inputs.json"
@@ -45,27 +49,31 @@ on:
       - ".github/scripts/**"
   pull_request:
     paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "build_support.py"
+      - "CMakeLists.txt"
       - "umbrella/**"
-      - "tts-2/python/**"
-      - "tts-2/tools/kt2n_assets/**"
-      - "tts-2/src/**"
-      - "tts-2/include/**"
-      - "tts-2/cli/**"
-      - "tts-2/cmake/**"
-      - "tts-2/CMakeLists.txt"
-      - "tts-2/CMakePresets.json"
-      - "tts-2/NOTICE"
-      - "tts-2/licenses/**"
-      - "tts-2/packaging/smoke_wheel.py"
-      - "tts-2/packaging/check_wheel_rocm.py"
-      - "tts-2/packaging/size_check.py"
-      - "tts-0.8/kitten_inference/**"
-      - "tts-0.8/engine/**"
-      - "tts-0.8/CMakeLists.txt"
-      - "tts-0.8/pyproject.toml"
-      - "tts-0.8/tests/**"
-      - "tts-0.8/NOTICE"
-      - "tts-0.8/licenses/**"
+      - "engines/tts2/python/**"
+      - "engines/tts2/tools/kt2n_assets/**"
+      - "engines/tts2/src/**"
+      - "engines/tts2/include/**"
+      - "engines/tts2/cli/**"
+      - "engines/tts2/cmake/**"
+      - "engines/tts2/CMakeLists.txt"
+      - "engines/tts2/CMakePresets.json"
+      - "engines/tts2/NOTICE"
+      - "engines/tts2/licenses/**"
+      - "engines/tts2/packaging/smoke_wheel.py"
+      - "engines/tts2/packaging/check_wheel_rocm.py"
+      - "engines/tts2/packaging/size_check.py"
+      - "engines/tts08/engine/**"
+      - "engines/tts08/CMakeLists.txt"
+      - "engines/tts08/pyproject.toml"
+      - "tests/tts08/**"
+      - "engines/tts08/NOTICE"
+      - "engines/tts08/licenses/**"
       - "NOTICE"
       - "LICENSE"
       - ".github/release-inputs.json"
@@ -99,12 +107,12 @@ jobs:
       - name: Versions (from the pyprojects, which a post release changes)
         shell: bash
         run: |
-          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
-          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' tts-2/python/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "TTS2_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - name: Build sdists and wheels (each wheel is built from its sdist)
         run: |
           python -m build umbrella --outdir dist
-          python -m build tts-2/python --outdir dist
+          python -m build engines/tts2/python --outdir dist
           ls -l dist
       - name: Check the archives
         run: |
@@ -115,7 +123,7 @@ jobs:
           umbrella = zipfile.ZipFile(glob.glob(f"dist/kitten_inference-{u}-py3-none-any.whl")[0]).namelist()
           tts2 = zipfile.ZipFile(glob.glob(f"dist/kitten_inference_tts2-{t}-py3-none-any.whl")[0]).namelist()
           assert [n for n in umbrella if not n.startswith(f"kitten_inference-{u}.dist-info/")] == \
-              ["kitten_inference/__init__.py"], umbrella
+              sorted(n for n in umbrella if n.startswith("kitten_inference/") and n.count("/") == 1), umbrella
           assert "kitten_inference/__init__.py" not in tts2
           assert not [n for n in tts2 if "__pycache__" in n or n.endswith(".pyc")]
           for need in ("kitten_inference/tts2/__init__.py", "kitten_inference/tts2/_assets/prepare.py",
@@ -127,7 +135,7 @@ jobs:
           print(len(umbrella), "files in the umbrella wheel,", len(tts2), "in the tts2 wheel")
           PY
       - name: Stand-ins of the earlier kitten-inference 0.1.x (the fallback check of check_extras.py)
-        run: python umbrella/tests/make_stub_wheels.py stubs --old stubs-old
+        run: python tests/packaging/make_stub_wheels.py stubs --old stubs-old
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -239,13 +247,13 @@ jobs:
           # What the assembly would refuse at this commit (the same checks as assemble_wheels.py build): versions
           # that do not fit the lock, and engine or TTS 0.8 sources other than those the locked builds were made from.
           base = lock["version"]
-          umbrella = tomllib.loads(Path("umbrella/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          tts2 = tomllib.loads(Path("tts-2/python/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          umbrella = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          tts2 = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
           if not re.fullmatch(re.escape(base) + r"(\.post\d+)?", umbrella):
-              problems.append(f"kitten-inference {umbrella} (umbrella/pyproject.toml) is neither {base}, the "
+              problems.append(f"kitten-inference {umbrella} (pyproject.toml) is neither {base}, the "
                               "version of the locked builds, nor a post release of it")
           if tts2 != base:
-              problems.append(f"tts-2/python/pyproject.toml says {tts2}, the locked builds are {base}")
+              problems.append(f"pyproject.toml says {tts2}, the locked builds are {base}")
           try:
               aw.check_sources(lock, aw.Source(Path(".")))
           except SystemExit as exc:
@@ -286,7 +294,7 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: TTS 0.8 wheels (the artifacts of the tts-0.8 run in the lock)
+      - name: TTS 0.8 wheels (the artifacts of the engines/tts08 run in the lock)
         uses: actions/download-artifact@v4
         with:
           pattern: ${{ needs.lock.outputs.tts08_artifacts }}
@@ -323,7 +331,7 @@ jobs:
       - name: Metadata (twine) and sizes (PyPI's file limit is 100 MB)
         run: |
           python -m twine check --strict assembled/*.whl
-          python tts-2/packaging/size_check.py assembled/*.whl --max-mb 100
+          python engines/tts2/packaging/size_check.py assembled/*.whl --max-mb 100
       - name: sha256 of every wheel (the tag run must give the same as the dry run)
         shell: bash
         run: |
@@ -384,7 +392,7 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && 90 || 14 }}
 
   test:
-    # The wheel pip picks on each runner, installed with [tts-0.8,tts-2] from a local wheelhouse of the packages its
+    # The wheel pip picks on each runner, installed with  from a local wheelhouse of the packages its
     # metadata names. TTS 0.8 everywhere: unit tests and an audio check. TTS 2 runs on Linux x86-64 and Windows x64
     # with Python 3.9 or newer: there its unit tests run (no GPU); elsewhere Kitten TTS 2 must say so when it starts.
     name: Test, ${{ matrix.os }}, Python ${{ matrix.python }}
@@ -418,7 +426,7 @@ jobs:
       - name: Versions, this runner's wheels, and whether Kitten TTS 2 runs here
         shell: bash
         run: |
-          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+          echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
           case "$RUNNER_OS-$RUNNER_ARCH" in
             Linux-X64) family=linux-x86_64 ;;
             Linux-ARM64) family=linux-aarch64 ;;
@@ -473,26 +481,26 @@ jobs:
           echo "WHEEL=$WHEEL" >> "$GITHUB_ENV"
           echo "pip picks $(basename "$WHEEL") (Python ${{ matrix.python }}, ${{ matrix.os }})" | tee -a "$GITHUB_STEP_SUMMARY"
           # pip wheel: a package without a wheel for this Python is built here, and the log says so.
-          python -m pip wheel --disable-pip-version-check --wheel-dir deps "${WHEEL}[tts-0.8,tts-2]" pytest pip 2>&1 \
+          python -m pip wheel --disable-pip-version-check --wheel-dir deps "${WHEEL}" pytest pip 2>&1 \
             | tee deps.log
           rm -f deps/kitten_inference-*.whl
           echo "Built from source for Python ${{ matrix.python }} on ${{ matrix.os }}:" \
             "$(grep -o 'Building wheel for [^ ]*' deps.log | cut -d' ' -f4 | sort -u | tr '\n' ' ' || true)"
       - name: What each extra installs with current pip (local folders, and a local index with 0.1.x as on PyPI)
         run: >-
-          python umbrella/tests/check_extras.py --upgrade-pip --find-links assembled --find-links deps
+          python tests/packaging/check_extras.py --upgrade-pip --find-links assembled --find-links deps
           --old stubs-old --version "${{ env.UMBRELLA_VERSION }}"
-      - name: Install kitten-inference[tts-0.8,tts-2]
+      - name: Install kitten-inference
         shell: bash
         run: |
           python -m venv venv
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; BIN=venv/Scripts; else PY=venv/bin/python; BIN=venv/bin; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
           echo "BIN=$BIN" >> "$GITHUB_ENV"
-          # pip older than 23.3 skips the dotted [tts-0.8]: the venv gets the wheelhouse's current pip first.
+          # pip older than 23.3 skips the dotted : the venv gets the wheelhouse's current pip first.
           $PY -m pip install -q --disable-pip-version-check --no-index --find-links deps -U pip
           $PY -m pip install --disable-pip-version-check --no-index --find-links assembled --find-links deps \
-            "kitten-inference[tts-0.8,tts-2]==$UMBRELLA_VERSION" pytest
+            "kitten-inference==$UMBRELLA_VERSION" pytest
       - name: The installed wheel is the one pip picked, with the engines its platform gets
         shell: bash
         run: |
@@ -526,17 +534,18 @@ jobs:
           KT2N_STRICT_SKIPS: "1"
           KT2N_EXPECT_NO_NVIDIA_DRIVER: "1"
         run: |
-          tests=("$GITHUB_WORKSPACE/umbrella/tests")
-          if [ "$TTS2" = 1 ]; then tests+=("$GITHUB_WORKSPACE/tts-2/python/tests"); fi
+          export KITTEN_RELEASE_WHEEL=1
+          tests=("$GITHUB_WORKSPACE/tests/packaging" "$GITHUB_WORKSPACE/tests/test_unified.py")
+          if [ "$TTS2" = 1 ]; then tests+=("$GITHUB_WORKSPACE/tests/tts2"); fi
           cd "$RUNNER_TEMP"
           "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "${tests[@]}"
       - name: TTS 0.8 unit tests and audio check
         shell: bash
         run: |
-          "$PY" -m unittest discover -s tts-0.8/tests -v
+          "$PY" -m unittest discover -s tests/tts08 -v
           backend=cpu
           if [ "$FAMILY" = macos-arm64 ]; then backend=auto; fi
-          "$PY" tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache \
+          "$PY" tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache \
             --expect-backend "$backend"
       - name: The platform's other wheel family, installed by file name (Linux ARM64 has a manylinux2014 build too)
         shell: bash
@@ -549,9 +558,9 @@ jobs:
             rm -rf other && python -m venv other
             if [ -x other/Scripts/python.exe ]; then OPY=other/Scripts/python.exe; else OPY=other/bin/python; fi
             "$OPY" -m pip install -q --disable-pip-version-check --no-index --find-links deps -U pip
-            "$OPY" -m pip install -q --disable-pip-version-check --no-index --find-links deps "${w}[tts-0.8]"
+            "$OPY" -m pip install -q --disable-pip-version-check --no-index --find-links deps "${w}"
             "$OPY" -c "import kitten_inference.tts08, kitten_inference.tts2; print('TTS 0.8 and TTS 2 import')"
-            "$OPY" tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke-other --cache-dir .hf-cache \
+            "$OPY" tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke-other --cache-dir .hf-cache \
               --expect-backend cpu
             echo "::endgroup::"
           done
@@ -585,11 +594,11 @@ jobs:
 
           family = os.environ["FAMILY"]
           checks = [("import kitten_inference.tts2", None)]
-          checks.append(("from kitten_inference.tts08 import KittenTTS", ["kitten-inference[tts-0.8]"]))
+          checks.append(("from kitten_inference.tts08 import KittenTTS", ["kitten-inference"]))
           if sys.version_info < (3, 9):
               checks.append(("from kitten_inference.tts2 import KittenTTS2", ["3.9"]))
           elif family in ("linux-x86_64", "windows-x86_64"):
-              checks.append(("from kitten_inference.tts2 import KittenTTS2", ["kitten-inference[tts-2]", "tokenizers"]))
+              checks.append(("from kitten_inference.tts2 import KittenTTS2", ["kitten-inference", "tokenizers"]))
           else:
               checks.append(("from kitten_inference.tts2 import KittenTTS2", ["Linux x86-64", "Windows x64"]))
           bad = 0
@@ -627,23 +636,14 @@ jobs:
       # A C compiler: the TTS 2 engine ABI test compiles engine.h.
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1: pinned to a commit (a movable tag could run other code in the job)
         if: runner.os == 'Windows'
-      - name: Install kitten_inference.tts2 and kitten_inference/__init__.py (no engine, no kitten-inference metadata)
+      - name: Install the unified package from source
         shell: bash
         run: |
           python -m venv venv
           if [ -x venv/Scripts/python.exe ]; then PY=venv/Scripts/python.exe; else PY=venv/bin/python; fi
           echo "PY=$PY" >> "$GITHUB_ENV"
           $PY -m pip install -q --disable-pip-version-check -U pip
-          $PY -m pip install --disable-pip-version-check dist/kitten_inference_tts2-*-py3-none-any.whl pytest
-          "$PY" - <<'PY'
-          import shutil, sysconfig
-          from pathlib import Path
-          package = Path(sysconfig.get_paths()["purelib"]) / "kitten_inference"
-          assert (package / "tts2" / "__init__.py").is_file() and not (package / "__init__.py").exists(), package
-          shutil.copyfile("umbrella/kitten_inference/__init__.py", package / "__init__.py")
-          PY
-          cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/$PY" -c "import kitten_inference.tts2 as t; print(t.__file__, t.__version__)"
+          $PY -m pip install . pytest
       - name: Unit tests (tests/gpu and the tests of the assembled package skip)
         shell: bash
         env:
@@ -651,11 +651,11 @@ jobs:
           KT2N_EXPECT_NO_NVIDIA_DRIVER: "1"
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
-            "$GITHUB_WORKSPACE/tts-2/python/tests"
+          "$GITHUB_WORKSPACE/$PY" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/tests/packaging" \
+            "$GITHUB_WORKSPACE/tests/tts2" "$GITHUB_WORKSPACE/tests/tts08" "$GITHUB_WORKSPACE/tests/test_unified.py"
 
   engines:
-    # The cp312 wheel with [tts-2] on runners without a GPU: the engines load through kitten_inference.tts2, their
+    # The cp312 wheel with  on runners without a GPU: the engines load through kitten_inference.tts2, their
     # installed files are the lock's, byte for byte, and the programs start. On Linux both engines are installed, and
     # their text-data tools must write the same bytes (one prepared model folder serves both).
     name: Engines, ${{ matrix.os }} (no GPU)
@@ -675,7 +675,7 @@ jobs:
         with:
           name: assembled-${{ runner.os == 'Windows' && 'windows' || 'linux' }}-x86_64
           path: assembled
-      - name: Install kitten-inference[tts-2]
+      - name: Install kitten-inference
         shell: bash
         run: |
           python -m venv venv
@@ -683,7 +683,7 @@ jobs:
           echo "PY=$PY" >> "$GITHUB_ENV"
           wheel=$(ls assembled/kitten_inference-*-cp312-cp312-*.whl)
           $PY -m pip install --disable-pip-version-check -q -U pip
-          $PY -m pip install --disable-pip-version-check "${wheel}[tts-2]"
+          $PY -m pip install --disable-pip-version-check "${wheel}"
           sha256sum "$wheel"
       - name: Through kitten_inference.tts2 (discovery, load, ABI, kitten-tts2, installed files against the lock)
         shell: bash
@@ -699,9 +699,9 @@ jobs:
         shell: bash
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/$PY" "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py"
+          "$GITHUB_WORKSPACE/$PY" "$GITHUB_WORKSPACE/engines/tts2/packaging/smoke_wheel.py"
           if [ "$RUNNER_OS" = Linux ]; then
-            "$GITHUB_WORKSPACE/$PY" "$GITHUB_WORKSPACE/tts-2/packaging/smoke_wheel.py" --backend rocm
+            "$GITHUB_WORKSPACE/$PY" "$GITHUB_WORKSPACE/engines/tts2/packaging/smoke_wheel.py" --backend rocm
           fi
 
   old-linux:
@@ -730,7 +730,7 @@ jobs:
           version: "0.13.5"
       - name: Versions (from the pyprojects, which a post release changes)
         shell: bash
-        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - name: Python 3.8 with an upgraded pip
         shell: bash
         run: |
@@ -743,7 +743,7 @@ jobs:
           w=$(ls chosen-38/*.whl)
           echo "pip picks $(basename "$w")"
           case "$w" in *manylinux_2_28_x86_64.whl) ;; *) echo "::error::expected the manylinux_2_28 wheel"; exit 1 ;; esac
-          v38/bin/python -m pip install -q --disable-pip-version-check "${w}[tts-0.8]"
+          v38/bin/python -m pip install -q --disable-pip-version-check "${w}"
           v38/bin/python -c "import importlib.util as u, kitten_inference.tts08; assert u.find_spec('kitten_inference._tts2_cuda') is None; print('TTS 0.8 imports; no TTS 2 engine on Python 3.8')"
       - name: Python 3.12 with an upgraded pip, then the TTS 0.8 audio check
         shell: bash
@@ -757,7 +757,7 @@ jobs:
           w=$(ls chosen-312/*.whl)
           echo "pip picks $(basename "$w")"
           case "$w" in *-manylinux_2_28_x86_64.whl) ;; *) echo "::error::expected the manylinux_2_28 wheel"; exit 1 ;; esac
-          v312/bin/python -m pip install -q --disable-pip-version-check "${w}[tts-0.8]"
+          v312/bin/python -m pip install -q --disable-pip-version-check "${w}"
           v312/bin/python - <<'PY'
           import importlib.util as u
           for m in ("kitten_inference.tts08", "kitten_inference.tts2", "kitten_inference._tts2_cuda",
@@ -765,7 +765,7 @@ jobs:
               assert u.find_spec(m) is not None, m
           print("TTS 0.8, TTS 2 and both engines are installed")
           PY
-          v312/bin/python tts-0.8/tests/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache \
+          v312/bin/python tests/tts08/audio_smoke.py --mode release --out-dir audio-smoke --cache-dir .hf-cache \
             --expect-backend cpu
       - name: Ubuntu 20.04's own pip 20.0.2 (recorded, not checked)
         shell: bash
@@ -786,8 +786,8 @@ jobs:
           if-no-files-found: ignore
 
   old-pip:
-    # Ubuntu 22.04's own pip (22.0.2): what each spelling of the extras installs. pip older than 23.3 skips the dotted
-    # [tts-0.8] with only a warning; Kitten TTS 0.8 then names the missing packages when it is imported. The spelling
+    # Ubuntu 22.04's own pip (22.0.2): plain installation with the system pip; all dependencies are selected without extras.
+    #  with only a warning; Kitten TTS 0.8 then names the missing packages when it is imported. The spelling
     # [tts-0-8] works with any pip.
     name: Ubuntu 22.04, pip 22.0.2
     needs: assemble
@@ -806,7 +806,7 @@ jobs:
           python3 --version && python3 -m pip --version
       - name: Versions (from the pyprojects, which a post release changes)
         shell: bash
-        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - name: Install each spelling with pip 22.0.2
         shell: bash
         run: |
@@ -817,7 +817,7 @@ jobs:
             "$(ls assembled/kitten_inference-$V-cp310-cp310-*.whl)[tts-0-8,tts-2]"
           rm -f deps/kitten_inference-*.whl
           status=0
-          for spec in "kitten-inference[tts-0.8]==$V" "kitten-inference[tts-0-8]==$V" "kitten-inference[tts-2]==$V"; do
+          for spec in "kitten-inference==$V" "kitten-inference[tts-0-8]==$V" "kitten-inference==$V"; do
             echo "::group::$spec"
             rm -rf /tmp/v && python3 -m venv /tmp/v
             echo "$ $(/tmp/v/bin/python -m pip --version | cut -d' ' -f1-2) install --no-index --find-links assembled --find-links deps \"$spec\"" \
@@ -835,16 +835,16 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
-      - name: Which pip versions accept the dotted spelling [tts-0.8]
+      - name: Plain installation with system pip
         shell: bash
         run: |
           set +e +o pipefail  # grep -c exits 1 when it counts 0
           for v in 22.0.2 22.3.1 23.0.1 23.1.2 23.2.1 23.3 23.3.2 24.0 25.3; do
             rm -rf /tmp/v && python3 -m venv /tmp/v && /tmp/v/bin/python -m pip install -q --disable-pip-version-check "pip==$v"
             out=$(/tmp/v/bin/python -m pip install --disable-pip-version-check --no-index --find-links assembled \
-                  --find-links deps "kitten-inference[tts-0.8]==$UMBRELLA_VERSION" 2>&1)
+                  --find-links deps "kitten-inference==$UMBRELLA_VERSION" 2>&1)
             got=$(/tmp/v/bin/python -m pip list --disable-pip-version-check 2>/dev/null | grep -ci -E '^espeakng[-_]loader ')
-            echo "pip $v: [tts-0.8] installs the TTS 0.8 packages: $([ "$got" = 1 ] && echo yes || echo no)$(echo "$out" | grep -o "WARNING: .*extra.*" | sed 's/^/ -- /')" \
+            echo "pip $v:  installs the TTS 0.8 packages: $([ "$got" = 1 ] && echo yes || echo no)$(echo "$out" | grep -o "WARNING: .*extra.*" | sed 's/^/ -- /')" \
               | tee -a old-pip.log
           done
       - uses: actions/upload-artifact@v4
@@ -854,9 +854,9 @@ jobs:
           path: old-pip.log
 
   lowest-deps:
-    # The lower bounds of [tts-2] (numpy, huggingface-hub, tokenizers, filelock) are the oldest versions tested: the
+    # The lower bounds of  (numpy, huggingface-hub, tokenizers, filelock) are the oldest versions tested: the
     # lowest version of each that has a wheel for this Python, with the unit tests. The torch-free weight fold with
-    # the oldest numpy is checked byte for byte in tts-2-prepare.yml; [tts-0.8]'s bounds in tts-0.8.yml.
+    # the oldest numpy is checked byte for byte in tts-2-prepare.yml; 's bounds in tts-0.8.yml.
     name: Lowest dependencies, Linux, Python ${{ matrix.python }}
     needs: assemble
     strategy:
@@ -872,7 +872,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Versions (from the pyprojects, which a post release changes)
         shell: bash
-        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' umbrella/pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
+        run: echo "UMBRELLA_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff  # v6: pinned to a commit (a movable tag could run other code in the job)
         with:
           version: "0.13.5"
@@ -883,7 +883,7 @@ jobs:
       - name: ffmpeg
         timeout-minutes: 40
         run: bash .github/scripts/apt_install.sh ffmpeg && ffmpeg -version | head -1
-      - name: Install kitten-inference[tts-2] with the oldest allowed dependencies
+      - name: Install kitten-inference with the oldest allowed dependencies
         shell: bash
         env:
           PY: ${{ matrix.python }}
@@ -892,7 +892,7 @@ jobs:
           tag="cp${PY/./}"
           wheel=$(ls assembled/kitten_inference-"$UMBRELLA_VERSION"-"$tag"-"$tag"-*.whl)
           python -m pip install -q --disable-pip-version-check packaging==25.0
-          # The [tts-2] requirements of the assembled METADATA, parsed (not matched as text), with the extra removed.
+          # The  requirements of the assembled METADATA, parsed (not matched as text), with the extra removed.
           python - "$wheel" > requirements-lowest.txt <<'PY'
           import sys, zipfile
           from packaging.requirements import Requirement
@@ -904,16 +904,16 @@ jobs:
                   continue
               req = Requirement(line.split(":", 1)[1].strip())
               marker = req.marker
-              if marker is None or marker.evaluate({"extra": ""}) or not marker.evaluate({"extra": "tts-2"}):
+              if marker is not None and not marker.evaluate({"extra": ""}):
                   continue  # another extra's, or not for this Python and platform
               extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
               print(f"{req.name}{extras}{req.specifier}")
           PY
           cat requirements-lowest.txt
-          if [ ! -s requirements-lowest.txt ]; then echo "::error::no [tts-2] requirements in $wheel"; exit 1; fi
+          if [ ! -s requirements-lowest.txt ]; then echo "::error::no  requirements in $wheel"; exit 1; fi
           uv venv -q -p "$PY" venv
           uv pip install -p venv/bin/python --resolution lowest-direct --no-build --find-links assembled \
-            "kitten-inference[tts-2]==$UMBRELLA_VERSION" -r requirements-lowest.txt
+            "kitten-inference==$UMBRELLA_VERSION" -r requirements-lowest.txt
           uv pip install -p venv/bin/python pytest
           uv pip freeze -p venv/bin/python
       - name: Unit tests with those versions
@@ -924,8 +924,8 @@ jobs:
           KT2N_EXPECT_NO_NVIDIA_DRIVER: "1"
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/venv/bin/python" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/umbrella/tests" \
-            "$GITHUB_WORKSPACE/tts-2/python/tests"
+          "$GITHUB_WORKSPACE/venv/bin/python" -m pytest -q -rs -p no:cacheprovider "$GITHUB_WORKSPACE/tests/packaging" \
+            "$GITHUB_WORKSPACE/tests/tts2"
 
   espeak-paths:
     # espeak-ng ends the Python process (exit 1, no exception) when its data folder path is 160 bytes or longer, and on
@@ -947,12 +947,12 @@ jobs:
           path: wheelhouse
       - name: A virtual environment in a deep folder (espeak-ng data path over 160 characters)
         run: >-
-          python tts-0.8/tests/espeak_paths.py deep --wheels wheelhouse --expect fixed --spec "kitten-inference[tts-0.8]"
+          python tests/tts08/espeak_paths.py deep --wheels wheelhouse --expect fixed --spec "kitten-inference"
           --out espeak-deep.json
       - name: Virtual environments under folders named José and Łukasz
         if: ${{ !cancelled() }}
         run: >-
-          python tts-0.8/tests/espeak_paths.py names --wheels wheelhouse --expect fixed --spec "kitten-inference[tts-0.8]"
+          python tests/tts08/espeak_paths.py names --wheels wheelhouse --expect fixed --spec "kitten-inference"
           --out espeak-names.json
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
