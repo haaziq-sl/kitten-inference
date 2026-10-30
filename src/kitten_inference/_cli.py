@@ -7,7 +7,7 @@ from ._api import KittenTTS, model_family
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(prog='kitten-tts', add_help=False)
+    parser = argparse.ArgumentParser(prog='kitten-tts', add_help=False, allow_abbrev=False)
     parser.add_argument('--model', required=True, help='Hugging Face model name or local TTS 0.8 directory')
     if argv == ['--version']:
         print(__import__('kitten_inference').__version__)
@@ -16,7 +16,20 @@ def main(argv=None):
         parser.print_help()
         print('\nSelect --model MODEL --help for synthesis and advanced options.')
         return 0 if argv else 2
-    args, rest = parser.parse_known_args(argv)
+    from .tts2._cli import NATIVE_VALUE_OPTIONS, OWN_VALUE_OPTIONS
+    value_options = NATIVE_VALUE_OPTIONS | OWN_VALUE_OPTIONS | {'--model', '--speed', '--normalize'}
+    model_args, rest = [], []
+    remaining = iter(argv)
+    for arg in remaining:
+        key, eq, _ = arg.partition('=')
+        target = model_args if key == '--model' else rest
+        target.append(arg)
+        # A synthesis value such as --text '--model=example' is not a model selector.
+        if key in value_options and not eq:
+            value = next(remaining, None)
+            if value is not None:
+                target.append(value)
+    args = parser.parse_args(model_args)
     if model_family(args.model) == 'tts2':
         from .tts2._cli import main as native_main
         return native_main(rest)

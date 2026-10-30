@@ -107,6 +107,31 @@ def test_cli_preserves_advanced_gpu_arguments(monkeypatch):
     assert seen == args
 
 
+@pytest.mark.parametrize('text', ['--model=unknown', '--model', '--mod=unknown'])
+@pytest.mark.parametrize('model_first', [True, False])
+def test_cli_preserves_option_looking_text(monkeypatch, text, model_first):
+    from kitten_inference.tts2 import _cli as gpu
+    seen = []
+    monkeypatch.setattr(gpu, 'main', lambda args: seen.extend(args) or 7)
+    args = ['--text', text, '--output', 'out.wav']
+    selector = ['--model', 'kitten-tts-2']
+    argv = selector + args if model_first else args + selector
+    assert _cli.main(argv) == 7
+    assert seen == args
+
+
+@pytest.mark.parametrize('name', ['Voice', 'EngineError', 'EngineNotInstalled', 'EngineMismatch',
+                                 'PrepareError', 'BundleError', 'AudioError', 'FFmpegNotFound'])
+def test_public_types_import_without_gpu_payloads(monkeypatch, name):
+    import kitten_inference
+    from kitten_inference import tts2
+    from kitten_inference.tts2 import _backend
+    monkeypatch.setattr(_backend, '_import', lambda module: None)
+    for lazy_name in tts2._LAZY:
+        monkeypatch.delitem(vars(tts2), lazy_name, raising=False)
+    assert getattr(kitten_inference, name).__name__ == name
+
+
 def test_cli_help_needs_no_model_or_engine(capsys):
     assert _cli.main(['--help']) == 0
     assert '--model' in capsys.readouterr().out
