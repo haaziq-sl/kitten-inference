@@ -45,7 +45,7 @@ _MODE_NAMES = {BUILTIN: "built-in voices", CUSTOM: "saved voices", CLONING: "voi
 class Voice:
     """A cloned or loaded voice. It holds the saved-voice artifact, which works only with the model it was made
     with (the same model revision, prepared by this version): when Hugging Face has a newer model, keep using the
-    voice with KittenTTS2(revision=<that revision>); load_voice() names it."""
+    voice with KittenTTS("KittenML/kitten-tts-2", revision=<that revision>); load_voice() names it."""
 
     def __init__(self, artifact: bytes, name: str = ""):
         self.artifact = bytes(artifact)
@@ -123,7 +123,7 @@ class KittenTTS2:
     On first use it checks the GPU driver, downloads KittenML/kitten-tts-2 (the latest revision, or ``revision``)
     and prepares it into ``<cache_dir or ~/.cache/kitten-inference/tts2>/<model sha>/``; later uses reuse that
     directory. ``revision`` (after start: the commit sha in use) pins the model, e.g. for voices saved with it. It
-    then starts the engine on GPU ``device`` with the same settings as the ``kitten-tts2`` command: the automatic
+    then starts the engine on GPU ``device`` with the same settings as the ``kitten-tts`` command: the automatic
     memory profile and a voice cache that keeps the voice in use, so small GPUs work.
 
     ``memory_profile``: "auto" (default), "default" or "low". ``voice_cache``: None (as kitten-tts: the voice in
@@ -261,7 +261,7 @@ class KittenTTS2:
                 self._mode = previous
             except Exception as again:
                 raise RuntimeError(f"{exc}; the engine for {_MODE_NAMES[previous]} could not be started again "
-                                   f"either ({again}), so this KittenTTS2 is closed: create a new one") from exc
+                                   f"either ({again}), so this KittenTTS is closed: create a new one") from exc
             raise
 
     def _create(self, config: _abi.EngineConfig, bundle: _bundle.Bundle) -> Engine:
@@ -294,7 +294,7 @@ class KittenTTS2:
 
     def _ensure_mode(self, mode: int) -> Engine:
         if self._engine is None:
-            raise RuntimeError("this KittenTTS2 is closed")
+            raise RuntimeError("this KittenTTS is closed")
         if mode > self._mode:
             self._start(mode)
         return self._engine
@@ -432,13 +432,13 @@ class KittenTTS2:
         except (OSError, ValueError, _bundle.BundleError):
             pass
         if other:
-            return ValueError(f"this voice was made with the model revision {other}, but this KittenTTS2 runs "
+            return ValueError(f"this voice was made with the model revision {other}, but this KittenTTS runs "
                               f"{self.revision}. A saved voice works only with the model it was made with: "
-                              f"KittenTTS2(revision=\"{other}\") loads it (that model is still prepared in "
+                              f"KittenTTS(\"KittenML/kitten-tts-2\", revision=\"{other}\") loads it (that model is still prepared in "
                               f"{self.model_dir.parent}), or clone the voice again with this model")
-        return ValueError(f"this voice was made with another model than the one this KittenTTS2 runs (revision "
+        return ValueError(f"this voice was made with another model than the one this KittenTTS runs (revision "
                           f"{self.revision}). A saved voice works only with the model revision it was made with: pass "
-                          "that revision as KittenTTS2(revision=...), or clone the voice again with this model")
+                          "that revision as KittenTTS(\"KittenML/kitten-tts-2\", revision=...), or clone the voice again with this model")
 
     def _check_voice_model(self, voice: Voice) -> None:
         """Refuses a saved voice of another prepared model before the engine is touched (the engine checks the same
@@ -460,7 +460,7 @@ class KittenTTS2:
         except (ValueError, _bundle.BundleError):
             same_files = False
         if same_files:  # the model files match; the voice's own record does not (engine: which field)
-            return ValueError(f"this voice does not match the prepared model this KittenTTS2 runs (revision "
+            return ValueError(f"this voice does not match the prepared model this KittenTTS runs (revision "
                               f"{self.revision}; engine: {exc.message}): clone the voice again with this model")
         return ValueError(f"{self._mismatch(voice)} (engine: {exc.message})")
 
@@ -590,7 +590,7 @@ class KittenTTS2:
                 elif ev.kind == _abi.EVENT_DONE:
                     done = True
                     if ev.status == _abi.ERR_CANCELLED and engine.closing:
-                        raise RuntimeError("this KittenTTS2 was closed while the request was running")
+                        raise RuntimeError("this KittenTTS was closed while the request was running")
                     if ev.status != _abi.OK:
                         raise _request_error(ev.error or EngineError(ev.status))
         finally:

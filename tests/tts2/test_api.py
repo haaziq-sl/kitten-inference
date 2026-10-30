@@ -93,7 +93,7 @@ def test_voice_of_another_prepared_revision_names_it(tmp_path):
     path.write_bytes(_blob({"format": "kt2n", "checkpoint": "c-old", "s3gen_sha256": "s1", "voices": []}))
     with pytest.raises(ValueError) as e:
         t.load_voice(path)
-    assert f'KittenTTS2(revision="{A}")' in str(e.value) and B in str(e.value)
+    assert f'KittenTTS("KittenML/kitten-tts-2", revision="{A}")' in str(e.value) and B in str(e.value)
 
 
 def test_voice_of_an_unknown_model(tmp_path):
@@ -101,7 +101,7 @@ def test_voice_of_an_unknown_model(tmp_path):
     path = tmp_path / "me.voice"
     path.write_bytes(_blob({"format": "kt2n", "checkpoint": "c-gone", "s3gen_sha256": "s1", "voices": []}))
     with pytest.raises(ValueError, match=r"works only with the model revision it was made with: pass that "
-                                         r"revision as KittenTTS2\(revision=\.\.\.\)"):
+                                         r'revision as KittenTTS\("KittenML/kitten-tts-2", revision=\.\.\.\)'):
         t.load_voice(path)
 
 

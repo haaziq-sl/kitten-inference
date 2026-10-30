@@ -1,4 +1,4 @@
-"""``kitten-tts2``: runs the bundled kitten-tts-native, preparing the model first and adding ``--assets``.
+"""TTS 2 command handling: prepare the model and invoke kitten-tts-native with ``--assets``.
 
     kitten-tts --model KittenML/kitten-tts-2 --text "Hello" --voice Bruno --output hello.wav    # any kitten-tts-native options
     kitten-tts --model KittenML/kitten-tts-2 --prepare-only [--revision R] [--with-cloning]      # prepare, print the model directory
@@ -24,14 +24,14 @@ NATIVE_VALUE_OPTIONS = {
 }
 OWN_VALUE_OPTIONS = {"--revision", "--cache-dir", "--backend"}
 OWN_FLAGS = {"--prepare-only", "--with-cloning"}
-USAGE = """kitten-tts: Kitten TTS 2 command line (runs the bundled kitten-tts-native).
+USAGE = """kitten-tts: speech synthesis with Kitten TTS 2.
 
   kitten-tts --model KittenML/kitten-tts-2 --text "Hello from Kitten TTS 2." --voice Bruno --output hello.wav
   kitten-tts --model KittenML/kitten-tts-2 --list-voices
   kitten-tts --model KittenML/kitten-tts-2 --prepare-only [--revision R] [--with-cloning]
 
 The model is downloaded (about 4.6 GB, kept in the Hugging Face cache) and prepared (2 GB) on first use, once per
-model revision, and --assets is added for you. Options of this command, besides the ones below:
+model revision. Later runs reuse the cached files.
   --revision R          model revision on Hugging Face (default: the latest)
   --cache-dir DIR       where prepared models (and then also the downloads) are kept
                         (default: ~/.cache/kitten-inference/tts2)

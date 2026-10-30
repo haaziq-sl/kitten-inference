@@ -33,7 +33,7 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 # The child process that runs prepare.main(argv) (kitten_inference.tts2._assets.prepare, the bundled copy of
 # engines/tts2/tools/kt2n_assets): its output goes to a log file, and the memory the conversion uses is returned afterwards.
 # `python -c` puts the current folder first on sys.path (only -P, Python 3.11+, turns that off), so a json.py or a
-# kitten_inference/ folder where the user runs kitten-tts2 would be imported instead of the real modules: the child
+# kitten_inference/ folder where the user runs kitten-tts would be imported instead of the real modules: the child
 # drops that entry before its first import (os and sys are already loaded at startup).
 # The folder that holds this kitten_inference comes in _PACKAGE_VAR, not PYTHONPATH: PYTHONPATH entries go before the
 # standard library, so a stale backport in site-packages with a standard-library name (PyPI's pathlib 1.0.1, enum34)
@@ -180,7 +180,7 @@ def _reject_reparse(path: Path, what: str) -> None:
     if path.exists() and _is_reparse_point(path):
         raise PrepareError(f"the model {what} {path} is a reparse point (a junction or symbolic link); it could "
                            "point to another user's folder. Delete it, or pass a new folder as cache_dir "
-                           "(KittenTTS2(cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir)")
+                           "(KittenTTS(\"KittenML/kitten-tts-2\", cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir)")
 
 
 def _win32():
@@ -331,7 +331,7 @@ def _set_private(path: Path) -> None:
 def _refuse_folder(root: Path, mine: bool) -> None:
     why = "belongs to another user" if not mine else "can be changed by other users of this computer"
     raise PrepareError(f"the model folder {root} {why}, so the model in it could be replaced. Pass a new folder "
-                       "as cache_dir (KittenTTS2(cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir), which is then made "
+                       "as cache_dir (KittenTTS(\"KittenML/kitten-tts-2\", cache_dir=...) or kitten-tts --model KittenML/kitten-tts-2 --cache-dir), which is then made "
                        "so that only you can change it, or delete this one")
 
 
@@ -415,7 +415,7 @@ def _check_fallback(fallback: Path) -> None:
     _reject_reparse(fallback, "folder")
     if not _owned_by_me(fallback) or (_windows() and _other_writers(fallback)):
         raise PrepareError(f"{fallback}, the model folder for your user, belongs to another user or can be changed by "
-                           "other users; pass a new ASCII folder as cache_dir (KittenTTS2(cache_dir=\"C:/kitten-tts2\") "
+                           "other users; pass a new ASCII folder as cache_dir (KittenTTS(\"KittenML/kitten-tts-2\", cache_dir=\"C:/kitten-tts2\") "
                            "or kitten-tts --model KittenML/kitten-tts-2 --cache-dir C:\\kitten-tts2), which is then made for you only")
 
 
@@ -478,7 +478,7 @@ def cache_root(cache_dir: Optional[os.PathLike] = None, log: Optional[Callable[[
             except OSError:
                 pass
     raise PrepareError(f"the model folder {root} has characters outside ASCII, which the engine cannot open on Windows "
-                       "with this system's code page. Use an ASCII folder: KittenTTS2(cache_dir=\"C:/kitten-tts2\") or "
+                       "with this system's code page. Use an ASCII folder: KittenTTS(\"KittenML/kitten-tts-2\", cache_dir=\"C:/kitten-tts2\") or "
                        "kitten-tts --model KittenML/kitten-tts-2 --cache-dir C:\\kitten-tts2, a new folder, which is then made so that only you can "
                        "change it (or turn on \"Use Unicode UTF-8 for worldwide language support\" in the Region "
                        "settings)")
@@ -609,7 +609,7 @@ def _check_child_python() -> None:
         raise PrepareError("this program is a frozen app (PyInstaller, cx_Freeze or similar), which cannot start the "
                            "Python process that prepares the model. Prepare it once from a normal Python install with "
                            "kitten-tts --model KittenML/kitten-tts-2 --prepare-only (add --revision R and --cache-dir DIR as needed), then pass the "
-                           "same revision= and cache_dir= to KittenTTS2 in the app")
+                           "same revision= and cache_dir= to KittenTTS in the app")
 
 
 def _run_prepare(argv: List[str], log_path: Path) -> None:

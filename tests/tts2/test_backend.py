@@ -33,7 +33,7 @@ def _runtimes(monkeypatch, *present):
     ("win32", "ARM64", "Windows ARM64"), ("android", "aarch64", "Android aarch64")])
 def test_platform_without_an_engine(no_backends, monkeypatch, system, machine, shown):
     _on(monkeypatch, system, machine)
-    expected = PLATFORMS + shown + ". Kitten TTS 0.8 (kitten_inference.tts08) runs here."
+    expected = PLATFORMS + shown + ". Kitten TTS 0.8 runs here."
     assert _backend.no_engine_message() == expected
     with pytest.raises(_backend.EngineNotInstalled) as e:
         _backend.find()
@@ -78,7 +78,7 @@ def test_python_38(no_backends, fake_backend, request):
     fake_backend("cuda")
     assert _backend.python_message() is None
     request.getfixturevalue("python38")
-    message = ("Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). Kitten TTS 0.8 (kitten_inference.tts08) "
+    message = ("Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). Kitten TTS 0.8 "
                "works on Python 3.8.")
     assert _backend.python_message() == message
     with pytest.raises(ImportError) as e:

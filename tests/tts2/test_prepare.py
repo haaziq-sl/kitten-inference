@@ -525,7 +525,7 @@ def test_windows_cache_dir_access_list(tmp_path):
 
 def test_non_ascii_cache_dir_is_refused_before_any_download(monkeypatch, tmp_path, env):
     _Windows(monkeypatch, tmp_path, lambda path: None)
-    with pytest.raises(_prepare.PrepareError, match='ASCII folder: KittenTTS2.cache_dir="C:/kitten-tts2"'):
+    with pytest.raises(_prepare.PrepareError, match=r'ASCII folder: KittenTTS\("KittenML/kitten-tts-2", cache_dir="C:/kitten-tts2"'):
         _prepare.ensure(text_data_tool=tmp_path / "tool", cache_dir=tmp_path / "Łukasz")
     assert env.hub.calls == []
 

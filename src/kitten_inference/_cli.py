@@ -1,4 +1,4 @@
-"""Unified command line, with native TTS 2 advanced options preserved."""
+"""The kitten-tts command."""
 import argparse
 import sys
 from pathlib import Path

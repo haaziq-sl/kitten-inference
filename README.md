@@ -1,7 +1,7 @@
 # kitten-inference
 
-Fast native inference engines for the Kitten TTS text-to-speech models: Kitten TTS 2 on NVIDIA and AMD GPUs
-([`engines/tts2/`](engines/tts2/)) and Kitten TTS 0.8 on the CPU ([`engines/tts08/`](engines/tts08/)). Install them with pip; no PyTorch needed.
+Fast text-to-speech with Kitten TTS 2 on NVIDIA and AMD GPUs and Kitten TTS 0.8 on the CPU.
+Install with pip; no PyTorch needed.
 
 |  | **Kitten TTS 2** on an NVIDIA GPU | **Kitten TTS 0.8** on the CPU |
 |---|---|---|
@@ -89,9 +89,6 @@ python -c "from kitten_inference import KittenTTS; KittenTTS('KittenML/kitten-tt
     until the process ends, because the engine does not free its GPU copies of the weights yet. Create each model
     once and reuse it.
 
-Both engines in one environment: `pip install "kitten-inference"` (Linux x86-64 and Windows x64,
-Python 3.9 to 3.14).
-
 ## Use from Python
 
 ```python
@@ -111,8 +108,8 @@ KittenTTS("KittenML/kitten-tts-nano-0.8").generate_to_file("Hello from Kitten TT
 
 ## Docs
 
-- [Unified Python API and `kitten-tts` command](docs/api.md): voices, streaming, voice
-  cloning, saved voices, caches, and when the same seed gives the same audio.
+- [Python API and `kitten-tts` command](docs/api.md): voices, streaming, voice
+  cloning, saved voices, and model options.
 - [Kitten TTS 2 engine](engines/tts2/README.md): speed tables, [supported GPUs](engines/tts2/README.md#supported-gpus), building
   from source, the command-line tool and the C API. Also: [Windows](engines/tts2/docs/windows.md),
   [AMD Radeon](engines/tts2/docs/amd-radeon.md), [GPU memory](engines/tts2/docs/memory.md),

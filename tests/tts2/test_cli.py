@@ -123,7 +123,7 @@ def test_version_on_a_platform_without_an_engine(no_backends, monkeypatch, capsy
     out, err = capsys.readouterr()
     assert out == f"kitten-tts {version} (no Kitten TTS 2 engine on this platform)\n"
     assert err == ("kitten-tts: Kitten TTS 2 runs on Linux x86-64 (NVIDIA or AMD Radeon GPU) and Windows x64 "
-                   "(NVIDIA GPU); this is macOS arm64. Kitten TTS 0.8 (kitten_inference.tts08) runs here.\n")
+                   "(NVIDIA GPU); this is macOS arm64. Kitten TTS 0.8 runs here.\n")
     assert _cli.main(["--text", "x"]) == 1 and capsys.readouterr().out == ""
     # Linux x86-64 and Windows x64 have an engine: an install without its files is an error, --version included.
     monkeypatch.setattr(sys, "platform", "linux")
@@ -150,7 +150,7 @@ def test_python_38_is_one_line(harness, python38, capsys):
     for argv in (["--help"], ["--version"], ["--text", "x"]):
         assert _cli.main(argv) == 1, argv
         assert capsys.readouterr().err == ("kitten-tts: Kitten TTS 2 needs Python 3.9 or newer (this is Python 3.8). "
-                                           "Kitten TTS 0.8 (kitten_inference.tts08) works on Python 3.8.\n")
+                                           "Kitten TTS 0.8 works on Python 3.8.\n")
     assert harness["run"] == [] and harness["prepare"] == []
 
 

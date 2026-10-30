@@ -1,12 +1,4 @@
-"""Kitten TTS 2 on NVIDIA and AMD GPUs.
-
-    from kitten_inference.tts2 import KittenTTS2
-    tts = KittenTTS2()                      # first use downloads and prepares the model
-    audio = tts.generate("Hello from Kitten TTS 2.", voice="Bruno")
-    tts.save_wav("hello.wav", audio)
-
-Install it with: pip install "kitten-inference". The engine whose GPU driver this machine has is used.
-"""
+"""Kitten TTS 2 backend for :class:`kitten_inference.KittenTTS`."""
 
 __version__ = "0.2.0"
 
@@ -14,7 +6,7 @@ import importlib as _importlib
 import sys as _sys
 
 # Importing this package needs no third-party module: KittenTTS2 and the names below come on first use, after a
-# check that says what is missing (Python 3.9, an engine for this platform, the libraries of the [tts-2] extra).
+# check that says what is missing (Python 3.9, an engine for this platform, and its dependencies).
 _LAZY = {"KittenTTS2": "_api", "Voice": "_api", "SAMPLE_RATE": "_api", "AudioError": "_audio",
          "FFmpegNotFound": "_audio"}
 

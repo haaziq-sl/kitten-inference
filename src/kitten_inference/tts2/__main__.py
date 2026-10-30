@@ -1,4 +1,4 @@
-"""python -m kitten_inference.tts2: the same as the kitten-tts2 command."""
+"""Run the TTS 2 command handler."""
 from ._cli import main
 
 raise SystemExit(main())

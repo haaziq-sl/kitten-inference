@@ -104,7 +104,3 @@ The models are the Kitten TTS 0.8 models, which KittenML publishes under Apache-
 [micro](https://huggingface.co/KittenML/kitten-tts-micro-0.8),
 [mini](https://huggingface.co/KittenML/kitten-tts-mini-0.8)); this package downloads them converted to its
 engine's format from [KittenML/meownn-models](https://huggingface.co/KittenML/meownn-models).
-
-## Work in progress
-
-Kitten TTS 0.8 support is still being improved. Next: a faster GPU path and faster int8 models.

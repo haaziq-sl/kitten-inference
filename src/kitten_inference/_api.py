@@ -1,4 +1,4 @@
-"""One interface over the native Kitten model families."""
+"""Kitten text-to-speech models."""
 from pathlib import Path
 
 
@@ -8,12 +8,12 @@ def model_family(model):
     name = str(model).rstrip('/').lower()
     if name in ('kittenml/kitten-tts-2', 'kitten-tts-2'):
         return 'tts2'
-    # Existing 0.8 loaders validate native local and remote configurations.
+    # The 0.8 loader validates local and remote configurations.
     return 'tts08'
 
 
 class KittenTTS:
-    """Load an explicitly selected model. See docs/api.md for model-specific options."""
+    """Load a Kitten TTS model by name or local directory."""
 
     def __init__(self, model, *, backend=None, cache_dir=None, **model_options):
         self.family = model_family(model)

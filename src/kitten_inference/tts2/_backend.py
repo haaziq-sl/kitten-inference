@@ -20,7 +20,7 @@ from . import _abi, _gpu
 ENV = "KITTEN_TTS2_BACKEND"
 MODULES = {"cuda": "kitten_inference._tts2_cuda", "rocm": "kitten_inference._tts2_rocm"}
 LABELS = {"cuda": "NVIDIA (CUDA) engine", "rocm": "AMD (ROCm) engine"}
-# The libraries the Python API needs, which the [tts-2] extra installs (kitten-tts2 needs them to prepare a model).
+# The libraries needed by the Python API and model preparation.
 PYTHON_MODULES = ("numpy", "huggingface_hub", "tokenizers", "filelock")
 INSTALL = 'pip install "kitten-inference"'
 REINSTALL = 'pip install --force-reinstall "kitten-inference"'
@@ -66,7 +66,7 @@ def _import(name: str):
 
 
 def _engine_platform() -> bool:
-    """Whether Kitten TTS 2 has an engine for this platform (the markers of the [tts-2] extra say the same)."""
+    """Whether Kitten TTS 2 has an engine for this platform."""
     machine = platform.machine()
     return (sys.platform == "linux" and machine == "x86_64") or (sys.platform == "win32" and machine == "AMD64")
 
@@ -76,8 +76,8 @@ def python_message() -> Optional[str]:
     version = tuple(sys.version_info[:2])
     if version >= (3, 9):
         return None
-    return (f"Kitten TTS 2 needs Python 3.9 or newer (this is Python {version[0]}.{version[1]}). Kitten TTS 0.8 "
-            "(kitten_inference.tts08) works on Python 3.8.")
+    return (f"Kitten TTS 2 needs Python 3.9 or newer (this is Python {version[0]}.{version[1]}). "
+            "Kitten TTS 0.8 works on Python 3.8.")
 
 
 def no_engine_message(name: Optional[str] = None) -> Optional[str]:
@@ -88,7 +88,7 @@ def no_engine_message(name: Optional[str] = None) -> Optional[str]:
     if not _engine_platform():
         system = SYSTEMS.get(sys.platform, sys.platform)
         return ("Kitten TTS 2 runs on Linux x86-64 (NVIDIA or AMD Radeon GPU) and Windows x64 (NVIDIA GPU); this is "
-                f"{system} {platform.machine() or 'unknown'}. Kitten TTS 0.8 (kitten_inference.tts08) runs here.")
+                f"{system} {platform.machine() or 'unknown'}. Kitten TTS 0.8 runs here.")
     return f"This install is missing its Kitten TTS 2 engine files. Reinstall it: {REINSTALL}"
 
 
@@ -106,7 +106,7 @@ def missing_modules() -> List[str]:
 
 
 def modules_message() -> Optional[str]:
-    """What to do when libraries of the [tts-2] extra are missing, or None."""
+    """What to do when Python dependencies are missing, or None."""
     missing = missing_modules()
     if not missing:
         return None
@@ -115,7 +115,7 @@ def modules_message() -> Optional[str]:
 
 def require_python_api() -> None:
     """Raises ImportError, saying what to do, when KittenTTS2 cannot work in this install. Checked in this order: the
-    Python version, an engine for this platform in this install, the libraries of the [tts-2] extra."""
+    Python version, an engine for this platform in this install, and Python dependencies."""
     message = python_message()
     if message is not None:
         raise ImportError(message)
